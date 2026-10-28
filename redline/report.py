@@ -47,8 +47,12 @@ def build_summary(
     embedding_model,
     counts,
     cache_path=None,
+    run_meta=None,
 ) -> dict:
-    """Score the holdout run and the attack run and gather every number in one dict."""
+    """Score the holdout run and the attack run and gather every number in one dict.
+
+    run_meta holds the "holdout" and "attack" meta files written by `redline run`, or is None.
+    """
     confusion = metrics.router_confusion(holdout_outputs, holdout_labels)
     cache_bytes, models = _read_cache(cache_path)
     return {
@@ -65,6 +69,11 @@ def build_summary(
         "attack": metrics.attack_summary(attack_outputs, attack_labels, attack_prompts),
         "attack_end_to_end": metrics.end_to_end(attack_outputs, attack_labels),
         "attack_routing": _attack_routing(attack_outputs, attack_prompts),
+        "short_circuit": {
+            "holdout": metrics.short_circuit_summary(holdout_outputs, holdout_labels),
+            "attack": metrics.short_circuit_summary(attack_outputs, attack_labels),
+        },
+        "run": run_meta,
         "judge_model": models,
         "judge_cache_sha256": hashlib.sha256(cache_bytes).hexdigest(),
         "produced_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -145,6 +154,57 @@ def _attack_sentence(kind: str, k: dict) -> str:
     )
 
 
+def _router_sentence(meta: dict) -> str:
+    k = f" with k of {meta['k']}" if meta.get("k") else ""
+    start = f"This run used the {meta['router']} router{k}."
+    if not meta["short_circuit"]:
+        return f"{start} Short circuit was off, so the router never decided an answer alone."
+    return (
+        f"{start} Short circuit was on, with purity {meta['purity']}, at least "
+        f"{meta['min_members']} members and a margin of {meta['margin']:.2f}."
+    )
+
+
+def _short_circuit_sentences(set_name: str, sc: dict, meta: dict | None) -> list[str]:
+    if sc["count"]:
+        line = (
+            f"On the {set_name} the router decided {sc['count']} answers on its own, "
+            f"{_pct(sc['share'])} of all of them. {sc['right']} of those matched the hand label."
+        )
+        if sc["wrong_ids"]:
+            line += f" The wrong ones were {', '.join(sc['wrong_ids'])}."
+    else:
+        line = f"On the {set_name} the router decided no answers on its own."
+    if meta:
+        line += (
+            f" That run made {meta['judge_calls']} judge calls and took {meta['seconds']} seconds."
+        )
+    return [line, ""]
+
+
+def _short_circuit_section(summary: dict) -> list[str]:
+    """The routing and short circuit section. Summaries made before it existed get none."""
+    if "short_circuit" not in summary:
+        return []
+    run = summary.get("run") or {}
+    meta = run.get("holdout") or run.get("attack")
+    lines = ["## Routing and short circuit", ""]
+    if meta:
+        lines += [_router_sentence(meta), ""]
+    else:
+        lines += ["No run meta files were found, so the router settings are not recorded.", ""]
+    lines += [
+        (
+            "A short circuit is an answer the router passed or failed by itself, because it "
+            "landed among labeled train answers that agree, so no judge call was made."
+        ),
+        "",
+    ]
+    for key, set_name in (("holdout", "holdout set"), ("attack", "attack run")):
+        lines += _short_circuit_sentences(set_name, summary["short_circuit"][key], run.get(key))
+    return lines
+
+
 def render_report(summary: dict) -> str:
     """Return the long report as markdown, in plain sentences with one table at the end."""
     router = summary["router"]
@@ -189,6 +249,7 @@ def render_report(summary: dict) -> str:
             "answer was not close to any rule, so it goes to a person."
         ),
         "",
+        *_short_circuit_section(summary),
         *_judge_section(
             "The judge on the holdout set", summary["judge"]["holdout"], "holdout answers", True
         ),
@@ -318,3 +379,90 @@ def check_readme(path, summary: dict) -> bool:
     """Return True when the README on disk already holds the table summary.json would give."""
     text = Path(path).read_text()
     return text == _with_table(text, summary)
+
+
+NO_SHORT_CIRCUIT = {"count": 0, "share": 0.0, "right": 0, "wrong_ids": []}
+
+# (header, row key) for each column of the comparison table, after the run label.
+COMPARISON_COLUMNS = [
+    ("Router accuracy holdout", "router_accuracy_holdout"),
+    ("Rig accuracy holdout", "rig_accuracy_holdout"),
+    ("Kappa holdout", "kappa_holdout"),
+    ("Breaks caught holdout", "breaks_caught_holdout"),
+    ("Cry wolf holdout", "cry_wolf_holdout"),
+    ("Attack caught (x of y)", "attack_caught"),
+    ("Cry wolf attack", "cry_wolf_attack"),
+    ("Kappa attack", "kappa_attack"),
+    ("Short circuit share holdout", "short_circuit_share_holdout"),
+    ("Short circuit right holdout", "short_circuit_right_holdout"),
+    ("Short circuit share attack", "short_circuit_share_attack"),
+    ("Short circuit right attack", "short_circuit_right_attack"),
+    ("Judge calls (holdout + attack)", "judge_calls"),
+    ("Seconds (holdout + attack)", "seconds"),
+]
+
+
+def _comparison_row(folder: Path) -> dict:
+    summary = json.loads((folder / "summary.json").read_text())
+    holdout_meta = json.loads((folder / "holdout_meta.json").read_text())
+    attack_meta = json.loads((folder / "attack_responses_meta.json").read_text())
+    _, breaks, caught = _attack_totals(summary)
+    short_circuit = summary.get("short_circuit") or {}
+    sc_holdout = short_circuit.get("holdout", NO_SHORT_CIRCUIT)
+    sc_attack = short_circuit.get("attack", NO_SHORT_CIRCUIT)
+    on_off = "on" if holdout_meta["short_circuit"] else "off"
+    return {
+        "folder": folder.as_posix(),
+        "label": f"{holdout_meta['router']}, short circuit {on_off}",
+        "router_accuracy_holdout": summary["router"]["holdout_accuracy"],
+        "rig_accuracy_holdout": summary["judge"]["holdout"]["accuracy"],
+        "kappa_holdout": summary["judge"]["holdout"]["cohen_kappa"],
+        "breaks_caught_holdout": summary["end_to_end"]["bad"]["caught"],
+        "cry_wolf_holdout": summary["end_to_end"]["good"]["wrongly_failed"],
+        "attack_caught": {"caught": caught, "breaks": breaks},
+        "cry_wolf_attack": summary["attack_end_to_end"]["good"]["wrongly_failed"],
+        "kappa_attack": summary["judge"]["attack"]["cohen_kappa"],
+        "short_circuit_share_holdout": sc_holdout["share"],
+        "short_circuit_right_holdout": {"right": sc_holdout["right"], "count": sc_holdout["count"]},
+        "short_circuit_share_attack": sc_attack["share"],
+        "short_circuit_right_attack": {"right": sc_attack["right"], "count": sc_attack["count"]},
+        "judge_calls": holdout_meta["judge_calls"] + attack_meta["judge_calls"],
+        "seconds": round(holdout_meta["seconds"] + attack_meta["seconds"], 2),
+    }
+
+
+def build_comparison(folders) -> list[dict]:
+    """One row of numbers per run folder, each folder holding summary.json and two meta files."""
+    return [_comparison_row(Path(folder)) for folder in folders]
+
+
+def _cell(key: str, value) -> str:
+    if key == "attack_caught":
+        return f"{value['caught']} of {value['breaks']}"
+    if key.startswith("short_circuit_right"):
+        return f"{value['right']} of {value['count']}" if value["count"] else "none"
+    if key.startswith("kappa"):
+        return f"{value:.2f}"
+    if key in ("judge_calls", "seconds"):
+        return str(value)
+    return _pct(value)
+
+
+def render_comparison(rows: list[dict]) -> str:
+    """Return the side by side table for several runs as markdown."""
+    headers = ["Run"] + [header for header, _ in COMPARISON_COLUMNS]
+    lines = [
+        "# Router comparison",
+        "",
+        (
+            "This file is written by `redline compare`. Each row is one run folder, scored on "
+            "the holdout set and the attack run."
+        ),
+        "",
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in rows:
+        cells = [row["label"]] + [_cell(key, row[key]) for _, key in COMPARISON_COLUMNS]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"

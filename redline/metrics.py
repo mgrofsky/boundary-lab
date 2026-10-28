@@ -127,6 +127,22 @@ def end_to_end(outputs: list[dict], labels: list[dict]) -> dict:
     }
 
 
+def short_circuit_summary(outputs: list[dict], labels: list[dict]) -> dict:
+    """How many answers the router decided on its own, and how many of those match the label.
+
+    The share is taken over every labeled record, not only the short circuited ones.
+    """
+    pairs = _pairs(outputs, labels)
+    decided = [(out, lab) for out, lab in pairs if out.get("short_circuit")]
+    wrong_ids = [out["id"] for out, lab in decided if not _agrees(out, lab)]
+    return {
+        "count": len(decided),
+        "share": _share(len(decided), len(pairs)),
+        "right": len(decided) - len(wrong_ids),
+        "wrong_ids": wrong_ids,
+    }
+
+
 def attack_summary(
     outputs: list[dict], attack_labels: list[dict], attack_prompts: list[dict]
 ) -> dict[str, dict]:

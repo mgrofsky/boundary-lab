@@ -1,6 +1,6 @@
 # Results report
 
-This file is written by `redline report`. It was made at 2026-10-28T01:35:32Z. Answers were turned into numbers with sentence-transformers/all-MiniLM-L6-v2.
+This file is written by `redline report`. It was made at 2026-10-28T04:23:35Z. Answers were turned into numbers with sentence-transformers/all-MiniLM-L6-v2.
 
 The judge model was gemma3:27b. The hash of the judge cache file is in summary.json.
 
@@ -20,6 +20,16 @@ The router picked the right rule for 84 percent of the 56 holdout answers, the 8
 On an on topic answer, an abstain counts as wrong here. On an off topic answer, an abstain counts as right.
 
 It abstained on 11 percent of them. An abstain means the answer was not close to any rule, so it goes to a person.
+
+## Routing and short circuit
+
+This run used the center router. Short circuit was off, so the router never decided an answer alone.
+
+A short circuit is an answer the router passed or failed by itself, because it landed among labeled train answers that agree, so no judge call was made.
+
+On the holdout set the router decided no answers on its own. That run made 44 judge calls and took 0.17 seconds.
+
+On the attack run the router decided no answers on its own. That run made 77 judge calls and took 0.25 seconds.
 
 ## The judge on the holdout set
 

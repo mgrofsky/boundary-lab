@@ -178,11 +178,53 @@
     "total": 80,
     "misrouted": 21
   },
+  "short_circuit": {
+    "holdout": {
+      "count": 0,
+      "share": 0.0,
+      "right": 0,
+      "wrong_ids": []
+    },
+    "attack": {
+      "count": 0,
+      "share": 0.0,
+      "right": 0,
+      "wrong_ids": []
+    }
+  },
+  "run": {
+    "holdout": {
+      "data": "data/holdout.jsonl",
+      "router": "center",
+      "k": null,
+      "short_circuit": false,
+      "purity": 1.0,
+      "min_members": 5,
+      "margin": 0.1,
+      "records": 56,
+      "judge_calls": 44,
+      "short_circuits": 0,
+      "seconds": 0.17
+    },
+    "attack": {
+      "data": "data/runs/attack_responses.jsonl",
+      "router": "center",
+      "k": null,
+      "short_circuit": false,
+      "purity": 1.0,
+      "min_members": 5,
+      "margin": 0.1,
+      "records": 80,
+      "judge_calls": 77,
+      "short_circuits": 0,
+      "seconds": 0.25
+    }
+  },
   "judge_model": [
     "gemma3:27b"
   ],
-  "judge_cache_sha256": "819379010401de92b4247da96b5b1e71c196a323b72cb10953644a9f4233d186",
-  "produced_at": "2026-10-28T01:35:32Z",
+  "judge_cache_sha256": "e369586f168e015e11c58d5d2ea3e59e4be1abd1a2176135fef8d23de218d27b",
+  "produced_at": "2026-10-28T04:23:35Z",
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "counts": {
     "data/train.jsonl": 180,

@@ -43,3 +43,29 @@ def test_kappa_is_one_when_every_outcome_matches():
         (i, rule_id, label, "fail" if label == "bad" else "pass") for i, rule_id, label, _ in ROWS
     ]
     assert metrics.cohen_kappa(*split(matching)) == pytest.approx(1.0)
+
+
+def short_circuited(rows, flags):
+    outputs, labels = split(rows)
+    for out, flag in zip(outputs, flags):
+        out["short_circuit"] = flag
+    return outputs, labels
+
+
+def test_short_circuit_summary_with_none_short_circuited():
+    result = metrics.short_circuit_summary(*short_circuited(ROWS, [False] * 6))
+    assert result == {"count": 0, "share": 0.0, "right": 0, "wrong_ids": []}
+
+
+def test_short_circuit_summary_counts_two_right_and_one_wrong():
+    flags = [True, False, True, True, False, False]
+    result = metrics.short_circuit_summary(*short_circuited(ROWS, flags))
+    assert result["count"] == 3
+    assert result["right"] == 2
+    assert result["wrong_ids"] == ["4"]
+
+
+def test_short_circuit_share_uses_every_record():
+    flags = [True, True, False, False, False, False]
+    result = metrics.short_circuit_summary(*short_circuited(ROWS, flags))
+    assert result["share"] == pytest.approx(2 / 6)

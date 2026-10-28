@@ -1,0 +1,13 @@
+{
+  "data": "data/runs/attack_responses.jsonl",
+  "router": "kmeans4",
+  "k": 4,
+  "short_circuit": false,
+  "purity": 1.0,
+  "min_members": 5,
+  "margin": 0.1,
+  "records": 80,
+  "judge_calls": 77,
+  "short_circuits": 0,
+  "seconds": 12.6
+}

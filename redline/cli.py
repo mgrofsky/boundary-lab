@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 CHUNK = 10
@@ -59,7 +60,7 @@ def cmd_run(args) -> int:
     from redline import pipeline, policy
     from redline.embed import Embedder
     from redline.judge import ChatEndpointJudge, ReplayJudge, select
-    from redline.router import Router
+    from redline.router import KMeansRouter, Router, ShortCircuit
 
     rules = policy.load(args.rules)
     train = read_jsonl(args.train)
@@ -77,13 +78,42 @@ def cmd_run(args) -> int:
     else:
         judge = ReplayJudge(args.cache)
 
-    router = Router(Embedder()).fit(train)
+    short_circuit = None
+    if args.short_circuit:
+        short_circuit = ShortCircuit(args.purity, args.min_members, args.margin)
+    if args.router == "kmeans":
+        router = KMeansRouter(Embedder(), k=args.k, seed=args.seed, short_circuit=short_circuit)
+    else:
+        router = Router(Embedder(), short_circuit=short_circuit)
+    router.fit(train)
+
+    # The clock starts after fit, so the embedding model is already loaded and the
+    # seconds show grading time only.
+    start = time.perf_counter()
     outputs = _in_chunks(
         records, lambda batch: pipeline.run(batch, rules, router, judge, examples), "graded"
     )
-    out_path = out_dir / f"{Path(args.data).stem}_outputs.jsonl"
+    seconds = time.perf_counter() - start
+
+    stem = Path(args.data).stem
+    out_path = out_dir / f"{stem}_outputs.jsonl"
     write_jsonl(out_path, outputs)
-    print(f"wrote {out_path}", file=sys.stderr)
+    meta = {
+        "data": Path(args.data).as_posix(),
+        "router": router.name,
+        "k": args.k if args.router == "kmeans" else None,
+        "short_circuit": args.short_circuit,
+        "purity": args.purity,
+        "min_members": args.min_members,
+        "margin": args.margin,
+        "records": len(outputs),
+        "judge_calls": sum(1 for o in outputs if o["decided_by"] == "judge"),
+        "short_circuits": sum(1 for o in outputs if o["short_circuit"]),
+        "seconds": round(seconds, 2),
+    }
+    meta_path = out_dir / f"{stem}_meta.json"
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"wrote {out_path} and {meta_path}", file=sys.stderr)
     return 0
 
 
@@ -117,6 +147,13 @@ def cmd_report(args) -> int:
     }
     data = {name: read_jsonl(path) for name, path in files.items()}
     counts = {Path(path).as_posix(): len(data[name]) for name, path in files.items()}
+    # `redline run` writes <data stem>_meta.json next to <data stem>_outputs.jsonl.
+    metas = {}
+    for name, path in (("holdout", args.holdout), ("attack", args.attack)):
+        path = Path(path)
+        meta_path = path.with_name(path.stem.removesuffix("_outputs") + "_meta.json")
+        metas[name] = json.loads(meta_path.read_text()) if meta_path.is_file() else None
+    run_meta = metas if any(metas.values()) else None
     summary = report.build_summary(
         data["holdout_outputs"],
         data["holdout"],
@@ -126,11 +163,25 @@ def cmd_report(args) -> int:
         DEFAULT_MODEL,
         counts,
         args.cache,
+        run_meta,
     )
     out_dir = Path(args.out)
     report.write_summary(summary, out_dir / "summary.json")
     report.write_report(summary, out_dir / "report.md")
     print(f"wrote {out_dir / 'summary.json'} and {out_dir / 'report.md'}", file=sys.stderr)
+    return 0
+
+
+def cmd_compare(args) -> int:
+    from redline import report
+
+    rows = report.build_comparison([Path(f) for f in args.runs])
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(report.render_comparison(rows))
+    json_path = out_path.with_suffix(".json")
+    json_path.write_text(json.dumps(rows, indent=2) + "\n")
+    print(f"wrote {out_path} and {json_path}", file=sys.stderr)
     return 0
 
 
@@ -160,10 +211,21 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="grade a file of answers")
     run.add_argument("--data", required=True, help="the answers to grade, one JSON record a line")
     run.add_argument("--judge", required=True, choices=["live", "replay"])
-    run.add_argument("--out", default="results/", help="folder for the output files (default: results/)")
+    run.add_argument(
+        "--out", default="results/", help="folder for the output files (default: results/)"
+    )
     run.add_argument("--train", default="data/train.jsonl")
     run.add_argument("--cache", default="data/judge_cache.jsonl")
     run.add_argument("--rules", default="policy/rules.yaml")
+    run.add_argument("--router", choices=["center", "kmeans"], default="center")
+    run.add_argument("--k", type=int, default=12, help="clusters for the kmeans router")
+    run.add_argument(
+        "--short-circuit", action="store_true", help="let the router decide clear answers"
+    )
+    run.add_argument("--purity", type=float, default=1.0, help="kmeans share of one label")
+    run.add_argument("--min-members", type=int, default=5, help="fewest labeled answers needed")
+    run.add_argument("--margin", type=float, default=0.10, help="center gap between good and bad")
+    run.add_argument("--seed", type=int, default=0, help="kmeans random seed")
     run.set_defaults(func=cmd_run)
 
     attack = sub.add_parser("attack", help="send attack prompts to the model under test")
@@ -188,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--train", default="data/train.jsonl")
     report.add_argument("--cache", default="data/judge_cache.jsonl")
     report.set_defaults(func=cmd_report)
+
+    compare = sub.add_parser("compare", help="write one table over several run folders")
+    compare.add_argument("--runs", nargs="+", required=True, help="folders with summary and meta")
+    compare.add_argument("--out", default="results/routers/comparison.md")
+    compare.set_defaults(func=cmd_compare)
 
     readme = sub.add_parser("readme", help="update the README results table")
     readme.add_argument("--check", action="store_true", help="exit 1 if the table is out of date")

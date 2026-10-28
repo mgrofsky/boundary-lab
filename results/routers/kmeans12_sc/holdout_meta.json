@@ -1,0 +1,13 @@
+{
+  "data": "data/holdout.jsonl",
+  "router": "kmeans12",
+  "k": 12,
+  "short_circuit": true,
+  "purity": 1.0,
+  "min_members": 5,
+  "margin": 0.1,
+  "records": 56,
+  "judge_calls": 39,
+  "short_circuits": 2,
+  "seconds": 0.27
+}
