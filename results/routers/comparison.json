@@ -1,0 +1,164 @@
+[
+  {
+    "folder": "results",
+    "label": "center, short circuit off",
+    "router_accuracy_holdout": 0.8392857142857143,
+    "rig_accuracy_holdout": 0.8035714285714286,
+    "kappa_holdout": 0.7812500000000001,
+    "breaks_caught_holdout": 0.875,
+    "cry_wolf_holdout": 0.09375,
+    "attack_caught": {
+      "caught": 17,
+      "breaks": 21
+    },
+    "cry_wolf_attack": 0.15254237288135594,
+    "kappa_attack": 0.6101949025487255,
+    "short_circuit_share_holdout": 0.0,
+    "short_circuit_right_holdout": {
+      "right": 0,
+      "count": 0
+    },
+    "short_circuit_share_attack": 0.0,
+    "short_circuit_right_attack": {
+      "right": 0,
+      "count": 0
+    },
+    "judge_calls": 121,
+    "seconds": 0.42
+  },
+  {
+    "folder": "results/routers/center_sc",
+    "label": "center, short circuit on",
+    "router_accuracy_holdout": 0.8392857142857143,
+    "rig_accuracy_holdout": 0.8035714285714286,
+    "kappa_holdout": 0.7789473684210527,
+    "breaks_caught_holdout": 0.8333333333333334,
+    "cry_wolf_holdout": 0.0625,
+    "attack_caught": {
+      "caught": 18,
+      "breaks": 21
+    },
+    "cry_wolf_attack": 0.3050847457627119,
+    "kappa_attack": 0.4488188976377953,
+    "short_circuit_share_holdout": 0.16071428571428573,
+    "short_circuit_right_holdout": {
+      "right": 8,
+      "count": 9
+    },
+    "short_circuit_share_attack": 0.2625,
+    "short_circuit_right_attack": {
+      "right": 12,
+      "count": 21
+    },
+    "judge_calls": 91,
+    "seconds": 0.47
+  },
+  {
+    "folder": "results/routers/kmeans12",
+    "label": "kmeans12, short circuit off",
+    "router_accuracy_holdout": 0.6785714285714286,
+    "rig_accuracy_holdout": 0.6964285714285714,
+    "kappa_holdout": 0.6701570680628273,
+    "breaks_caught_holdout": 0.7916666666666666,
+    "cry_wolf_holdout": 0.125,
+    "attack_caught": {
+      "caught": 13,
+      "breaks": 21
+    },
+    "cry_wolf_attack": 0.2033898305084746,
+    "kappa_attack": 0.3916349809885931,
+    "short_circuit_share_holdout": 0.0,
+    "short_circuit_right_holdout": {
+      "right": 0,
+      "count": 0
+    },
+    "short_circuit_share_attack": 0.0,
+    "short_circuit_right_attack": {
+      "right": 0,
+      "count": 0
+    },
+    "judge_calls": 117,
+    "seconds": 185.94
+  },
+  {
+    "folder": "results/routers/kmeans12_sc",
+    "label": "kmeans12, short circuit on",
+    "router_accuracy_holdout": 0.6785714285714286,
+    "rig_accuracy_holdout": 0.6964285714285714,
+    "kappa_holdout": 0.6701570680628273,
+    "breaks_caught_holdout": 0.7916666666666666,
+    "cry_wolf_holdout": 0.125,
+    "attack_caught": {
+      "caught": 13,
+      "breaks": 21
+    },
+    "cry_wolf_attack": 0.2542372881355932,
+    "kappa_attack": 0.3294460641399417,
+    "short_circuit_share_holdout": 0.03571428571428571,
+    "short_circuit_right_holdout": {
+      "right": 2,
+      "count": 2
+    },
+    "short_circuit_share_attack": 0.05,
+    "short_circuit_right_attack": {
+      "right": 1,
+      "count": 4
+    },
+    "judge_calls": 111,
+    "seconds": 0.66
+  },
+  {
+    "folder": "results/routers/kmeans4",
+    "label": "kmeans4, short circuit off",
+    "router_accuracy_holdout": 0.7142857142857143,
+    "rig_accuracy_holdout": 0.75,
+    "kappa_holdout": 0.7052631578947368,
+    "breaks_caught_holdout": 0.7916666666666666,
+    "cry_wolf_holdout": 0.09375,
+    "attack_caught": {
+      "caught": 12,
+      "breaks": 21
+    },
+    "cry_wolf_attack": 0.2033898305084746,
+    "kappa_attack": 0.351851851851852,
+    "short_circuit_share_holdout": 0.0,
+    "short_circuit_right_holdout": {
+      "right": 0,
+      "count": 0
+    },
+    "short_circuit_share_attack": 0.0,
+    "short_circuit_right_attack": {
+      "right": 0,
+      "count": 0
+    },
+    "judge_calls": 125,
+    "seconds": 34.53
+  },
+  {
+    "folder": "results/routers/kmeans4_sc",
+    "label": "kmeans4, short circuit on",
+    "router_accuracy_holdout": 0.7142857142857143,
+    "rig_accuracy_holdout": 0.75,
+    "kappa_holdout": 0.7052631578947368,
+    "breaks_caught_holdout": 0.7916666666666666,
+    "cry_wolf_holdout": 0.09375,
+    "attack_caught": {
+      "caught": 12,
+      "breaks": 21
+    },
+    "cry_wolf_attack": 0.2033898305084746,
+    "kappa_attack": 0.351851851851852,
+    "short_circuit_share_holdout": 0.0,
+    "short_circuit_right_holdout": {
+      "right": 0,
+      "count": 0
+    },
+    "short_circuit_share_attack": 0.0,
+    "short_circuit_right_attack": {
+      "right": 0,
+      "count": 0
+    },
+    "judge_calls": 125,
+    "seconds": 0.67
+  }
+]

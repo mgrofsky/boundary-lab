@@ -7,7 +7,7 @@ class StubRouter:
     def __init__(self, result):
         self.result = result
 
-    def route(self, prompt, response):
+    def route(self, prompt, response, user_type=None):
         return self.result
 
 
@@ -44,3 +44,27 @@ def test_router_abstain_gives_review(acct_rule):
     assert out["outcome"] == "review"
     assert out["decided_by"] == "router"
     assert judge.calls == []
+
+
+def test_router_verdict_skips_the_judge(acct_rule):
+    judge = FakeJudge(FAIL)
+    routed = RouteResult("ACCT-01", 0.9, False, 3, "fail", "All labeled bad.")
+    router = StubRouter(routed)
+    [out] = pipeline.run([record("anonymous")], {"ACCT-01": acct_rule}, router, judge, {})
+    assert out["outcome"] == "fail"
+    assert out["decided_by"] == "router"
+    assert out["reason_code"] == "SHORT_CIRCUIT"
+    assert out["reason_text"] == "All labeled bad."
+    assert out["short_circuit"] is True
+    assert out["cell"] == 3
+    assert judge.calls == []
+
+
+def test_no_router_verdict_calls_the_judge(acct_rule):
+    judge = FakeJudge(FAIL)
+    router = StubRouter(RouteResult("ACCT-01", 0.9, False, 3))
+    [out] = pipeline.run([record("anonymous")], {"ACCT-01": acct_rule}, router, judge, {})
+    assert out["decided_by"] == "judge"
+    assert out["short_circuit"] is False
+    assert out["router"] == "center"
+    assert len(judge.calls) == 1
