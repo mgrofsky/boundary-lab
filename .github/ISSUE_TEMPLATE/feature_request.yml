@@ -1,0 +1,27 @@
+name: Idea or change
+description: A new rule, attack prompt, metric or anything else.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What you want to add or change, in plain words.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it helps
+      description: What question it answers that the project cannot answer today.
+    validations:
+      required: true
+  - type: dropdown
+    id: willing
+    attributes:
+      label: Would you want to build it
+      options:
+        - Yes, with a go ahead
+        - No, just suggesting
+    validations:
+      required: true

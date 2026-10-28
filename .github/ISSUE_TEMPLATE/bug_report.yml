@@ -1,0 +1,31 @@
+name: Bug report
+description: Something gives the wrong result or does not run.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: The exact command
+      placeholder: redline run --data data/holdout.jsonl --judge replay
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Python version and operating system
+      placeholder: Python 3.12 on macOS 15
+    validations:
+      required: true
