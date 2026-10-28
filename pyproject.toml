@@ -7,7 +7,7 @@ name = "redline"
 version = "0.1.0"
 description = "Redline, a Boundary Lab tool for testing chatbot rules and evaluating the checks"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Matt Grofsky" }]
 requires-python = ">=3.11"
 dependencies = [

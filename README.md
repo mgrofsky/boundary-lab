@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/mgrofsky/boundary-lab/actions/workflows/ci.yml"><img src="https://github.com/mgrofsky/boundary-lab/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg" alt="AGPL-3.0-only license"></a>
 </p>
 
 Tools for testing AI behavior and safety boundaries.
@@ -109,4 +109,4 @@ This is a small test around one fictional business. A few answers change the per
 
 Next I'd test a trained classifier for routing, add a judge from a different model family, and send disagreements for human review. More rules and examples would help show whether those changes hold up.
 
-MIT license. See [LICENSE](LICENSE).
+Copyright (c) 2026 Matt Grofsky. Licensed under the GNU Affero General Public License, version 3 only (AGPL-3.0-only). See [LICENSE](LICENSE).

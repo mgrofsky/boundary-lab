@@ -39,4 +39,4 @@ Pull requests are squash merged, so the pull request title becomes the commit me
 
 ## License
 
-By contributing you agree that your work is released under the MIT license in this repository.
+By contributing you agree that your work is released under the GNU Affero General Public License, version 3 only (AGPL-3.0-only), in this repository.
