@@ -4,6 +4,11 @@
   <img src="assets/boundary-lab-logo-transparent.png" alt="Boundary Lab logo" width="360">
 </p>
 
+<p align="center">
+  <a href="https://github.com/mgrofsky/boundary-lab/actions/workflows/ci.yml"><img src="https://github.com/mgrofsky/boundary-lab/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+</p>
+
 Tools for testing AI behavior and safety boundaries.
 
 Boundary Lab is a growing collection of tools for testing AI systems.
