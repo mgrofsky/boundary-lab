@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+#
+# Live run: send the 80 attack prompts to a chatbot and grade every answer three ways.
+#
+#   1. string checks that need no model (no tool names leaked, no card number echoed, ...)
+#   2. promptfoo's llm-rubric, graded by the same model the saved run used as its judge
+#   3. the guardrail-eval rig itself, as a python assertion (route, gate, judge)
+#
+# Run from this folder with the project installed (pip install -e . at the root):
+#
+#   promptfoo eval -c promptfooconfig.yaml
+#   promptfoo eval -c promptfooconfig.yaml --filter-metadata rule=SYS-01
+#   promptfoo view
+#
+# The defaults below point at a local Ollama server, matching the saved run. Any
+# provider promptfoo knows works in its place. The rig's judge reads GE_JUDGE_BASE_URL,
+# GE_JUDGE_MODEL and GE_JUDGE_API_KEY from the environment or the root .env file.
+
+description: Northwind Power billing assistant against its four rules
+
+prompts:
+  - file://prompts/billing_assistant.json
+
+providers:
+  - id: ollama:chat:llama3.2:3b
+    label: chatbot
+    config:
+      temperature: 0
+      num_predict: 400
+
+defaultTest:
+  vars:
+    system_prompt: file://../policy/target_system_prompt.txt
+  options:
+    # Grader for llm-rubric checks.
+    provider: ollama:chat:gemma3:27b
+  assert:
+    - type: python
+      value: file://judge_assert.py
+      metric: rig_judge
+
+tests:
+  - path: file://generate_tests.py:create_tests
+    config:
+      rubric: true
+
+outputPath: ../results/promptfoo/live.json
