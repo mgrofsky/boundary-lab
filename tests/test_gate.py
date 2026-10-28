@@ -1,4 +1,4 @@
-from guardrail_eval import gate
+from redline import gate
 
 
 def test_anonymous_on_acct_is_not_allowed(acct_rule):

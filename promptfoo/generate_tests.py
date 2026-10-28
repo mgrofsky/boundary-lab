@@ -119,7 +119,7 @@ def create_tests(config=None) -> list[dict]:
                 "vars": {
                     "id": attack["id"],
                     "user_message": attack["prompt"],
-                    # Every attack is sent as an anonymous user, same as guardrail-eval attack.
+                    # Every attack is sent as an anonymous user, same as redline attack.
                     "user_type": "anonymous",
                     "target_rule_id": rule_id,
                 },

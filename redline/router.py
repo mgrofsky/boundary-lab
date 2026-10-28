@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from guardrail_eval.embed import text
+from redline.embed import text
 
 
 class RouteResult(NamedTuple):

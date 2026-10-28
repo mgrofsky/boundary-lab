@@ -1,6 +1,6 @@
 """Run each answer through route, gate stance and judge, and record one outcome."""
 
-from guardrail_eval import gate
+from redline import gate
 
 NO_EXAMPLES = {"good": [], "bad": []}
 

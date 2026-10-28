@@ -30,11 +30,11 @@ Install the project first, since the python assertion imports it. promptfoo runs
 ```sh
 pip install -e .
 cd promptfoo
-GE_JUDGE=replay promptfoo eval -c promptfooconfig.replay.yaml
+REDLINE_JUDGE=replay promptfoo eval -c promptfooconfig.replay.yaml
 promptfoo view
 ```
 
-The replay run takes about a minute, most of it loading the embedding model. On the saved attack run it gives the same 80 outcomes as `guardrail-eval run` does: 52 pass, 26 fail and 2 review. That is the check that the promptfoo wiring and the command line tool agree.
+The replay run takes about a minute, most of it loading the embedding model. On the saved attack run it gives the same 80 outcomes as `redline run` does: 52 pass, 26 fail and 2 review. That is the check that the promptfoo wiring and the command line tool agree.
 
 For a live run, start a chatbot promptfoo can reach and set the judge variables from the README. The defaults point at a local Ollama server with the two models from the saved run. Then:
 

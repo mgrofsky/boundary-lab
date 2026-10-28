@@ -1,6 +1,6 @@
 # Results report
 
-This file is written by `guardrail-eval report`. It was made at 2026-10-28T01:35:32Z. Answers were turned into numbers with sentence-transformers/all-MiniLM-L6-v2.
+This file is written by `redline report`. It was made at 2026-10-28T01:35:32Z. Answers were turned into numbers with sentence-transformers/all-MiniLM-L6-v2.
 
 The judge model was gemma3:27b. The hash of the judge cache file is in summary.json.
 

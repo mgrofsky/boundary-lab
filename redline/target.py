@@ -1,6 +1,6 @@
 """Send attack prompts to the model under test and save its answers."""
 
-from guardrail_eval.judge import http_transport
+from redline.judge import http_transport
 
 
 class Target:

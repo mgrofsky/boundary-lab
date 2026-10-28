@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "guardrail-eval"
+name = "redline"
 version = "0.1.0"
 description = "Redline, a Boundary Lab tool for testing chatbot rules and evaluating the checks"
 readme = "README.md"
@@ -25,10 +25,10 @@ dev = [
 ]
 
 [project.scripts]
-guardrail-eval = "guardrail_eval.cli:main"
+redline = "redline.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["guardrail_eval*"]
+include = ["redline*"]
 
 [tool.ruff]
 line-length = 100

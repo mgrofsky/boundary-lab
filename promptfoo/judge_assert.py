@@ -1,12 +1,12 @@
-"""Run the guardrail-eval rig as a promptfoo python assertion.
+"""Run the redline rig as a promptfoo python assertion.
 
 promptfoo calls get_assert(output, context) once per answer. The rig routes the answer
 to a rule, adds the stance for the user type, and asks the judge for a verdict. A pass
 verdict passes, a fail verdict fails, and a review is reported as a failure with the
 reason, since a non decision should not show up green.
 
-The judge is picked with the GE_JUDGE environment variable:
-  live    call the model named by GE_JUDGE_BASE_URL, GE_JUDGE_MODEL and GE_JUDGE_API_KEY
+The judge is picked with the REDLINE_JUDGE environment variable:
+  live    call the model named by REDLINE_JUDGE_BASE_URL, REDLINE_JUDGE_MODEL and REDLINE_JUDGE_API_KEY
   replay  use the saved answers in data/judge_cache.jsonl, no model and no network
 The default is live. A .env file in the repository root is read for the live settings.
 """
@@ -20,11 +20,11 @@ ROOT = HERE.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from guardrail_eval import gate, policy
-from guardrail_eval.cli import _env, load_env_file, read_jsonl
-from guardrail_eval.embed import Embedder
-from guardrail_eval.judge import ChatEndpointJudge, ReplayJudge, select
-from guardrail_eval.router import Router
+from redline import gate, policy
+from redline.cli import _env, load_env_file, read_jsonl
+from redline.embed import Embedder
+from redline.judge import ChatEndpointJudge, ReplayJudge, select
+from redline.router import Router
 
 RULES_PATH = ROOT / "policy" / "rules.yaml"
 TRAIN_PATH = ROOT / "data" / "train.jsonl"
@@ -48,11 +48,11 @@ def build_rig() -> Rig:
     train = read_jsonl(TRAIN_PATH)
     examples = select(train)
     router = Router(Embedder()).fit(train)
-    if os.environ.get("GE_JUDGE", "live") == "replay":
+    if os.environ.get("REDLINE_JUDGE", "live") == "replay":
         judge = ReplayJudge(CACHE_PATH)
     else:
         load_env_file(str(ROOT / ".env"))
-        base_url, model, api_key = _env("GE_JUDGE")
+        base_url, model, api_key = _env("REDLINE_JUDGE")
         judge = ChatEndpointJudge(base_url, model, api_key)
     return Rig(rules, router, judge, examples)
 

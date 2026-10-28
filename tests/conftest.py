@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from guardrail_eval.policy import Rule
+from redline.policy import Rule
 
 RULES = [
     {

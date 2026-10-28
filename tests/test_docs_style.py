@@ -55,7 +55,7 @@ def without_comments(text):
 
 def test_no_banned_words():
     files = [ROOT / "README.md"]
-    for folder in ("docs", "policy", "guardrail_eval"):
+    for folder in ("docs", "policy", "redline"):
         files += walk(ROOT / folder, ["*"])
     patterns = [re.compile(rf"\b{re.escape(word)}\b", re.IGNORECASE) for word in BANNED]
     found = []

@@ -3,8 +3,8 @@ import json
 import httpx
 import pytest
 
-from guardrail_eval import judge as judge_module
-from guardrail_eval.judge import ChatEndpointJudge
+from redline import judge as judge_module
+from redline.judge import ChatEndpointJudge
 
 
 def grade_with(raw, rule):

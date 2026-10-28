@@ -5,7 +5,7 @@
 # anywhere and gives the same result every time. The llm-rubric checks are left out
 # because they need a grader model.
 #
-#   GE_JUDGE=replay promptfoo eval -c promptfooconfig.replay.yaml
+#   REDLINE_JUDGE=replay promptfoo eval -c promptfooconfig.replay.yaml
 
 description: Northwind Power billing assistant, replayed from the saved attack run
 

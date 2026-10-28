@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from guardrail_eval import cli, metrics, report
+from redline import cli, metrics, report
 
 TOLERANCE = 0.001
 

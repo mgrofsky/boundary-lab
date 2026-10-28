@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from guardrail_eval.judge import ChatEndpointJudge, ReplayJudge, build_prompt, prompt_key
+from redline.judge import ChatEndpointJudge, ReplayJudge, build_prompt, prompt_key
 
 EXAMPLES = {"good": [], "bad": []}
 RAW = json.dumps({"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "x"})

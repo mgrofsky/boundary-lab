@@ -35,7 +35,7 @@ The saved run used two models running locally on Ollama: `llama3.2:3b` as the ch
 | Cry wolf rate on attack prompts | 15 percent |
 | Judge agreement with hand labels on attack prompts (kappa) | 0.61 |
 
-This table is written from results/summary.json by `guardrail-eval readme`, so do not edit it by hand.
+This table is written from results/summary.json by `redline readme`, so do not edit it by hand.
 <!-- results:end -->
 
 The holdout examples were kept out of router training and judge example selection. The attacks tried to extract instructions, bypass identity checks, get card numbers, or use roleplay to break the rules.
@@ -54,15 +54,13 @@ The [full report](results/report.md) includes results for each rule and how ofte
 
 ### Run it
 
-The package and command are still named `guardrail-eval`; Python imports use `guardrail_eval`.
-
 You'll need Python 3.11 or newer. From the repository directory:
 
 ```sh
 pip install -e .
-guardrail-eval run --data data/holdout.jsonl --judge replay
-guardrail-eval report
-guardrail-eval readme --check
+redline run --data data/holdout.jsonl --judge replay
+redline report
+redline readme --check
 ```
 
 Replay uses the saved judge answers in `data/judge_cache.jsonl`. It doesn't call a chat model or need an API key. Installing the dependencies and downloading the embedding model for the first run need an internet connection.
@@ -75,15 +73,15 @@ For live runs, use a chat endpoint that supports `/chat/completions` and JSON re
 
 | Model | Settings |
 | --- | --- |
-| Judge | `GE_JUDGE_BASE_URL`, `GE_JUDGE_MODEL`, `GE_JUDGE_API_KEY` |
-| Chatbot under test | `GE_TARGET_BASE_URL`, `GE_TARGET_MODEL`, `GE_TARGET_API_KEY` |
+| Judge | `REDLINE_JUDGE_BASE_URL`, `REDLINE_JUDGE_MODEL`, `REDLINE_JUDGE_API_KEY` |
+| Chatbot under test | `REDLINE_TARGET_BASE_URL`, `REDLINE_TARGET_MODEL`, `REDLINE_TARGET_API_KEY` |
 
 Use the base URL before `/chat/completions`. The CLI requires an API key value even for a local server that doesn't check it.
 
 ```sh
-guardrail-eval attack --prompts data/attacks.jsonl --out results/live/attack_responses.jsonl
-guardrail-eval run --data results/live/attack_responses.jsonl --judge live --out results/live --cache results/live/judge_cache.jsonl
-guardrail-eval run --data data/holdout.jsonl --judge live --out results/live --cache results/live/judge_cache.jsonl
+redline attack --prompts data/attacks.jsonl --out results/live/attack_responses.jsonl
+redline run --data results/live/attack_responses.jsonl --judge live --out results/live --cache results/live/judge_cache.jsonl
+redline run --data data/holdout.jsonl --judge live --out results/live --cache results/live/judge_cache.jsonl
 ```
 
 These commands keep new results separate from the saved run. Label new attack responses before comparing their grades; the saved labels only describe the original responses.

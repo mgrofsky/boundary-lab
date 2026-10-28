@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from guardrail_eval import policy
-from guardrail_eval.judge import parse_answer
+from redline import policy
+from redline.judge import parse_answer
 
 CACHE = Path("data/judge_cache.jsonl")
 

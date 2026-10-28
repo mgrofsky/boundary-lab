@@ -1,4 +1,4 @@
-"""Command line entry point for guardrail-eval."""
+"""Command line entry point for redline."""
 
 import argparse
 import json
@@ -33,7 +33,7 @@ def _env(prefix: str) -> tuple[str, str, str]:
     names = [f"{prefix}_BASE_URL", f"{prefix}_MODEL", f"{prefix}_API_KEY"]
     missing = [n for n in names if not os.environ.get(n)]
     if missing:
-        raise SystemExit(f"guardrail-eval: set {', '.join(missing)} in the environment or .env")
+        raise SystemExit(f"redline: set {', '.join(missing)} in the environment or .env")
     return tuple(os.environ[n] for n in names)
 
 
@@ -56,10 +56,10 @@ def _in_chunks(records, fn, label):
 
 
 def cmd_run(args) -> int:
-    from guardrail_eval import pipeline, policy
-    from guardrail_eval.embed import Embedder
-    from guardrail_eval.judge import ChatEndpointJudge, ReplayJudge, select
-    from guardrail_eval.router import Router
+    from redline import pipeline, policy
+    from redline.embed import Embedder
+    from redline.judge import ChatEndpointJudge, ReplayJudge, select
+    from redline.router import Router
 
     rules = policy.load(args.rules)
     train = read_jsonl(args.train)
@@ -72,7 +72,7 @@ def cmd_run(args) -> int:
 
     if args.judge == "live":
         load_env_file()
-        base_url, model, api_key = _env("GE_JUDGE")
+        base_url, model, api_key = _env("REDLINE_JUDGE")
         judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache)
     else:
         judge = ReplayJudge(args.cache)
@@ -88,10 +88,10 @@ def cmd_run(args) -> int:
 
 
 def cmd_attack(args) -> int:
-    from guardrail_eval.target import Target, run_attacks
+    from redline.target import Target, run_attacks
 
     load_env_file()
-    base_url, model, api_key = _env("GE_TARGET")
+    base_url, model, api_key = _env("REDLINE_TARGET")
     system_prompt = Path(args.system).read_text()
     target = Target(base_url, model, api_key, system_prompt)
     prompts = read_jsonl(args.prompts)
@@ -104,8 +104,8 @@ def cmd_attack(args) -> int:
 
 
 def cmd_report(args) -> int:
-    from guardrail_eval import report
-    from guardrail_eval.embed import DEFAULT_MODEL
+    from redline import report
+    from redline.embed import DEFAULT_MODEL
 
     files = {
         "train": args.train,
@@ -135,7 +135,7 @@ def cmd_report(args) -> int:
 
 
 def cmd_readme(args) -> int:
-    from guardrail_eval import report
+    from redline import report
 
     summary = json.loads(Path(args.summary).read_text())
     if args.check:
@@ -150,7 +150,7 @@ def cmd_readme(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="guardrail-eval",
+        prog="redline",
         description=(
             "Test whether a chatbot follows its rules, and measure how well the test works."
         ),

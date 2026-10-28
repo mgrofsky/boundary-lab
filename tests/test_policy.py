@@ -1,6 +1,6 @@
 import pytest
 
-from guardrail_eval import policy
+from redline import policy
 
 
 def test_load_finds_acct_rule(rules_data, write_rules):

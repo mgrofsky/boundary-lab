@@ -1,7 +1,7 @@
 import numpy as np
 
-from guardrail_eval.embed import text
-from guardrail_eval.router import Router
+from redline.embed import text
+from redline.router import Router
 
 
 def make_router():

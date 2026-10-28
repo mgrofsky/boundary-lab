@@ -5,7 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from guardrail_eval import metrics
+from redline import metrics
 
 START = "<!-- results:start -->"
 END = "<!-- results:end -->"
@@ -157,7 +157,7 @@ def render_report(summary: dict) -> str:
         "# Results report",
         "",
         (
-            f"This file is written by `guardrail-eval report`. It was made at "
+            f"This file is written by `redline report`. It was made at "
             f"{summary['produced_at']}. Answers were turned into numbers with "
             f"{summary['embedding_model']}."
         ),
@@ -292,7 +292,7 @@ def render_readme_table(summary: dict) -> str:
     lines += [
         "",
         (
-            "This table is written from results/summary.json by `guardrail-eval readme`, "
+            "This table is written from results/summary.json by `redline readme`, "
             "so do not edit it by hand."
         ),
     ]

@@ -7,9 +7,9 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from guardrail_eval import policy
-from guardrail_eval.judge import FakeJudge
-from guardrail_eval.router import Router
+from redline import policy
+from redline.judge import FakeJudge
+from redline.router import Router
 
 ROOT = Path(__file__).resolve().parent.parent
 PF = ROOT / "promptfoo"

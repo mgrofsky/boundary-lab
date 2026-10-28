@@ -1,6 +1,6 @@
 import pytest
 
-from guardrail_eval import metrics
+from redline import metrics
 
 # The six row fixture from the plan: (id, rule_id, label, outcome).
 ROWS = [

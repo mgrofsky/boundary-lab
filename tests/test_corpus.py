@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from guardrail_eval import policy
+from redline import policy
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"

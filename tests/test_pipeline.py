@@ -1,6 +1,6 @@
-from guardrail_eval import gate, pipeline
-from guardrail_eval.judge import FakeJudge
-from guardrail_eval.router import RouteResult
+from redline import gate, pipeline
+from redline.judge import FakeJudge
+from redline.router import RouteResult
 
 
 class StubRouter:
