@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import json
-import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from ..engine import Latch
-from ..models import Decision, ExecutionResult, PreparedAction, UserContext
 from ..reasons import Code, explain
-from ..store import SQLiteStore
-from .northwind import Northwind, money
-from .profiles import PROFILES, context
-from .tools import build_latch
+from .northwind import money
+from .profiles import PROFILES
+from .session import DemoSession
 
 
 class FakeClock:
@@ -53,9 +49,10 @@ class Scenario:
 
 
 class Run:
-    """One scenario's world: a fresh backend, a store and its own run id.
+    """One scenario's world: its own demo session, so a fresh backend and run id.
 
-    The ids carry a random tag, so a file database can be reused across demo runs.
+    The operation ids carry the session's random tag, so a file database can be
+    reused across demo runs.
     """
 
     def __init__(
@@ -63,47 +60,47 @@ class Run:
     ):
         self.name = name
         self.clock = clock
-        self.tag = uuid.uuid4().hex[:8]
-        self.nw = Northwind()
-        self.latch: Latch = build_latch(
-            self.nw, SQLiteStore(db_path), clock=clock, timeout_seconds=timeout_seconds
-        )
+        self.session = DemoSession(db_path, clock=clock, timeout_seconds=timeout_seconds)
+        self.nw = self.session.nw
+        self.tag = self.session.run_id.removeprefix("demo-")
+        self.tools: dict[str, str] = {}
         self.steps: list[Step] = []
         self.count = 0
-
-    def ctx(self, profile: str) -> UserContext:
-        return context(profile, f"run-{self.name}-{self.tag}")
 
     def next_id(self) -> str:
         self.count += 1
         return f"{self.name}-{self.count}-{self.tag}"
 
-    def record(self, profile: str, action: str, code: Code, change: str = "nothing") -> None:
+    def record(self, profile: str, action: str, code: str, change: str = "nothing") -> None:
         label = PROFILES[profile]["label"]
-        self.steps.append(Step(label, action, str(code), explain(code), change))
+        self.steps.append(Step(label, action, code, explain(Code(code)), change))
 
     def prepare(
         self, profile: str, tool: str, args: dict[str, Any], action: str, op: str | None = None
-    ) -> PreparedAction | Decision:
-        result = self.latch.prepare(self.ctx(profile), tool, args, op or self.next_id())
-        self.record(profile, action, result.code)
+    ) -> str:
+        result = self.session.propose(profile, tool, args, op or self.next_id())
+        self.tools.setdefault(result["operation_id"], tool)
+        self.record(profile, action, result["code"])
+        return result["operation_id"]
+
+    def approve(self, profile: str, op: str) -> dict[str, Any]:
+        result = self.session.approve(profile, op)
+        self.record(profile, f"approve {self.tools[op]} {op}", result["code"])
         return result
 
-    def approve(self, profile: str, prepared: PreparedAction) -> Decision:
-        result = self.latch.approve(prepared, self.ctx(profile))
-        self.record(profile, f"approve {prepared.tool} {prepared.operation_id}", result.code)
-        return result
-
-    def execute(
-        self, profile: str, prepared: PreparedAction, change: Callable[[], str]
-    ) -> ExecutionResult:
-        result = self.latch.execute(prepared, self.ctx(profile))
-        code = result.code
+    def execute(self, profile: str, op: str, change: Callable[[], str]) -> dict[str, Any]:
+        result = self.session.run(profile, op)
+        code = result["code"]
         # A replay shows ALREADY_RECORDED, except UNCERTAIN, which keeps its warning.
-        if result.replayed and code != Code.UNCERTAIN:
+        if result.get("replayed") and code != Code.UNCERTAIN:
             code = Code.ALREADY_RECORDED
-        self.record(profile, f"run {prepared.tool} {prepared.operation_id}", code, change())
+        self.record(profile, f"run {self.tools[op]} {op}", str(code), change())
         return result
+
+    def finish(self, scenario: Scenario) -> Scenario:
+        scenario.steps = self.steps
+        self.session.close()
+        return scenario
 
     def balance(self, account_id: str) -> int:
         return self.nw.accounts[account_id]["balance_minor"]
@@ -126,10 +123,9 @@ def allowed_lookup(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("allowed_lookup", "Sam looks up an account Sam owns",
                         ["ALLOWED", "EXECUTED"])
     run = Run(scenario.name, clock, db_path)
-    prepared = run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1")
-    run.execute("sam", prepared, lambda: f"none, read only: A1 balance {money(run.balance('A1'))}")
-    scenario.steps = run.steps
-    return scenario
+    op = run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1")
+    run.execute("sam", op, lambda: f"none, read only: A1 balance {money(run.balance('A1'))}")
+    return run.finish(scenario)
 
 
 def other_customer(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
@@ -137,8 +133,7 @@ def other_customer(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
                         ["ACCESS_DENIED"])
     run = Run(scenario.name, clock, db_path)
     run.prepare("sam", "lookup_account", {"account_id": "A2"}, "look up account A2 (Priya's)")
-    scenario.steps = run.steps
-    return scenario
+    return run.finish(scenario)
 
 
 def bad_recipient(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
@@ -147,8 +142,7 @@ def bad_recipient(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     run = Run(scenario.name, clock, db_path)
     args = {"to": "attacker@evil.example", "body": "Here are the account details."}
     run.prepare("sam", "send_message", args, "send a message to attacker@evil.example")
-    scenario.steps = run.steps
-    return scenario
+    return run.finish(scenario)
 
 
 def message_with_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
@@ -156,11 +150,10 @@ def message_with_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenar
                         ["NEEDS_APPROVAL", "APPROVED", "EXECUTED"])
     run = Run(scenario.name, clock, db_path)
     args = {"to": "help@northwind.example", "body": "Customer reports a double charge on A1."}
-    prepared = run.prepare("sam", "send_message", args, "send a message to help@northwind.example")
-    run.approve("jordan", prepared)
-    run.execute("sam", prepared, lambda: f"outbox {len(run.nw.outbox)}")
-    scenario.steps = run.steps
-    return scenario
+    op = run.prepare("sam", "send_message", args, "send a message to help@northwind.example")
+    run.approve("jordan", op)
+    run.execute("sam", op, lambda: f"outbox {len(run.nw.outbox)}")
+    return run.finish(scenario)
 
 
 def changed_after_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
@@ -171,44 +164,40 @@ def changed_after_approval(clock: FakeClock, db_path: str = ":memory:") -> Scena
     )
     run = Run(scenario.name, clock, db_path)
     op = run.next_id()
-    prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 6000},
-                           "refund 60.00 on A1", op)
-    run.approve("jordan", prepared)
+    run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 6000},
+                "refund 60.00 on A1", op)
+    run.approve("jordan", op)
     run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 7000},
                 f"refund 70.00 on A1 reusing {op}", op)
-    run.execute("sam", prepared, run.balance_change("A1", run.balance("A1")))
-    scenario.steps = run.steps
-    return scenario
+    run.execute("sam", op, run.balance_change("A1", run.balance("A1")))
+    return run.finish(scenario)
 
 
 def duplicate_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("duplicate_refund", "The same refund is submitted twice",
                         ["ALLOWED", "EXECUTED", "ALREADY_RECORDED"])
     run = Run(scenario.name, clock, db_path)
-    prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 2000},
-                           "refund 20.00 on A1")
-    run.execute("sam", prepared, run.balance_change("A1", run.balance("A1")))
-    run.execute("sam", prepared, run.balance_change("A1", run.balance("A1")))
-    scenario.steps = run.steps
-    return scenario
+    op = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 2000},
+                     "refund 20.00 on A1")
+    run.execute("sam", op, run.balance_change("A1", run.balance("A1")))
+    run.execute("sam", op, run.balance_change("A1", run.balance("A1")))
+    return run.finish(scenario)
 
 
 def exhausted_limit(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("exhausted_limit", "One run asks for more actions than the policy allows",
                         ["ALLOWED", "RUN_LIMIT"])
     run = Run(scenario.name, clock, db_path)
-    limit = run.latch.policy.limits.max_actions_per_run
+    limit = run.session.latch.policy.limits.max_actions_per_run
     codes = [
-        run.latch.prepare(run.ctx("sam"), "lookup_account", {"account_id": "A1"},
-                          run.next_id()).code
+        run.session.propose("sam", "lookup_account", {"account_id": "A1"}, run.next_id())["code"]
         for _ in range(limit)
     ]
     # The allowed lookups are folded into one step; any other code would show here.
     first = next((code for code in codes if code != Code.ALLOWED), Code.ALLOWED)
     run.record("sam", f"look up account A1, {limit} times", first)
     run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1 once more")
-    scenario.steps = run.steps
-    return scenario
+    return run.finish(scenario)
 
 
 def timeout_after_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
@@ -216,30 +205,28 @@ def timeout_after_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenari
                         ["ALLOWED", "UNCERTAIN", "UNCERTAIN"])
     run = Run(scenario.name, clock, db_path, timeout_seconds=0.1)
     run.nw.delay_seconds = 0.5
-    prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 2000},
-                           "refund 20.00 on A1")
+    op = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 2000},
+                     "refund 20.00 on A1")
     before = run.balance("A1")
-    run.execute("sam", prepared, run.balance_change("A1", before))
+    run.execute("sam", op, run.balance_change("A1", before))
 
     def after_retry() -> str:
         return f"backend refunds {len(run.nw.refunds)}, A1 balance {money(run.balance('A1'))}"
 
-    run.execute("sam", prepared, after_retry)
-    scenario.steps = run.steps
-    return scenario
+    run.execute("sam", op, after_retry)
+    return run.finish(scenario)
 
 
 def expired_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("expired_approval", "An approval sits too long before the run",
                         ["NEEDS_APPROVAL", "APPROVED", "APPROVAL_EXPIRED"])
     run = Run(scenario.name, clock, db_path)
-    prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 6000},
-                           "refund 60.00 on A1")
-    run.approve("jordan", prepared)
+    op = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 6000},
+                     "refund 60.00 on A1")
+    run.approve("jordan", op)
     clock.now += 601
-    run.execute("sam", prepared, nothing)
-    scenario.steps = run.steps
-    return scenario
+    run.execute("sam", op, nothing)
+    return run.finish(scenario)
 
 
 SCENARIOS = [
