@@ -10,3 +10,6 @@ build/
 .DS_Store
 results/runs/*.tmp
 results/promptfoo/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

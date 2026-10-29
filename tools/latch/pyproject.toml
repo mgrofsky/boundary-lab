@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boundary-latch"
+version = "0.1.0"
+description = "Latch, a Boundary Lab tool that checks AI tool calls before they run"
+readme = "README.md"
+license = { text = "AGPL-3.0-only" }
+authors = [{ name = "Matt Grofsky" }]
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.14.2"]
+
+[project.optional-dependencies]
+demo = ["fastapi>=0.162.0", "uvicorn>=0.54.0"]
+live = ["httpx>=0.28.1"]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1",
+    "ruff>=0.17.3",
+    "build>=1.6.1",
+    "twine>=7.0.0",
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+boundary-latch = "boundary_latch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["boundary_latch*"]
+
+[tool.setuptools.package-data]
+boundary_latch = ["demo/policy.toml", "demo/static/*", "starter/*", "starter/tests/*", "py.typed"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
