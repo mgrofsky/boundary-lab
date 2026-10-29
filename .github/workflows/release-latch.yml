@@ -1,0 +1,55 @@
+name: release-latch
+
+on:
+  push:
+    tags: ["latch-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+        working-directory: tools/latch
+      - run: twine check tools/latch/dist/*
+      - run: |
+          tag="${GITHUB_REF_NAME#latch-v}"
+          version=$(python -c "import tomllib; print(tomllib.load(open('tools/latch/pyproject.toml','rb'))['project']['version'])")
+          test "$tag" = "$version" || { echo "tag $tag does not match version $version"; exit 1; }
+      - uses: actions/upload-artifact@v6
+        with:
+          name: latch-dist
+          path: tools/latch/dist/
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: latch-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+  publish-pypi:
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: latch-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
