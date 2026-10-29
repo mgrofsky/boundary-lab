@@ -14,7 +14,7 @@ from .errors import ConfigError
 from .models import Decision, PreparedAction, ToolSpec, UserContext
 from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
-from .store import OperationExists, SQLiteStore
+from .store import RECORDED, ApprovalExists, OperationExists, SQLiteStore
 
 
 class Latch:
@@ -113,6 +113,80 @@ class Latch:
         self._audit("prepare", code, ctx, tool, operation_id, now)
         return self._build_prepared(ctx, spec, operation_id, needs_approval, request_hash,
                                     canonical, code)
+
+    def approve(self, prepared: PreparedAction, approver: UserContext) -> Decision:
+        return self._decide(prepared, approver, approve=True)
+
+    def deny(self, prepared: PreparedAction, approver: UserContext) -> Decision:
+        return self._decide(prepared, approver, approve=False)
+
+    def _decide(self, prepared: PreparedAction, approver: UserContext, approve: bool) -> Decision:
+        now = self.clock()
+        event = "approve" if approve else "deny"
+
+        def answer(code: Code, explanation: str | None = None) -> Decision:
+            self.store.audit(
+                event,
+                str(code),
+                prepared.org_id,
+                run_id=prepared.run_id,
+                operation_id=prepared.operation_id,
+                user_id=approver.user_id,
+                tool=prepared.tool,
+                now=now,
+            )
+            return Decision(
+                allowed=code == Code.APPROVED,
+                code=code,
+                explanation=explanation or explain(code),
+                operation_id=prepared.operation_id,
+            )
+
+        if approver.org_id != prepared.org_id:
+            return answer(Code.IDENTITY_MISMATCH)
+        if approve and not prepared.needs_approval:
+            return answer(Code.APPROVAL_REQUIRED, "This action does not need approval.")
+        tp = self.policy.tools.get(prepared.tool)
+        if tp is None:
+            return answer(Code.NO_POLICY)
+        if (
+            tp.approve_permission is None
+            or tp.approve_permission not in approver.permissions
+            or approver.user_id == prepared.user_id
+        ):
+            return answer(Code.APPROVER_NOT_ALLOWED)
+
+        row = self.store.get_operation(prepared.org_id, prepared.operation_id)
+        if row is None or row["request_hash"] != prepared.request_hash:
+            return answer(Code.OPERATION_CONFLICT)
+        if row["state"] in RECORDED:
+            return answer(Code.ALREADY_RECORDED)
+        if row["state"] == "denied":
+            return answer(Code.DENIED_BY_APPROVER)
+        if self.store.get_approval(prepared.org_id, prepared.operation_id) is not None:
+            return answer(Code.APPROVAL_USED)
+
+        limits = self.policy.limits
+        started_at, _ = self.store.touch_run(prepared.org_id, prepared.run_id, now)
+        expires_at = min(
+            now + limits.approval_lifetime_seconds, started_at + limits.run_lifetime_seconds
+        )
+        decision = "approved" if approve else "denied"
+        try:
+            self.store.record_approval(
+                prepared.org_id,
+                prepared.operation_id,
+                approver.user_id,
+                prepared.request_hash,
+                decision,
+                now,
+                expires_at,
+            )
+        except ApprovalExists:
+            return answer(Code.APPROVAL_USED)
+        code = Code.APPROVED if approve else Code.DENIED_BY_APPROVER
+        self.store.set_state(prepared.org_id, prepared.operation_id, decision, str(code), now)
+        return answer(code)
 
     def _check_access(
         self, ctx: UserContext, spec: ToolSpec, tp: ToolPolicy, args: BaseModel
