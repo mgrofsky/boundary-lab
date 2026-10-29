@@ -1,0 +1,23 @@
+[limits]
+max_actions_per_run = 20
+run_lifetime_seconds = 900
+approval_lifetime_seconds = 600
+
+[tools.lookup_account]
+require_permission = "accounts:read"
+
+[tools.send_message]
+require_permission = "messages:send"
+approve_permission = "messages:approve"
+recipient_field = "to"
+allowed_recipients = ["help@northwind.example", "billing@northwind.example"]
+[tools.send_message.approval]
+mode = "always"
+
+[tools.issue_refund]
+require_permission = "refunds:issue"
+approve_permission = "refunds:approve"
+[tools.issue_refund.approval]
+mode = "over_amount"
+amount_field = "amount_minor"
+threshold_minor = 5000

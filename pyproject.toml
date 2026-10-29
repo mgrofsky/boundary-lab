@@ -32,6 +32,8 @@ include = ["redline*"]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["tools"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = ["slow: loads the embedding model, skip with -m 'not slow'"]
