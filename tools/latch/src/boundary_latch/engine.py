@@ -17,6 +17,7 @@ from .models import (
     CallInfo,
     Decision,
     ExecutionResult,
+    OperationStatus,
     PreparedAction,
     ToolSpec,
     UserContext,
@@ -247,6 +248,19 @@ class Latch:
         except Exception:  # noqa: BLE001 any other handler error is uncertain
             return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
         return self._finish(prepared, "succeeded", Code.EXECUTED, t0, value)
+
+    def operation_status(self, org_id: str, operation_id: str) -> OperationStatus | None:
+        row = self.store.get_operation(org_id, operation_id)
+        if row is None:
+            return None
+        return OperationStatus(
+            operation_id=row["operation_id"],
+            state=row["state"],
+            code=Code(row["code"]),
+            tool=row["tool"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def _gate(
         self, prepared: PreparedAction, ctx: UserContext
