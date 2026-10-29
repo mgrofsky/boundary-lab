@@ -18,13 +18,13 @@ needs_fastapi = pytest.mark.skipif(
 
 
 def test_index_has_no_inline_script():
-    assert not re.search(r"<script(?![^>]*src=)[^>]*>\s*\S", INDEX)
+    assert not re.search(r"<script(?![^>]*src=)[^>]*>\s*\S", INDEX, re.IGNORECASE)
     assert re.search(r'<script src="/static/app.js"', INDEX)
 
 
 def test_index_has_no_inline_style_or_handlers():
-    assert "<style" not in INDEX
-    assert not re.search(r"\sstyle\s*=", INDEX)
+    assert "<style" not in INDEX.lower()
+    assert not re.search(r"\sstyle\s*=", INDEX, re.IGNORECASE)
     assert not re.search(r"\son\w+\s*=", INDEX, re.IGNORECASE)
     assert "javascript:" not in INDEX.lower()
 
