@@ -9,6 +9,73 @@
 <script src="/static/app.js" defer></script>
 </head>
 <body>
-<h1>Latch demo</h1>
+<header class="top">
+  <h1>Latch demo</h1>
+  <p class="note">Northwind is a fake support backend. Every person here is a sample identity.</p>
+  <p id="live-banner" class="banner">Live model: off</p>
+  <p class="note">Run id <span id="run-id">loading</span></p>
+</header>
+
+<section class="scenarios" aria-labelledby="scenarios-title">
+  <h2 id="scenarios-title">Scenarios</h2>
+  <div id="scenarios" class="buttons"></div>
+</section>
+
+<main class="columns">
+  <section class="column" aria-labelledby="act-title">
+    <h2 id="act-title">Act</h2>
+    <fieldset>
+      <legend>Sample identities, not real users</legend>
+      <div id="profiles"></div>
+    </fieldset>
+
+    <form id="tool-form" class="tool-form" novalidate>
+      <label for="tool">Tool</label>
+      <select id="tool"></select>
+      <p id="tool-description" class="note"></p>
+      <div id="fields"></div>
+      <label for="operation-id">Operation id</label>
+      <input id="operation-id" type="text" autocomplete="off" spellcheck="false"
+             placeholder="filled in after Propose">
+      <div class="buttons">
+        <button type="submit" id="propose">Propose</button>
+        <button type="button" id="approve">Approve</button>
+        <button type="button" id="deny">Deny</button>
+        <button type="button" id="run">Run</button>
+      </div>
+    </form>
+
+    <form id="live-form" class="tool-form" hidden>
+      <label for="live-text">Ask the live model</label>
+      <textarea id="live-text" rows="3"></textarea>
+      <div class="buttons">
+        <button type="submit" id="live-send">Send</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="column" aria-labelledby="log-title">
+    <div class="row">
+      <h2 id="log-title">Event log</h2>
+      <button type="button" id="clear-log" class="small">Clear</button>
+    </div>
+    <ol id="log" class="log"></ol>
+  </section>
+
+  <section class="column" aria-labelledby="state-title">
+    <h2 id="state-title">Live state</h2>
+    <h3>Accounts</h3>
+    <table>
+      <thead>
+        <tr><th>Account</th><th>Owner</th><th>Balance</th><th>Refundable</th></tr>
+      </thead>
+      <tbody id="accounts"></tbody>
+    </table>
+    <h3>Outbox</h3>
+    <ul id="outbox" class="plain"></ul>
+    <h3>Refunds</h3>
+    <ul id="refunds" class="plain"></ul>
+  </section>
+</main>
 </body>
 </html>
