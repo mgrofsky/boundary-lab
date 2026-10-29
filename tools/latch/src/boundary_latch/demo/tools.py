@@ -38,7 +38,7 @@ def demo_policy() -> Policy:
     return parse_policy(text)
 
 
-def tool_specs(nw: Northwind) -> list[ToolSpec]:
+def tool_specs(nw: Northwind, timeout_seconds: float = 30.0) -> list[ToolSpec]:
     def lookup(args: dict[str, Any], info: CallInfo) -> dict[str, Any]:
         return nw.lookup(args["account_id"])
 
@@ -59,6 +59,7 @@ def tool_specs(nw: Northwind) -> list[ToolSpec]:
             handler=lookup,
             access_hook=owns_account,
             description="Look up the balance of one customer account.",
+            timeout_seconds=timeout_seconds,
         ),
         ToolSpec(
             name="send_message",
@@ -66,6 +67,7 @@ def tool_specs(nw: Northwind) -> list[ToolSpec]:
             args_model=SendArgs,
             handler=send,
             description="Send a message to a Northwind support address.",
+            timeout_seconds=timeout_seconds,
         ),
         ToolSpec(
             name="issue_refund",
@@ -74,14 +76,18 @@ def tool_specs(nw: Northwind) -> list[ToolSpec]:
             handler=refund,
             access_hook=owns_account,
             description="Refund an amount in cents to one customer account.",
+            timeout_seconds=timeout_seconds,
         ),
     ]
 
 
 def build_latch(
-    nw: Northwind, store: SQLiteStore, clock: Callable[[], float] = time.time
+    nw: Northwind,
+    store: SQLiteStore,
+    clock: Callable[[], float] = time.time,
+    timeout_seconds: float = 30.0,
 ) -> Latch:
     latch = Latch(demo_policy(), store, clock=clock)
-    for spec in tool_specs(nw):
+    for spec in tool_specs(nw, timeout_seconds):
         latch.register(spec)
     return latch

@@ -21,6 +21,14 @@ def check(path: str) -> int:
     return 0
 
 
+def scenarios(as_json: bool) -> int:
+    from .demo.scenarios import render_text, run_all, to_json
+
+    results = run_all()
+    print(to_json(results) if as_json else render_text(results))
+    return 0 if all(scenario.passed for scenario in results) else 1
+
+
 def not_available(name: str) -> int:
     print(f"boundary-latch {name} is not available yet")
     return 2
@@ -35,7 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     check_cmd.add_argument("policy", help="path to a policy TOML file")
     commands.add_parser("demo", help="play the Northwind scenarios in the terminal")
     commands.add_parser("serve", help="run the browser demo on 127.0.0.1")
-    commands.add_parser("scenarios", help="run the built in scenarios")
+    scenarios_cmd = commands.add_parser("scenarios", help="run the built in scenarios")
+    scenarios_cmd.add_argument("--json", action="store_true", help="print JSON")
     commands.add_parser("init", help="copy the starter project")
     return parser
 
@@ -44,4 +53,6 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "check":
         return check(args.policy)
+    if args.command == "scenarios":
+        return scenarios(args.json)
     return not_available(args.command)
