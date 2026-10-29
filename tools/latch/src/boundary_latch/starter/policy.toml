@@ -1,0 +1,11 @@
+# One tool. Add a [tools.<name>] table for each tool you register in app.py.
+
+[limits]
+max_actions_per_run = 20
+run_lifetime_seconds = 900
+approval_lifetime_seconds = 600
+
+[tools.create_ticket]
+require_permission = "tickets:create"
+[tools.create_ticket.approval]
+mode = "never"
