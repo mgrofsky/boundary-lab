@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
+from importlib.resources import as_file, files
+from pathlib import Path
 
 from .errors import ConfigError
 from .policy import load_policy
@@ -29,6 +32,22 @@ def scenarios(as_json: bool) -> int:
     return 0 if all(scenario.passed for scenario in results) else 1
 
 
+def init(directory: str) -> int:
+    target = Path(directory)
+    if target.exists() and any(target.iterdir()):
+        print("refusing to write into a nonempty directory", file=sys.stderr)
+        return 1
+    with as_file(files("boundary_latch") / "starter") as starter:
+        shutil.copytree(
+            starter, target, dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+    for name in sorted(p.relative_to(target).as_posix() for p in target.rglob("*")
+                       if p.is_file()):
+        print(name)
+    return 0
+
+
 def not_available(name: str) -> int:
     print(f"boundary-latch {name} is not available yet")
     return 2
@@ -45,7 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("serve", help="run the browser demo on 127.0.0.1")
     scenarios_cmd = commands.add_parser("scenarios", help="run the built in scenarios")
     scenarios_cmd.add_argument("--json", action="store_true", help="print JSON")
-    commands.add_parser("init", help="copy the starter project")
+    init_cmd = commands.add_parser("init", help="copy the starter project")
+    init_cmd.add_argument("directory", help="where to write the starter project")
     return parser
 
 
@@ -55,4 +75,6 @@ def main(argv: list[str] | None = None) -> int:
         return check(args.policy)
     if args.command == "scenarios":
         return scenarios(args.json)
+    if args.command == "init":
+        return init(args.directory)
     return not_available(args.command)

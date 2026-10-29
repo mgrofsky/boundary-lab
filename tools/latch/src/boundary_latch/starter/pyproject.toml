@@ -1,0 +1,13 @@
+[project]
+name = "my-latch-app"
+version = "0.1.0"
+description = "A small app that checks its tool calls with Latch"
+requires-python = ">=3.11"
+dependencies = ["boundary-latch>=0.1.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.2.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
