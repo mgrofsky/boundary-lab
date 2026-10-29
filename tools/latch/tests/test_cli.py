@@ -49,11 +49,25 @@ def test_check_rejects_bad_toml(tmp_path):
     assert result.stderr.startswith("policy rejected: ")
 
 
-def test_unfinished_commands_say_so():
-    for command in ("serve",):
-        result = run_cli(command)
-        assert result.returncode == 2
-        assert "not available yet" in result.stdout
+def test_serve_passes_its_flags(monkeypatch):
+    from boundary_latch import cli
+    from boundary_latch.demo import server
+
+    seen = {}
+    monkeypatch.setattr(server, "serve", lambda **kwargs: seen.update(kwargs))
+    assert cli.main(["serve", "--port", "8800", "--db", "x.sqlite", "--live"]) == 0
+    assert seen == {"port": 8800, "db": "x.sqlite", "live": True}
+    assert cli.main(["serve"]) == 0
+    assert seen == {"port": 8765, "db": "latch-demo.sqlite", "live": False}
+
+
+def test_serve_reports_a_config_error(monkeypatch, capsys):
+    from boundary_latch import cli
+
+    monkeypatch.delenv("LATCH_BASE_URL", raising=False)
+    monkeypatch.delenv("LATCH_MODEL", raising=False)
+    assert cli.main(["serve", "--live"]) == 2
+    assert "live mode needs LATCH_BASE_URL and LATCH_MODEL" in capsys.readouterr().err
 
 
 def test_public_names():

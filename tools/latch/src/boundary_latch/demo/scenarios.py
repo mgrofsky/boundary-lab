@@ -278,16 +278,16 @@ def render_text(scenarios: list[Scenario]) -> str:
     return "\n".join([*parts, render_summary(scenarios)])
 
 
+def to_data(scenario: Scenario) -> dict[str, Any]:
+    return {
+        "name": scenario.name,
+        "title": scenario.title,
+        "expected": scenario.expected,
+        "observed": scenario.observed,
+        "passed": scenario.passed,
+        "steps": [asdict(step) for step in scenario.steps],
+    }
+
+
 def to_json(scenarios: list[Scenario]) -> str:
-    data = [
-        {
-            "name": scenario.name,
-            "title": scenario.title,
-            "expected": scenario.expected,
-            "observed": scenario.observed,
-            "passed": scenario.passed,
-            "steps": [asdict(step) for step in scenario.steps],
-        }
-        for scenario in scenarios
-    ]
-    return json.dumps(data, indent=2)
+    return json.dumps([to_data(scenario) for scenario in scenarios], indent=2)

@@ -6,6 +6,7 @@ import sys
 from importlib.resources import as_file, files
 from pathlib import Path
 
+from .demo.terminal import DEFAULT_DB
 from .demo.terminal import add_arguments as add_demo_arguments
 from .errors import ConfigError
 from .policy import load_policy
@@ -49,9 +50,18 @@ def init(directory: str) -> int:
     return 0
 
 
-def not_available(name: str) -> int:
-    print(f"boundary-latch {name} is not available yet")
-    return 2
+def serve(port: int, db: str, live: bool) -> int:
+    try:
+        from .demo import server
+
+        server.serve(port=port, db=db, live=live)
+    except ImportError:
+        print("the browser demo needs boundary-latch[demo]", file=sys.stderr)
+        return 2
+    except ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,7 +73,12 @@ def build_parser() -> argparse.ArgumentParser:
     check_cmd.add_argument("policy", help="path to a policy TOML file")
     demo_cmd = commands.add_parser("demo", help="play the Northwind scenarios in the terminal")
     add_demo_arguments(demo_cmd)
-    commands.add_parser("serve", help="run the browser demo on 127.0.0.1")
+    serve_cmd = commands.add_parser("serve", help="run the browser demo on 127.0.0.1")
+    serve_cmd.add_argument("--port", type=int, default=8765, help="port (default 8765)")
+    serve_cmd.add_argument(
+        "--db", default=DEFAULT_DB, help=f"SQLite file for the demo (default ./{DEFAULT_DB})"
+    )
+    serve_cmd.add_argument("--live", action="store_true", help="let a live model take turns")
     scenarios_cmd = commands.add_parser("scenarios", help="run the built in scenarios")
     scenarios_cmd.add_argument("--json", action="store_true", help="print JSON")
     init_cmd = commands.add_parser("init", help="copy the starter project")
@@ -79,8 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         return scenarios(args.json)
     if args.command == "init":
         return init(args.directory)
-    if args.command == "demo":
-        from .demo.terminal import run as run_demo
+    if args.command == "serve":
+        return serve(args.port, args.db, args.live)
+    from .demo.terminal import run as run_demo
 
-        return run_demo(args)
-    return not_available(args.command)
+    return run_demo(args)
