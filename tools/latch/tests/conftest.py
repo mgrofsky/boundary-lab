@@ -25,6 +25,14 @@ approve_permission = "refunds:approve"
 approval.mode = "over_amount"
 approval.amount_field = "amount_minor"
 approval.threshold_minor = 5000
+
+[tools.task]
+require_permission = "tasks:run"
+
+[tools.payment]
+require_permission = "payments:create"
+approve_permission = "payments:approve"
+approval.mode = "always"
 """
 
 ACCOUNTS = {"sam": {"A1"}, "priya": {"A2"}}
@@ -72,7 +80,7 @@ def make_ctx(user_id="sam", permissions=None, org_id="northwind", run_id="run1")
 def make_approver(user_id="jordan", org_id="northwind") -> UserContext:
     return make_ctx(
         user_id=user_id,
-        permissions={"messages:approve", "refunds:approve"},
+        permissions={"messages:approve", "refunds:approve", "payments:approve"},
         org_id=org_id,
         run_id="approver-run",
     )
@@ -121,6 +129,13 @@ def latch(clock, handlers) -> Latch:
             access_hook=account_hook,
         )
     )
+    return engine
+
+
+def build_latch(clock, *specs: ToolSpec, store: SQLiteStore | None = None) -> Latch:
+    engine = Latch(parse_policy(POLICY), store or SQLiteStore(), clock=clock)
+    for spec in specs:
+        engine.register(spec)
     return engine
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import hashlib
+import inspect
 import json
 import time
 from collections.abc import Callable
@@ -10,11 +12,27 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from .errors import ConfigError
-from .models import Decision, PreparedAction, ToolSpec, UserContext
+from .errors import ConfigError, ToolFailed
+from .models import (
+    CallInfo,
+    Decision,
+    ExecutionResult,
+    PreparedAction,
+    ToolSpec,
+    UserContext,
+)
 from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
 from .store import RECORDED, ApprovalExists, OperationExists, SQLiteStore
+
+RESERVE_CODES = {
+    "denied": Code.DENIED_BY_APPROVER,
+    "approval_missing": Code.APPROVAL_REQUIRED,
+    "approval_expired": Code.APPROVAL_EXPIRED,
+    "run_expired": Code.RUN_EXPIRED,
+    "run_limit": Code.RUN_LIMIT,
+    "hash_mismatch": Code.OPERATION_CONFLICT,
+}
 
 
 class Latch:
@@ -188,6 +206,149 @@ class Latch:
         self.store.set_state(prepared.org_id, prepared.operation_id, decision, str(code), now)
         return answer(code)
 
+    def execute(self, prepared: PreparedAction, ctx: UserContext) -> ExecutionResult:
+        spec = self._tools.get(prepared.tool)
+        if spec is not None and inspect.iscoroutinefunction(spec.handler):
+            raise ConfigError("async handler needs aexecute")
+        gate = self._gate(prepared, ctx)
+        if isinstance(gate, ExecutionResult):
+            return gate
+        spec, args, info = gate
+        t0 = time.perf_counter()
+        future = self._pool.submit(spec.handler, args, info)
+        try:
+            value = future.result(timeout=spec.timeout_seconds)
+        except ToolFailed:
+            return self._finish(prepared, "failed", Code.FAILED, t0)
+        except TimeoutError:
+            # The thread keeps running on its own; the outcome is unknown.
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+        except Exception:  # noqa: BLE001 any other handler error is uncertain
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+        return self._finish(prepared, "succeeded", Code.EXECUTED, t0, value)
+
+    async def aexecute(self, prepared: PreparedAction, ctx: UserContext) -> ExecutionResult:
+        gate = self._gate(prepared, ctx)
+        if isinstance(gate, ExecutionResult):
+            return gate
+        spec, args, info = gate
+        t0 = time.perf_counter()
+        if inspect.iscoroutinefunction(spec.handler):
+            call = spec.handler(args, info)
+        else:
+            loop = asyncio.get_running_loop()
+            call = loop.run_in_executor(self._pool, spec.handler, args, info)
+        try:
+            value = await asyncio.wait_for(call, spec.timeout_seconds)
+        except ToolFailed:
+            return self._finish(prepared, "failed", Code.FAILED, t0)
+        except TimeoutError:
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+        except Exception:  # noqa: BLE001 any other handler error is uncertain
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+        return self._finish(prepared, "succeeded", Code.EXECUTED, t0, value)
+
+    def _gate(
+        self, prepared: PreparedAction, ctx: UserContext
+    ) -> ExecutionResult | tuple[ToolSpec, dict[str, Any], CallInfo]:
+        """Recheck identity and access, then reserve the operation for one dispatch."""
+        now = self.clock()
+
+        def refuse(code: Code) -> ExecutionResult:
+            self._audit("execute", code, ctx, prepared.tool, prepared.operation_id, now,
+                        outcome="denied")
+            return ExecutionResult(
+                operation_id=prepared.operation_id,
+                outcome="denied",
+                code=code,
+                explanation=explain(code),
+            )
+
+        same = (ctx.user_id, ctx.org_id, ctx.run_id) == (
+            prepared.user_id,
+            prepared.org_id,
+            prepared.run_id,
+        )
+        if not same:
+            return refuse(Code.IDENTITY_MISMATCH)
+        spec = self._tools.get(prepared.tool)
+        if spec is None:
+            return refuse(Code.UNKNOWN_TOOL)
+        tp = self.policy.tools.get(prepared.tool)
+        if tp is None:
+            return refuse(Code.NO_POLICY)
+        try:
+            checked = spec.args_model.model_validate(prepared.arguments)
+        except ValidationError:
+            return refuse(Code.INVALID_ARGUMENTS)
+        code = self._check_access(ctx, spec, tp, checked)
+        if code is not None:
+            return refuse(code)
+
+        limits = self.policy.limits
+        started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
+        result = self.store.reserve(
+            ctx.org_id,
+            prepared.operation_id,
+            ctx.run_id,
+            prepared.request_hash,
+            now,
+            prepared.needs_approval,
+            started_at + limits.run_lifetime_seconds,
+            limits.max_actions_per_run,
+        )
+        if result == "already_recorded":
+            row = self.store.get_operation(ctx.org_id, prepared.operation_id)
+            # A row still reserved is running now or was cut off before it finished.
+            code = Code.ALREADY_RECORDED if row["state"] == "reserved" else Code(row["code"])
+            return ExecutionResult(
+                operation_id=prepared.operation_id,
+                outcome=row["state"],
+                code=code,
+                explanation=explain(code),
+                replayed=True,
+            )
+        if result != "reserved":
+            return refuse(RESERVE_CODES[result])
+
+        args = spec.args_model.model_validate(prepared.arguments).model_dump()
+        info = CallInfo(
+            operation_id=prepared.operation_id,
+            run_id=prepared.run_id,
+            user_id=prepared.user_id,
+            org_id=prepared.org_id,
+            tool=spec.name,
+            tool_version=spec.version,
+        )
+        return spec, args, info
+
+    def _finish(
+        self, prepared: PreparedAction, outcome: str, code: Code, t0: float, value: Any = None
+    ) -> ExecutionResult:
+        duration_ms = int((time.perf_counter() - t0) * 1000)
+        now = self.clock()
+        self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
+        self.store.audit(
+            "execute",
+            str(code),
+            prepared.org_id,
+            run_id=prepared.run_id,
+            operation_id=prepared.operation_id,
+            user_id=prepared.user_id,
+            tool=prepared.tool,
+            outcome=outcome,
+            duration_ms=duration_ms,
+            now=now,
+        )
+        return ExecutionResult(
+            operation_id=prepared.operation_id,
+            outcome=outcome,
+            code=code,
+            explanation=explain(code),
+            value=value,
+            duration_ms=duration_ms,
+        )
+
     def _check_access(
         self, ctx: UserContext, spec: ToolSpec, tp: ToolPolicy, args: BaseModel
     ) -> Code | None:
@@ -261,7 +422,14 @@ class Latch:
         )
 
     def _audit(
-        self, event: str, code: Code, ctx: UserContext, tool: str, operation_id: str, now: float
+        self,
+        event: str,
+        code: Code,
+        ctx: UserContext,
+        tool: str,
+        operation_id: str,
+        now: float,
+        outcome: str | None = None,
     ) -> None:
         self.store.audit(
             event,
@@ -271,5 +439,6 @@ class Latch:
             operation_id=operation_id,
             user_id=ctx.user_id,
             tool=tool,
+            outcome=outcome,
             now=now,
         )
