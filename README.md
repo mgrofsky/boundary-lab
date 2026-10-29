@@ -109,4 +109,12 @@ This is a small test around one fictional business. A few answers change the per
 
 Next I'd test a trained classifier for routing, add a judge from a different model family, and send disagreements for human review. More rules and examples would help show whether those changes hold up.
 
+## Latch
+
+Latch checks AI tool calls before they run. It sits between a model and your app's functions and blocks a call the user is not allowed to make.
+
+It checks permissions, recipients, record access and run limits. Large actions wait for another user to approve them, and a repeated operation id never runs twice.
+
+It is a separate package under `tools/latch`, with a terminal demo, a browser demo and a live model option. See the [Latch README](tools/latch/README.md).
+
 Copyright (c) 2026 Matt Grofsky. Licensed under the GNU Affero General Public License, version 3 only (AGPL-3.0-only). See [LICENSE](LICENSE).
