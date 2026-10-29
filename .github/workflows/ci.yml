@@ -30,3 +30,36 @@ jobs:
       - run: ruff check .
       - run: pytest -q
       - run: redline readme --check
+  latch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tools/latch
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,demo,live]"
+      - run: ruff check .
+      - run: pytest -q
+  latch-wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+        working-directory: tools/latch
+      - run: twine check tools/latch/dist/*
+      - run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install tools/latch/dist/*.whl
+          cd /tmp
+          /tmp/clean/bin/boundary-latch scenarios --json > /tmp/scenarios.json
+          /tmp/clean/bin/python -c "import json; d=json.load(open('/tmp/scenarios.json')); assert len(d)==9, len(d)"
+          /tmp/clean/bin/python -c "import importlib.util as u; assert u.find_spec('redline') is None and u.find_spec('numpy') is None"

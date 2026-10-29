@@ -14,3 +14,10 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /tools/latch
+    schedule:
+      interval: monthly
+    groups:
+      latch:
+        patterns: ["*"]
