@@ -97,3 +97,35 @@ def test_scenarios_command_exits_zero():
     )
     assert result.returncode == 0, result.stderr
     assert len(json.loads(result.stdout)) == 9
+
+
+def test_scenarios_run_through_the_demo_session(monkeypatch):
+    from boundary_latch.demo import scenarios
+    from boundary_latch.demo.session import DemoSession
+
+    closed = []
+
+    class Counting(DemoSession):
+        def close(self):
+            closed.append(self.audit()["rows"])
+            super().close()
+
+    monkeypatch.setattr(scenarios, "DemoSession", Counting)
+    results = run_all()
+    assert all(s.passed for s in results)
+    assert len(closed) == len(NAMES)
+    assert all(rows for rows in closed)
+
+
+def test_scenarios_write_their_record_to_a_file_database(tmp_path):
+    from boundary_latch.demo.session import DemoSession
+
+    db = str(tmp_path / "demo.sqlite")
+    assert all(s.passed for s in run_all(db_path=db))
+    assert all(s.passed for s in run_all(db_path=db))
+    reader = DemoSession(db)
+    try:
+        events = {row["event"] for row in reader.audit()["rows"]}
+    finally:
+        reader.close()
+    assert events == {"prepare", "approve", "execute"}

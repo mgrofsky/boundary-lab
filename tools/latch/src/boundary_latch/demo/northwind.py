@@ -39,6 +39,12 @@ class Northwind:
         user = self.users.get(user_id)
         return user is not None and account_id in user["accounts"]
 
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return copy.deepcopy(
+                {"accounts": self.accounts, "outbox": self.outbox, "refunds": self.refunds}
+            )
+
     def lookup(self, account_id: str) -> dict[str, Any]:
         with self._lock:
             return {"account_id": account_id, **self.accounts[account_id]}

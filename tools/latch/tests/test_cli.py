@@ -50,7 +50,7 @@ def test_check_rejects_bad_toml(tmp_path):
 
 
 def test_unfinished_commands_say_so():
-    for command in ("demo", "serve"):
+    for command in ("serve",):
         result = run_cli(command)
         assert result.returncode == 2
         assert "not available yet" in result.stdout
