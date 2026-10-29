@@ -6,6 +6,7 @@ import sys
 from importlib.resources import as_file, files
 from pathlib import Path
 
+from .demo.terminal import add_arguments as add_demo_arguments
 from .errors import ConfigError
 from .policy import load_policy
 
@@ -60,7 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     check_cmd = commands.add_parser("check", help="validate a policy file")
     check_cmd.add_argument("policy", help="path to a policy TOML file")
-    commands.add_parser("demo", help="play the Northwind scenarios in the terminal")
+    demo_cmd = commands.add_parser("demo", help="play the Northwind scenarios in the terminal")
+    add_demo_arguments(demo_cmd)
     commands.add_parser("serve", help="run the browser demo on 127.0.0.1")
     scenarios_cmd = commands.add_parser("scenarios", help="run the built in scenarios")
     scenarios_cmd.add_argument("--json", action="store_true", help="print JSON")
@@ -77,4 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         return scenarios(args.json)
     if args.command == "init":
         return init(args.directory)
+    if args.command == "demo":
+        from .demo.terminal import run as run_demo
+
+        return run_demo(args)
     return not_available(args.command)

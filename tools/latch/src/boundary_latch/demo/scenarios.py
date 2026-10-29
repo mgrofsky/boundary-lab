@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -52,24 +53,30 @@ class Scenario:
 
 
 class Run:
-    """One scenario's world: a fresh backend, an in memory store and its own run id."""
+    """One scenario's world: a fresh backend, a store and its own run id.
 
-    def __init__(self, name: str, clock: FakeClock, timeout_seconds: float = 30.0):
+    The ids carry a random tag, so a file database can be reused across demo runs.
+    """
+
+    def __init__(
+        self, name: str, clock: FakeClock, db_path: str = ":memory:", timeout_seconds: float = 30.0
+    ):
         self.name = name
         self.clock = clock
+        self.tag = uuid.uuid4().hex[:8]
         self.nw = Northwind()
         self.latch: Latch = build_latch(
-            self.nw, SQLiteStore(), clock=clock, timeout_seconds=timeout_seconds
+            self.nw, SQLiteStore(db_path), clock=clock, timeout_seconds=timeout_seconds
         )
         self.steps: list[Step] = []
         self.count = 0
 
     def ctx(self, profile: str) -> UserContext:
-        return context(profile, f"run-{self.name}")
+        return context(profile, f"run-{self.name}-{self.tag}")
 
     def next_id(self) -> str:
         self.count += 1
-        return f"{self.name}-{self.count}"
+        return f"{self.name}-{self.count}-{self.tag}"
 
     def record(self, profile: str, action: str, code: Code, change: str = "nothing") -> None:
         label = PROFILES[profile]["label"]
@@ -115,39 +122,39 @@ def nothing() -> str:
     return "nothing"
 
 
-def allowed_lookup(clock: FakeClock) -> Scenario:
+def allowed_lookup(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("allowed_lookup", "Sam looks up an account Sam owns",
                         ["ALLOWED", "EXECUTED"])
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     prepared = run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1")
     run.execute("sam", prepared, lambda: f"none, read only: A1 balance {money(run.balance('A1'))}")
     scenario.steps = run.steps
     return scenario
 
 
-def other_customer(clock: FakeClock) -> Scenario:
+def other_customer(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("other_customer", "Sam asks for another customer's account",
                         ["ACCESS_DENIED"])
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     run.prepare("sam", "lookup_account", {"account_id": "A2"}, "look up account A2 (Priya's)")
     scenario.steps = run.steps
     return scenario
 
 
-def bad_recipient(clock: FakeClock) -> Scenario:
+def bad_recipient(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("bad_recipient", "The model tries to email an outside address",
                         ["RECIPIENT_NOT_ALLOWED"])
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     args = {"to": "attacker@evil.example", "body": "Here are the account details."}
     run.prepare("sam", "send_message", args, "send a message to attacker@evil.example")
     scenario.steps = run.steps
     return scenario
 
 
-def message_with_approval(clock: FakeClock) -> Scenario:
+def message_with_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("message_with_approval", "A message goes out after a supervisor approves",
                         ["NEEDS_APPROVAL", "APPROVED", "EXECUTED"])
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     args = {"to": "help@northwind.example", "body": "Customer reports a double charge on A1."}
     prepared = run.prepare("sam", "send_message", args, "send a message to help@northwind.example")
     run.approve("jordan", prepared)
@@ -156,13 +163,13 @@ def message_with_approval(clock: FakeClock) -> Scenario:
     return scenario
 
 
-def changed_after_approval(clock: FakeClock) -> Scenario:
+def changed_after_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario(
         "changed_after_approval",
         "The amount changes after approval under the same operation id",
         ["NEEDS_APPROVAL", "APPROVED", "OPERATION_CONFLICT", "EXECUTED"],
     )
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     op = run.next_id()
     prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 6000},
                            "refund 60.00 on A1", op)
@@ -174,10 +181,10 @@ def changed_after_approval(clock: FakeClock) -> Scenario:
     return scenario
 
 
-def duplicate_refund(clock: FakeClock) -> Scenario:
+def duplicate_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("duplicate_refund", "The same refund is submitted twice",
                         ["ALLOWED", "EXECUTED", "ALREADY_RECORDED"])
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 2000},
                            "refund 20.00 on A1")
     run.execute("sam", prepared, run.balance_change("A1", run.balance("A1")))
@@ -186,10 +193,10 @@ def duplicate_refund(clock: FakeClock) -> Scenario:
     return scenario
 
 
-def exhausted_limit(clock: FakeClock) -> Scenario:
+def exhausted_limit(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("exhausted_limit", "One run asks for more actions than the policy allows",
                         ["ALLOWED", "RUN_LIMIT"])
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     limit = run.latch.policy.limits.max_actions_per_run
     codes = [
         run.latch.prepare(run.ctx("sam"), "lookup_account", {"account_id": "A1"},
@@ -204,10 +211,10 @@ def exhausted_limit(clock: FakeClock) -> Scenario:
     return scenario
 
 
-def timeout_after_refund(clock: FakeClock) -> Scenario:
+def timeout_after_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("timeout_after_refund", "The backend commits a refund, then goes quiet",
                         ["ALLOWED", "UNCERTAIN", "UNCERTAIN"])
-    run = Run(scenario.name, clock, timeout_seconds=0.1)
+    run = Run(scenario.name, clock, db_path, timeout_seconds=0.1)
     run.nw.delay_seconds = 0.5
     prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 2000},
                            "refund 20.00 on A1")
@@ -222,10 +229,10 @@ def timeout_after_refund(clock: FakeClock) -> Scenario:
     return scenario
 
 
-def expired_approval(clock: FakeClock) -> Scenario:
+def expired_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario("expired_approval", "An approval sits too long before the run",
                         ["NEEDS_APPROVAL", "APPROVED", "APPROVAL_EXPIRED"])
-    run = Run(scenario.name, clock)
+    run = Run(scenario.name, clock, db_path)
     prepared = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 6000},
                            "refund 60.00 on A1")
     run.approve("jordan", prepared)
@@ -248,28 +255,40 @@ SCENARIOS = [
 ]
 
 
-def run_all(clock: FakeClock | None = None) -> list[Scenario]:
+BUILDERS = {build.__name__: build for build in SCENARIOS}
+
+
+def run_one(name: str, clock: FakeClock | None = None, db_path: str = ":memory:") -> Scenario:
+    return BUILDERS[name](clock if clock is not None else FakeClock(), db_path)
+
+
+def run_all(clock: FakeClock | None = None, db_path: str = ":memory:") -> list[Scenario]:
     """Run every scenario. A given clock is shared and moved; otherwise each gets a fresh one."""
-    return [build(clock if clock is not None else FakeClock()) for build in SCENARIOS]
+    return [run_one(name, clock, db_path) for name in BUILDERS]
+
+
+def render_scenario(number: int, scenario: Scenario) -> str:
+    lines = [f"{number}. {scenario.title} ({scenario.name})", ""]
+    for step in scenario.steps:
+        lines.append(f"who: {step.actor}")
+        lines.append(f"asked for: {step.action}")
+        lines.append(f"result {step.code}: {step.explanation}")
+        lines.append(f"change: {step.state_change}")
+        lines.append("")
+    verdict = "matched" if scenario.passed else f"expected {' '.join(scenario.expected)}"
+    lines.append(f"codes {' '.join(scenario.observed)}, {verdict}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_summary(scenarios: list[Scenario]) -> str:
+    matched = sum(scenario.passed for scenario in scenarios)
+    return f"{matched} of {len(scenarios)} scenarios matched"
 
 
 def render_text(scenarios: list[Scenario]) -> str:
-    lines: list[str] = []
-    for number, scenario in enumerate(scenarios, 1):
-        lines.append(f"{number}. {scenario.title} ({scenario.name})")
-        lines.append("")
-        for step in scenario.steps:
-            lines.append(f"who: {step.actor}")
-            lines.append(f"asked for: {step.action}")
-            lines.append(f"result {step.code}: {step.explanation}")
-            lines.append(f"change: {step.state_change}")
-            lines.append("")
-        verdict = "matched" if scenario.passed else f"expected {' '.join(scenario.expected)}"
-        lines.append(f"codes {' '.join(scenario.observed)}, {verdict}")
-        lines.append("")
-    matched = sum(scenario.passed for scenario in scenarios)
-    lines.append(f"{matched} of {len(scenarios)} scenarios matched")
-    return "\n".join(lines)
+    parts = [render_scenario(number, s) for number, s in enumerate(scenarios, 1)]
+    return "\n".join([*parts, render_summary(scenarios)])
 
 
 def to_json(scenarios: list[Scenario]) -> str:
