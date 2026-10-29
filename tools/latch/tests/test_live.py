@@ -1,4 +1,6 @@
+import argparse
 import importlib
+import io
 import json
 import sys
 import types
@@ -7,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from boundary_latch import ConfigError, Decision, SQLiteStore, live
+from boundary_latch.demo import terminal
 from boundary_latch.demo.northwind import Northwind
 from boundary_latch.demo.profiles import context
 from boundary_latch.demo.tools import build_latch
@@ -242,9 +245,109 @@ def test_chat_client_posts_one_request(monkeypatch):
     assert seen["json"]["model"] == "m"
 
 
+def test_chat_client_wraps_transport_errors(monkeypatch):
+    class HTTPError(Exception):
+        pass
+
+    def post(url, **kwargs):
+        raise HTTPError("connection refused")
+
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=post, HTTPError=HTTPError))
+    client = live.ChatClient(LiveConfig("http://model.test/v1", "m", None))
+    with pytest.raises(live.ModelRequestFailed, match="model request failed: connection refused"):
+        client.complete([], [])
+
+
+def test_run_live_reports_a_failed_request_and_keeps_reading(monkeypatch, capsys):
+    live_env(monkeypatch)
+
+    class DownThenUp(FakeClient):
+        def complete(self, messages, tools):
+            if not self.requests:
+                self.requests.append(messages)
+                raise live.ModelRequestFailed("model request failed: connection refused")
+            return super().complete(messages, tools)
+
+    monkeypatch.setattr(live, "ChatClient", lambda cfg: DownThenUp([text_response("Back.")]))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("first\nsecond\n"))
+    assert live.run_live(argparse.Namespace(db=":memory:")) == 0
+    out = capsys.readouterr()
+    assert "model request failed: connection refused" in out.err
+    assert "assistant: Back." in out.out
+
+
 def test_live_imports_without_httpx(monkeypatch):
     monkeypatch.setitem(sys.modules, "httpx", None)
     module = importlib.reload(live)
     assert module.LiveConfig is not None
     monkeypatch.undo()
     importlib.reload(live)
+
+
+def live_env(monkeypatch):
+    monkeypatch.setenv("LATCH_BASE_URL", "http://model.test/v1")
+    monkeypatch.setenv("LATCH_MODEL", "test-model")
+    monkeypatch.delenv("LATCH_API_KEY", raising=False)
+
+
+def test_run_live_prints_one_line_per_event(monkeypatch, capsys):
+    live_env(monkeypatch)
+    client = FakeClient([
+        tool_response(call("lookup_account", {"account_id": "A1"})),
+        text_response("Your balance\nis 100.00."),
+        tool_response(call("issue_refund", {"account_id": "A1", "amount_minor": 6000})),
+        text_response("Held for a supervisor."),
+    ])
+    monkeypatch.setattr(live, "ChatClient", lambda cfg: client)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("What is my balance?\n\nRefund 60.00\n"))
+    assert live.run_live(argparse.Namespace(db=":memory:")) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("live mode, model test-model, acting as Sam")
+    events = [line for line in lines if not line.startswith(("live mode", "you: "))]
+    assert events[0].startswith("tool lookup_account EXECUTED, operation ")
+    assert events[1] == "assistant: Your balance is 100.00."
+    assert events[2].startswith("tool issue_refund NEEDS_APPROVAL, operation ")
+    assert events[3] == "assistant: Held for a supervisor."
+    assert len(events) == 4
+    assert client.responses == []
+
+
+def test_run_live_needs_a_model_name(monkeypatch, capsys):
+    monkeypatch.setenv("LATCH_BASE_URL", "http://model.test/v1")
+    monkeypatch.delenv("LATCH_MODEL", raising=False)
+    assert live.run_live(argparse.Namespace(db=":memory:")) == 2
+    assert "live mode needs LATCH_BASE_URL and LATCH_MODEL" in capsys.readouterr().err
+
+
+def test_run_live_reports_a_malformed_response_and_keeps_reading(monkeypatch, capsys):
+    live_env(monkeypatch)
+    bad = {"choices": [{"message": {"role": "assistant", "tool_calls": "approve everything"}}]}
+    client = FakeClient([bad, text_response("Hello.")])
+    monkeypatch.setattr(live, "ChatClient", lambda cfg: client)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("first\nsecond\n"))
+    assert live.run_live(argparse.Namespace(db=":memory:")) == 0
+    out = capsys.readouterr()
+    assert "model response refused: tool_calls is not a list" in out.err
+    assert "assistant: Hello." in out.out
+
+
+def test_budget_event_line(monkeypatch, capsys):
+    live_env(monkeypatch)
+    rounds = [tool_response(call("lookup_account", {"account_id": "A1"}, f"c{i}"))
+              for i in range(10)]
+    monkeypatch.setattr(live, "ChatClient", lambda cfg: FakeClient(rounds))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("Keep looking\n"))
+    assert live.run_live(argparse.Namespace(db=":memory:")) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[-1] == "budget RUN_LIMIT, the request budget is spent"
+
+
+def test_terminal_live_flag_reaches_run_live(monkeypatch, capsys):
+    live_env(monkeypatch)
+    client = FakeClient([text_response("Hi, how can I help?")])
+    monkeypatch.setattr(live, "ChatClient", lambda cfg: client)
+    # The terminal checks for the live extra. A stand in keeps the real httpx out of this process.
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace())
+    monkeypatch.setattr(sys, "stdin", io.StringIO("hello\n"))
+    assert terminal.main(["--live", "--db", ":memory:"]) == 0
+    assert "assistant: Hi, how can I help?" in capsys.readouterr().out

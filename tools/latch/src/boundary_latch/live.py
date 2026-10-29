@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -22,6 +23,10 @@ SYSTEM_PROMPT = (
 
 class MalformedResponse(LatchError):
     """The model server sent a response Latch will not guess about."""
+
+
+class ModelRequestFailed(LatchError):
+    """The model server could not be reached or answered with an error status."""
 
 
 @dataclass(frozen=True)
@@ -85,20 +90,26 @@ class ChatClient:
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
-        response = httpx.post(
-            f"{self.config.base_url}/chat/completions",
-            json={
-                "model": self.config.model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "stream": False,
-            },
-            headers=headers,
-            timeout=self.config.timeout_seconds,
-        )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = httpx.post(
+                f"{self.config.base_url}/chat/completions",
+                json={
+                    "model": self.config.model,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "stream": False,
+                },
+                headers=headers,
+                timeout=self.config.timeout_seconds,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ModelRequestFailed(f"model request failed: {exc}") from exc
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise MalformedResponse("response is not JSON") from exc
 
 
 def _message(response: Any) -> dict[str, Any]:
@@ -194,3 +205,51 @@ def run_turn(
             )
     events.append({"event": "budget", "code": "RUN_LIMIT"})
     return events
+
+
+def event_line(event: dict[str, Any]) -> str:
+    """One plain line for one run_turn event."""
+    if event["event"] == "assistant":
+        return "assistant: " + " ".join(event["text"].split())
+    if event["event"] == "tool":
+        return f"tool {event['tool']} {event['code']}, operation {event['operation_id']}"
+    return f"budget {event['code']}, the request budget is spent"
+
+
+def run_live(args: Any) -> int:
+    """`boundary-latch demo --live`: read requests from stdin and act as Sam until EOF."""
+    from .demo.profiles import PROFILES
+    from .demo.session import DemoSession
+
+    try:
+        config = LiveConfig.from_env()
+    except ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    profile = getattr(args, "profile", "sam")
+    session = DemoSession(args.db)
+    client = ChatClient(config)
+    print(f"live mode, model {config.model}, acting as {PROFILES[profile]['label']}. "
+          "Type a request per line, end with Ctrl-D.", flush=True)
+    try:
+        while True:
+            if sys.stdin.isatty():
+                print("you: ", end="", flush=True)
+            line = sys.stdin.readline()
+            if not line:
+                return 0
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                events = run_turn(session, profile, text, client, config)
+            except MalformedResponse as exc:
+                print(f"model response refused: {exc}", file=sys.stderr, flush=True)
+                continue
+            except ModelRequestFailed as exc:
+                print(exc, file=sys.stderr, flush=True)
+                continue
+            for event in events:
+                print(event_line(event), flush=True)
+    finally:
+        session.close()
