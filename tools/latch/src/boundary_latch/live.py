@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from .engine import Latch
 from .errors import ConfigError, LatchError
+from .reasons import Code
 
 SYSTEM_PROMPT = (
     "You help Northwind support agents. Use the tools to look up accounts, send messages "
@@ -157,10 +158,10 @@ def parse_tool_calls(response: Any) -> list[tuple[str, str, dict[str, Any]]]:
 def _handle_call(session: Session, profile: str, name: str, args: dict[str, Any]) -> dict:
     proposed = session.propose(profile, name, args)
     operation_id = proposed.get("operation_id")
-    if proposed.get("needs_approval") is True:
+    if proposed.get("code") == Code.NEEDS_APPROVAL:
         content = f"Held for approval by a supervisor. Operation id {operation_id}."
         code = proposed["code"]
-    elif proposed.get("needs_approval") is False:
+    elif proposed.get("code") == Code.ALLOWED:
         result = session.run(profile, operation_id)
         content = json.dumps(result)
         code = result["code"]

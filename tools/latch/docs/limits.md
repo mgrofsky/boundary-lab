@@ -4,7 +4,9 @@
 
 The defaults are 20 actions per run, a run lifetime of 900 seconds and an approval lifetime of 600 seconds. Change them in the `[limits]` table of the policy.
 
-A run is everything that shares a `run_id` in one org. A new operation id counts against the run. Resubmitting the same operation id does not. Past the limit, Latch answers `RUN_LIMIT`. Past the lifetime, it answers `RUN_EXPIRED`, and your app starts a new run.
+A run is everything that shares a `run_id` in one org. A new operation id counts against the run. Resubmitting it in that same run does not count again. An operation stays tied to its original run; moving it to another run gives `OPERATION_CONFLICT`.
+
+Past the limit, Latch answers `RUN_LIMIT`. Past the lifetime, it answers `RUN_EXPIRED`. A new conversation can start a new run, but it cannot revive an old pending action. Use `operation_status` to look up an earlier operation without resubmitting it.
 
 ## What the deadline does
 
@@ -21,6 +23,8 @@ A handler can finish three ways.
 - It raises any other error, or hits the deadline. The outcome is `uncertain` with code `UNCERTAIN`.
 
 Latch cannot tell whether an uncertain call changed anything. So it records the outcome and never runs that operation id again. The `timeout_after_refund` scenario shows it. The refund commits, the handler runs past the deadline, and a second execute returns `UNCERTAIN` as a replay. The backend refund count stays at 1.
+
+Recording the result can also fail after the handler ran. That raises `StorageError`; it does not mean nothing happened. The reservation blocks another dispatch. Keep the operation id and check the real backend before deciding what to do next.
 
 ## The no retry rule
 

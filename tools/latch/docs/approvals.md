@@ -4,7 +4,11 @@ Some calls should wait for a person. The policy decides which, using the approva
 
 ## What an approval is bound to
 
-An approval belongs to one operation, and the operation belongs to one exact request. The request hash covers the tool, its version, the policy digest, the user, the org and the arguments. If any of those change, the old approval does not apply.
+An approval belongs to one operation, and the operation belongs to one exact request. The request hash covers the operation, run, tool, tool version, policy, user, org and arguments. If any of those change, the old approval does not apply.
+
+Latch checks that binding again before approval and execution. If you reload a policy or change a tool's version, old pending actions return `OPERATION_CONFLICT`. Check what happened to the original action before creating a replacement.
+
+Records created by version 0.1.0 used an older request hash. After this change, pending actions with that hash are refused. Keep the database and use `operation_status` to look up earlier work. Do not clear reservations to make an old action run again.
 
 The `changed_after_approval` scenario shows this. Sam asks for a 60.00 refund and Jordan approves it. Then Sam sends 70.00 under the same operation id. That is `OPERATION_CONFLICT`, and the original 60.00 request still runs once.
 

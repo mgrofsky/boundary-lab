@@ -1,6 +1,8 @@
 # How Redline works
 
-Redline reads an answer a chatbot gave, works out which rule the answer is about, and asks a second model to grade it against that one rule. Then it compares those grades with labels I wrote by hand, so you can see how often the rig is right.
+Redline reads an answer a chatbot gave, picks a rule to check, and usually asks a second model to grade it. You can also let the router decide some answers on its own. It compares the results with labels written by hand so you can see where the checks work and where they miss.
+
+For commands you can copy, see the [Redline README](../redline/README.md) and [routing guide](routing.md).
 
 ## The data flow
 
@@ -10,44 +12,73 @@ Redline reads an answer a chatbot gave, works out which rule the answer is about
           |                       |                              |
           |                       v                              v
           |              embed each (prompt + answer)     send to target model
-          |              average per rule = one center    (small open model)
+          |              build rule centers or clusters
           |                       |                              |
           v                       v                              v
     +-------------------------------------------------------------------+
     |  for each answer to grade:                                        |
-    |   1 route   embed it, pick the closest center, abstain if far     |
-    |   2 gate    rule + user type -> one sentence the judge must apply |
-    |   3 judge   second model, ONE rule, train examples only, JSON     |
-    |   4 record  outcome pass|fail|review, decided_by, reason_code     |
+    |   1 route   pick a rule, abstain, or optionally decide an answer   |
+    |   2 gate    rule + user type -> sentence for answers needing judge |
+    |   3 judge   second model, ONE rule, train examples only, JSON      |
+    |   4 record  outcome pass|fail|review, decided_by, reason_code       |
     +-------------------------------------------------------------------+
           |
           v
-    metrics vs hand labels (holdout set and labeled attack run)
-    -> results/summary.json -> README table (generated, never typed)
+    compare with hand labels (holdout set and labeled attack run)
+    -> results/summary.json -> redline/README.md table (generated, never typed)
 ```
 
-Three things go in. The rules live in policy/rules.yaml. The labeled examples live in data/train.jsonl, and each one is a user message, the assistant's answer, and my label saying whether the answer followed its rule. The attack prompts live in data/attacks.jsonl, and they get sent to the model under test so there are fresh answers to grade.
+Three things go in. The rules live in `policy/rules.yaml`. The labeled examples live in `data/train.jsonl`. Each example has a user message, the assistant's answer, and a label saying whether it followed its rule. The attack prompts live in `data/attacks.jsonl`. Sending them to the chatbot under test gives you answers to grade.
 
 ## Step 1: route
 
-First the rig has to know which rule an answer is about. It turns the user message and the answer into an embedding, which is a list of numbers that captures what the text means. Texts about the same thing end up with similar numbers. For each rule, the rig averages the embeddings of that rule's train examples into one point called a center. There is also a center for off topic answers. A new answer goes to whichever center it is closest to. If it is far from every center, the router abstains and the answer goes to a person for review. The cutoff for "far" is picked from the train file alone: it is the highest value at which 95 percent of train examples still get routed. An answer that routes to off topic passes, because no rule applies to it. If the router picks the wrong rule, the judge grades the answer against the wrong rule, so a routing miss can hide a rule break.
+The router turns the user message and answer together into an embedding, a list of numbers used to compare texts. A high similarity score means the model placed two texts close together. It does not prove that they mean the same thing or follow the same rule.
+
+There are two ways to build the router:
+
+- **Average centers (`center`, the default):** group the train examples by their rule and average each group's embeddings. That average is called a centroid, or center. A new answer goes to the closest center. Examples labeled `none` provide a center for off-topic answers.
+- **K-means (`kmeans`):** divide the train embeddings into a chosen number of clusters based on how close they are. Each cluster gets the rule carried by the most members. Several clusters can get the same rule, and a cluster can mix rules. A tie goes to the rule that sorts first. A new answer takes the rule of the closest cluster center.
+
+Both routers use a similarity cutoff picked from the train file alone. At least 95 percent of the train examples meet that cutoff when compared with their closest center. A new answer below it gets `review`. This records a need for review; it does not contact a person or create a review task.
+
+An answer routed to `none` passes without calling the judge. That is a routing decision, so a wrong off-topic match can miss a rule break. Either router can also pick the wrong rule and send the judge down the wrong path. Only one rule is checked per answer.
+
+### Optional decisions without the judge
+
+By default, a routed answer goes to the judge unless the router abstains or picks `none`. Turn on `--short-circuit` to let the router pass or fail some answers using the train labels.
+
+With average centers, the router also builds separate good and bad centers for each rule and user type. Both groups need at least five examples by default. The answer must be closer to one group by the configured margin, and the winning score must meet the routing cutoff. A closer good group gives a pass; a closer bad group gives a fail.
+
+With k-means, the router counts good and bad labels in the chosen cluster for the current user type. By default, it needs at least five members for that user type, all sharing one label. The purity setting can lower that required share, but an even split never decides. These counts include members across the cluster's rules, so agreement on a label does not mean agreement on a rule.
+
+If those conditions are not met, the answer goes to the judge. These shortcuts can save judge calls, but a group of similarly labeled examples can still give a wrong decision on a new answer. Check both missed violations and false alarms when trying them. The [routing guide](routing.md) covers the settings and saved comparisons.
 
 ## Step 2: gate
 
-Some rules depend on who is asking. The account data rule lets a verified customer hear their own balance, but not an anonymous one. The rule says who may get this kind of information. The gate turns that and the user type into one sentence the judge must apply. For an anonymous user on the account data rule, the sentence says that nothing in this category may be given to them, so any such detail in the answer breaks the rule. For a rule that allows the information for nobody, it says so. The gate never decides on its own. It can't, because it never reads the answer. A careful refusal and a leak look the same to it, so it hands its sentence to the judge and lets the judge read the answer.
+Some rules depend on who is asking. The account data rule lets a verified customer hear their own balance, but not an anonymous one. The gate turns the rule and user type into one sentence for the judge. For an anonymous user on the account data rule, it says that nothing in this category may be given to them.
+
+The gate does not read the answer or decide a verdict. It only supplies context for the judge. Answers already decided by the router skip this step and the judge.
 
 ## Step 3: judge
 
-The judge is a second model that grades one answer against one rule. Its prompt holds the rule sentence, the gate's sentence, a few good and bad train examples for that rule, the user message, and the answer to grade. The answer is wrapped in tags and labeled as data, so text inside it is not supposed to be read as instructions. The judge has to reply with JSON: a verdict of pass or fail, a severity from 0 to 1, a reason code from the rule's list, and one sentence saying why. If the reply is not valid JSON, or the verdict is anything other than pass or fail, the answer goes to review. A broken judge reply never counts as a pass. Every judge answer is saved to data/judge_cache.jsonl, keyed by a hash of the exact prompt text. That is what lets anyone replay the published run without a key.
+The judge is a second model that grades one answer against one rule. Its prompt holds the rule sentence, the gate's sentence, up to six good and six bad train examples for that rule, the user message, and the answer to grade. The answer is wrapped in tags and labeled as data. This helps separate it from the instructions, but does not guarantee the judge will ignore instructions inside it.
+
+The judge is asked for JSON with a pass or fail verdict, severity, reason code, and a short explanation. Invalid JSON, a reply that is not an object, or an unknown verdict becomes `review`. An unknown reason code becomes `OTHER`, and an invalid severity becomes empty without changing an otherwise valid verdict.
+
+Live judge call failures become `review`. Valid live grades can be saved to a cache, keyed by a hash of the exact grading prompt. Replay looks up those saved grades. A missing replay entry raises an error, so a new routing choice may need grades that the saved cache does not contain.
 
 ## Step 4: record
 
-Each answer ends up with one output record and one final outcome: pass, fail or review. The record says who decided, either the router (abstain or off topic) or the judge. It also carries the reason code, the judge's sentence, and the severity. There is never more than one verdict on a record, so there is nothing to reconcile later. Once every answer has a record, the rig compares the outcomes with my hand labels and writes the numbers to results/summary.json.
+Each completed answer gets one output record and one final outcome: pass, fail or review. The record includes the selected rule, router name, center or cluster number, similarity score, and whether a short circuit decided it. It says who decided, either the router or the judge, and gives a reason code and explanation. Router decisions have no severity score.
 
-## Why the judge is a different kind of model
+The report compares these outcomes with the hand labels and writes the numbers to `results/summary.json`. It also reports how often short circuits decided answers and how many of those decisions matched the labels.
 
-The model under test is a small open model. The judge comes from a different model family. Models from the same family tend to share blind spots: if one misses a certain kind of leak, its sibling may miss it too. A judge from another family is more likely to see what the target missed. Both are set with environment variables, so you can swap in any chat endpoint.
+## Choosing the judge
 
-## Why the judge only sees train examples
+The saved run used `llama3.2:3b` as the chatbot and `gemma3:27b` as the judge, both running locally on Ollama. You can change either model through environment variables. Trying a judge from another model family gives you another comparison, but does not establish that its grades are right. The hand labels are what let you check that.
 
-The judge's examples come only from data/train.jsonl. They are picked once, with a fixed seed, and written to judge_examples.json in the output folder so you can read the exact prompt. The holdout file, data/holdout.jsonl, is a set of labeled answers kept back for testing. Nothing in it is used to build the centers or to pick judge examples. If the judge had seen holdout answers as examples, it could score well by matching them, and the holdout number would tell you nothing about new answers.
+## Keep some examples back
+
+The router centers, clusters, cutoffs, and shortcut counts all come from the train file. The judge's examples also come only from that file. A fixed seed makes its example selection repeatable, and `judge_examples.json` records the selected examples in the output folder.
+
+The holdout file is a separate set of labeled answers for checking the result. Keeping it out of setup lets you try the checks on examples they have not used. If you keep changing the settings to improve the same holdout score, check the final choice on another fresh set too.

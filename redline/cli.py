@@ -261,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     readme.add_argument(
         "--summary", default="results/summary.json", help="the summary the table is built from"
     )
-    readme.add_argument("--readme", default="README.md")
+    readme.add_argument("--readme", default="redline/README.md")
     readme.set_defaults(func=cmd_readme)
     return parser
 

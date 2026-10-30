@@ -12,6 +12,7 @@ from boundary_latch import ConfigError, Decision, SQLiteStore, live
 from boundary_latch.demo import terminal
 from boundary_latch.demo.northwind import Northwind
 from boundary_latch.demo.profiles import context
+from boundary_latch.demo.session import DemoSession
 from boundary_latch.demo.tools import build_latch
 from boundary_latch.live import LiveConfig, MalformedResponse, parse_tool_calls, run_turn
 
@@ -181,6 +182,34 @@ def test_denied_call_reports_code_and_explanation(session):
     tool = next(e for e in events if e["event"] == "tool")
     assert tool["code"] == "ACCESS_DENIED"
     assert "ACCESS_DENIED" in client.requests[1][-1]["content"]
+
+
+@pytest.mark.parametrize(
+    "name,arguments,expected",
+    [
+        ("lookup_account", {"account_id": "A2"}, "ACCESS_DENIED"),
+        ("approve", {"operation_id": "unapproved-refund"}, "UNKNOWN_TOOL"),
+        ("issue_refund", {"account_id": "A1", "amount_minor": "bad"}, "INVALID_ARGUMENTS"),
+    ],
+)
+def test_real_demo_returns_denials_to_model_without_dispatch(name, arguments, expected):
+    session = DemoSession()
+    client = FakeClient([
+        tool_response(call(name, arguments)),
+        text_response("The call was blocked."),
+    ])
+    try:
+        before = session.nw.snapshot()
+        events = run_turn(session, "sam", "Try the call", client, config())
+        tool = next(event for event in events if event["event"] == "tool")
+        assert tool["code"] == expected
+        assert expected in client.requests[1][-1]["content"]
+        assert events[-1] == {"event": "assistant", "text": "The call was blocked."}
+        assert session.nw.snapshot() == before
+        assert session.status(tool["operation_id"])["found"] is False
+        assert not any(row["event"] == "execute" for row in session.audit()["rows"])
+    finally:
+        session.close()
 
 
 def test_from_env_needs_base_url_and_model(monkeypatch):

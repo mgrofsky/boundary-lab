@@ -24,7 +24,7 @@ from .models import (
 )
 from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
-from .store import RECORDED, ApprovalExists, OperationExists, SQLiteStore
+from .store import OperationExists, SQLiteStore
 
 RESERVE_CODES = {
     "denied": Code.DENIED_BY_APPROVER,
@@ -73,7 +73,7 @@ class Latch:
         now = self.clock()
         limits = self.policy.limits
         started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
-        if now > started_at + limits.run_lifetime_seconds:
+        if now >= started_at + limits.run_lifetime_seconds:
             return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
 
         # A resubmitted operation id does not count against the run limit.
@@ -99,9 +99,13 @@ class Latch:
         if code is not None:
             return self._deny_prepare(ctx, tool, operation_id, code, now)
 
+        now = self.clock()
+        if now >= started_at + limits.run_lifetime_seconds:
+            return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
+
         needs_approval = self._needs_approval(tp, args)
         canonical = json.dumps(args.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-        request_hash = self._request_hash(ctx, spec, canonical)
+        request_hash = self._request_hash(ctx, spec, canonical, operation_id)
 
         if existing is not None:
             if existing["request_hash"] != request_hash:
@@ -163,11 +167,12 @@ class Latch:
 
         if approver.org_id != prepared.org_id:
             return answer(Code.IDENTITY_MISMATCH)
+        binding = self._validate_prepared(prepared)
+        if isinstance(binding, Code):
+            return answer(binding)
+        _, tp, _ = binding
         if approve and not prepared.needs_approval:
             return answer(Code.APPROVAL_REQUIRED, "This action does not need approval.")
-        tp = self.policy.tools.get(prepared.tool)
-        if tp is None:
-            return answer(Code.NO_POLICY)
         if (
             tp.approve_permission is None
             or tp.approve_permission not in approver.permissions
@@ -175,36 +180,28 @@ class Latch:
         ):
             return answer(Code.APPROVER_NOT_ALLOWED)
 
-        row = self.store.get_operation(prepared.org_id, prepared.operation_id)
-        if row is None or row["request_hash"] != prepared.request_hash:
-            return answer(Code.OPERATION_CONFLICT)
-        if row["state"] in RECORDED:
-            return answer(Code.ALREADY_RECORDED)
-        if row["state"] == "denied":
-            return answer(Code.DENIED_BY_APPROVER)
-        if self.store.get_approval(prepared.org_id, prepared.operation_id) is not None:
-            return answer(Code.APPROVAL_USED)
-
         limits = self.policy.limits
-        started_at, _ = self.store.touch_run(prepared.org_id, prepared.run_id, now)
-        expires_at = min(
-            now + limits.approval_lifetime_seconds, started_at + limits.run_lifetime_seconds
+        result = self.store.decide_approval(
+            prepared.org_id,
+            prepared.operation_id,
+            prepared.run_id,
+            approver.user_id,
+            prepared.request_hash,
+            "approved" if approve else "denied",
+            self.clock,
+            limits.run_lifetime_seconds,
+            limits.approval_lifetime_seconds,
         )
-        decision = "approved" if approve else "denied"
-        try:
-            self.store.record_approval(
-                prepared.org_id,
-                prepared.operation_id,
-                approver.user_id,
-                prepared.request_hash,
-                decision,
-                now,
-                expires_at,
-            )
-        except ApprovalExists:
-            return answer(Code.APPROVAL_USED)
+        failures = {
+            "already_recorded": Code.ALREADY_RECORDED,
+            "denied": Code.DENIED_BY_APPROVER,
+            "approval_used": Code.APPROVAL_USED,
+            "hash_mismatch": Code.OPERATION_CONFLICT,
+            "run_expired": Code.RUN_EXPIRED,
+        }
+        if result != "recorded":
+            return answer(failures[result])
         code = Code.APPROVED if approve else Code.DENIED_BY_APPROVER
-        self.store.set_state(prepared.org_id, prepared.operation_id, decision, str(code), now)
         return answer(code)
 
     def execute(self, prepared: PreparedAction, ctx: UserContext) -> ExecutionResult:
@@ -285,20 +282,15 @@ class Latch:
         )
         if not same:
             return refuse(Code.IDENTITY_MISMATCH)
-        spec = self._tools.get(prepared.tool)
-        if spec is None:
-            return refuse(Code.UNKNOWN_TOOL)
-        tp = self.policy.tools.get(prepared.tool)
-        if tp is None:
-            return refuse(Code.NO_POLICY)
-        try:
-            checked = spec.args_model.model_validate(prepared.arguments)
-        except ValidationError:
-            return refuse(Code.INVALID_ARGUMENTS)
+        binding = self._validate_prepared(prepared)
+        if isinstance(binding, Code):
+            return refuse(binding)
+        spec, tp, checked = binding
         code = self._check_access(ctx, spec, tp, checked)
         if code is not None:
             return refuse(code)
 
+        now = self.clock()
         limits = self.policy.limits
         started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
         result = self.store.reserve(
@@ -310,6 +302,7 @@ class Latch:
             prepared.needs_approval,
             started_at + limits.run_lifetime_seconds,
             limits.max_actions_per_run,
+            clock=self.clock,
         )
         if result == "already_recorded":
             row = self.store.get_operation(ctx.org_id, prepared.operation_id)
@@ -325,7 +318,7 @@ class Latch:
         if result != "reserved":
             return refuse(RESERVE_CODES[result])
 
-        args = spec.args_model.model_validate(prepared.arguments).model_dump()
+        args = checked.model_dump()
         info = CallInfo(
             operation_id=prepared.operation_id,
             run_id=prepared.run_id,
@@ -335,6 +328,38 @@ class Latch:
             tool_version=spec.version,
         )
         return spec, args, info
+
+    def _validate_prepared(
+        self, prepared: PreparedAction
+    ) -> Code | tuple[ToolSpec, ToolPolicy, BaseModel]:
+        """Bind the argument snapshot to the current registry, policy and stored operation."""
+        spec = self._tools.get(prepared.tool)
+        if spec is None:
+            return Code.UNKNOWN_TOOL
+        tp = self.policy.tools.get(prepared.tool)
+        if tp is None:
+            return Code.NO_POLICY
+        try:
+            checked = spec.args_model.model_validate(prepared.arguments)
+        except (ValidationError, ValueError, AttributeError, TypeError):
+            return Code.INVALID_ARGUMENTS
+        canonical = json.dumps(checked.model_dump(mode="json"), sort_keys=True,
+                               separators=(",", ":"))
+        expected_hash = self._request_hash(prepared, spec, canonical, prepared.operation_id)
+        needs_approval = self._needs_approval(tp, checked)
+        if (prepared.request_hash != expected_hash or prepared.tool_version != spec.version
+                or prepared.needs_approval != needs_approval):
+            return Code.OPERATION_CONFLICT
+        row = self.store.get_operation(prepared.org_id, prepared.operation_id)
+        if row is None or (
+            row["request_hash"], row["run_id"], row["user_id"], row["tool"],
+            row["tool_version"], bool(row["needs_approval"])
+        ) != (
+            expected_hash, prepared.run_id, prepared.user_id, spec.name,
+            spec.version, needs_approval
+        ):
+            return Code.OPERATION_CONFLICT
+        return spec, tp, checked
 
     def _finish(
         self, prepared: PreparedAction, outcome: str, code: Code, t0: float, value: Any = None
@@ -388,7 +413,10 @@ class Latch:
             return getattr(args, tp.approval.amount_field) > tp.approval.threshold_minor
         return False
 
-    def _request_hash(self, ctx: UserContext, spec: ToolSpec, canonical: str) -> str:
+    def _request_hash(
+        self, ctx: UserContext | PreparedAction, spec: ToolSpec, canonical: str,
+        operation_id: str,
+    ) -> str:
         body = json.dumps(
             {
                 "tool": spec.name,
@@ -396,6 +424,8 @@ class Latch:
                 "policy": self.policy.digest,
                 "user_id": ctx.user_id,
                 "org_id": ctx.org_id,
+                "run_id": ctx.run_id,
+                "operation_id": operation_id,
                 "args": canonical,
             },
             sort_keys=True,

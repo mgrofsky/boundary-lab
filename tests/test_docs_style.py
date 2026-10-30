@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 BANNED = [
@@ -45,6 +47,7 @@ def walk(folder, globs):
 
 def prose_files():
     yield ROOT / "README.md"
+    yield ROOT / "redline" / "README.md"
     yield from walk(ROOT / "docs", ["*.md"])
 
 
@@ -83,9 +86,9 @@ def test_no_exclamation_marks_in_prose():
     assert found == []
 
 
-def readme_prose():
+def readme_prose(path):
     lines, fenced = [], False
-    for line in (ROOT / "README.md").read_text().splitlines():
+    for line in path.read_text().splitlines():
         if line.lstrip().startswith("```"):
             fenced = not fenced
             continue
@@ -95,7 +98,8 @@ def readme_prose():
     return without_comments("\n".join(lines))
 
 
-def test_no_long_sentences_in_readme():
-    sentences = re.split(r"\. |\? |\n\n", readme_prose())
+@pytest.mark.parametrize("path", [ROOT / "README.md", ROOT / "redline" / "README.md"])
+def test_no_long_sentences_in_readme(path):
+    sentences = re.split(r"\. |\? |\n\n", readme_prose(path))
     long = [s.strip() for s in sentences if len(s.split()) > MAX_WORDS]
     assert long == []

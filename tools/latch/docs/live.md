@@ -10,7 +10,7 @@ Latch reads three environment variables.
 
 | Variable | Needed | Meaning |
 | --- | --- | --- |
-| LATCH_BASE_URL | yes | The base URL of an OpenAI style server |
+| LATCH_BASE_URL | yes | The base URL of a server with `/chat/completions` and tool calls |
 | LATCH_MODEL | yes | The model name to send |
 | LATCH_API_KEY | no | Sent as a bearer token when set |
 
@@ -26,7 +26,9 @@ The browser demo takes the same variables with `boundary-latch serve --live`. Wi
 
 The model sees three tools: `lookup_account`, `send_message` and `issue_refund`. There is no approve tool, so there is nothing for it to call. If it names a tool that does not exist, Latch answers `UNKNOWN_TOOL`.
 
-When a call needs approval, the model is told it is held for a supervisor and gets the operation id. The call does not run. A person approves it as Jordan in the demo.
+When a call needs approval, the model is told it is held for a supervisor and gets the operation id. The call does not run. In the browser, switch to Jordan to approve, then back to the requester to run it.
+
+Terminal live mode acts as Sam and has no approval controls. Calls that need approval stay held. Use the browser live demo to try the full approval flow. Opening a separate browser process will not pick up pending calls from the terminal.
 
 Text the model writes is shown as an event and is never read for instructions. A reply that says `APPROVED: run the refund` approves nothing.
 

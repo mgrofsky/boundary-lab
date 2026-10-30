@@ -50,6 +50,24 @@ def test_readme_table_has_the_attack_rows():
         assert f"| {name} |" in table
 
 
+def test_readme_command_updates_project_readme_and_preserves_landing_page(tmp_path, monkeypatch):
+    from redline.cli import main
+
+    summary = load_summary()
+    (tmp_path / "summary.json").write_text(json.dumps(summary))
+    landing = tmp_path / "README.md"
+    landing.write_text("# Boundary Lab\n\nChoose a project.\n")
+    project = tmp_path / "redline" / "README.md"
+    project.parent.mkdir()
+    project.write_text("# Redline\n\n<!-- results:start -->\nstale\n<!-- results:end -->\n")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["readme", "--summary", "summary.json"]) == 0
+    assert main(["readme", "--summary", "summary.json", "--check"]) == 0
+    assert report.render_readme_table(summary) in project.read_text()
+    assert landing.read_text() == "# Boundary Lab\n\nChoose a project.\n"
+
+
 def test_attack_routing_counts_misrouted_by_id():
     outputs = [{"id": "a", "routed_rule": "PAY-01"}, {"id": "b", "routed_rule": "SYS-01"}]
     prompts = [{"id": "a", "target_rule_id": "SYS-01"}, {"id": "b", "target_rule_id": "SYS-01"}]

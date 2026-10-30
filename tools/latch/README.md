@@ -1,8 +1,8 @@
 # Latch
 
-Latch checks AI tool calls before they run. It sits between the model and your app's functions, and the model only gets to name a tool and give arguments. Your app decides who the user is, and Latch decides whether that user may make this exact call right now.
+Latch checks tool calls before they run. It sits between the model and your app's functions, and the model only gets to name a tool and give arguments. Your app decides who the user is, and Latch decides whether that user may make this exact call right now.
 
-Latch is part of Boundary Lab. It is a separate package from Redline and does not share any code with it. Redline grades answers after they are written. Latch blocks calls before they happen.
+Latch is part of [Boundary Lab](../../README.md). It is a separate package from [Redline](../../redline/README.md) and does not share any code with it. Redline grades answers after they are written. Latch blocks calls before they happen.
 
 ## What it checks
 
@@ -46,7 +46,9 @@ For the same scenarios in a browser:
 
     boundary-latch serve
 
-Open http://127.0.0.1:8765. You can run each scenario from a button, act as a sample identity, propose a refund over $50, switch to Jordan, approve it, and watch the balance move once. The server only listens on 127.0.0.1. To see the codes without any interface, run `boundary-latch scenarios`, or add `--json` for machine output.
+Open http://127.0.0.1:8765. Run a scenario from a button, or try the steps yourself: act as Sam, propose a refund over $50, then switch to Jordan and approve it. Switch back to Sam and click Run. The balance moves once.
+
+The server only listens on 127.0.0.1. To see the codes without any interface, run `boundary-latch scenarios`, or add `--json` for machine output.
 
 Check a policy file with `boundary-latch check policy.toml`. Copy a starter project with `boundary-latch init my-app`.
 

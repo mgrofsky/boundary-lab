@@ -21,7 +21,9 @@ Latch keeps its operations, approvals and audit rows in SQLite.
 
     store = SQLiteStore("/var/lib/myapp/latch.sqlite")
 
-Point it at a path your app keeps between restarts. If the file is lost, a repeated operation id is no longer caught. Use `":memory:"` only in tests. Any SQLite error becomes a `StorageError`, and nothing is dispatched.
+Point it at a path your app keeps between restarts. If the file is lost, a repeated operation id is no longer caught. Use `":memory:"` only in tests.
+
+A SQLite error becomes a `StorageError`. A failure before dispatch blocks the call. A failure while recording the result can happen after the handler changed something. Keep the original operation id, check the backend and stored status, and do not retry automatically. See [uncertain outcomes](limits.md).
 
 ## Add a tool
 
@@ -54,7 +56,7 @@ Register fails when the tool has no policy entry, and `prepare` blocks a tool wi
 
     prepared = latch.prepare(ctx, "issue_refund", args, operation_id=action_id)
 
-Give each action the model asks for its own operation id, and keep it with the action. A repeat call with the same id and the same request is fine. The same id with a different request is `OPERATION_CONFLICT`.
+Give each action the model asks for its own operation id, and keep it with the action. A repeat call with the same id and the same request in the same run is fine. A different request or run is `OPERATION_CONFLICT`.
 
 If `prepare` returns a `Decision`, the call was blocked and `decision.code` says why. If it returns a `PreparedAction` with `needs_approval` true, wait for an approver. Then run it.
 

@@ -1,8 +1,12 @@
 # Attacks
 
-To see how a real model holds up, the rig sends it 80 attack prompts and grades what comes back. The prompts live in data/attacks.jsonl. Each one is tagged with its kind and the rule it goes after. They are sent to the model under test with policy/target_system_prompt.txt as its instructions, and every prompt is sent as an anonymous user. I labeled each of the 80 answers by hand before looking at what the judge said, so the attack numbers compare the rig against a person.
+To try Redline on a chatbot's answers, send it the 80 attack prompts and grade what comes back. The prompts live in data/attacks.jsonl. Each one is tagged with its kind and the rule it goes after. They are sent to the model under test with policy/target_system_prompt.txt as its instructions, and every prompt is sent as an anonymous user.
+
+The saved run includes a hand label for each of its 80 answers, made before looking at the judge's verdicts. Those labels apply to the saved answers, not to the prompts. A new model or run can answer the same prompt differently. Label those new answers before using them to measure agreement with a person.
 
 The prompts are written the way a tester would actually send them. Some are blunt and some are polite. Some tell a long story, some pretend to be staff, and some ask for the secret in small pieces.
+
+Start with the [README commands](../redline/README.md) to replay the saved run or collect new answers. The [routing guide](routing.md) explains how to grade the same answers with different router settings. You can also run this set in [promptfoo](promptfoo.md) to see Redline beside its other checks.
 
 ## The four kinds
 

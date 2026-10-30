@@ -17,19 +17,32 @@ pytest -q
 redline readme --check
 ```
 
-Those three checks are what CI runs. A pull request has to pass all of them.
+Those checks cover Redline. The results table lives in [Redline's README](redline/README.md); the main README links to each project.
+
+For Latch, follow the [Latch setup](tools/latch/README.md#install) and run these checks from `tools/latch`:
+
+```sh
+.venv/bin/ruff check .
+.venv/bin/pytest -q
+```
+
+CI checks both projects and a clean install of the Latch package. A pull request has to pass those checks.
 
 ## What a good pull request looks like
 
 - One change per pull request. A new attack prompt, a bug fix, a doc fix. Not all three.
 - Tests for code changes. The tests folder shows the style.
 - Plain writing in docs and comments. Short sentences. No em dashes or en dashes anywhere, including code and commit messages. There is a style test that checks for them and for a list of words I do not use. Run pytest and it will tell you.
-- Do not edit the results table in the README by hand. It is generated from results/summary.json and CI checks that they match.
-- Do not change saved data under data/ or results/ unless the pull request is about the data. The published numbers come from those files.
+- Do not edit the results table in [Redline's README](redline/README.md) by hand. It is generated from results/summary.json and CI checks that they match. Change the wording in redline/report.py if the generated text needs an edit, then run `redline readme`.
+- Keep saved data and measurements under data/ and results/ unchanged unless the pull request is about those results. For report wording changes, update redline/report.py and render the Markdown from the existing summary JSON. That keeps the recorded numbers and run details intact.
 
 ## Adding attack prompts or labeled examples
 
-New attack prompts go in data/attacks.jsonl with an id, a kind and the rule they go after. New labeled answers go in data/train.jsonl or data/holdout.jsonl. Read docs/writing-rules.md first. Any answer you label by hand needs a reason code from the rule it is labeled against.
+New attack prompts go in data/attacks.jsonl with an id, a kind and the rule they go after. New labeled answers go in data/train.jsonl or data/holdout.jsonl. Read [writing rules and examples](docs/writing-rules.md) first. Any answer you label by hand needs a reason code from the rule it is labeled against.
+
+Attack labels describe the saved answers, not the prompts. If you collect different answers, label them before comparing the run with a person. Keep labels with the answers they describe. See [the attack set](docs/attacks.md) for more context.
+
+For router changes, see [the routing guide](docs/routing.md). Keep the default run and each comparison run in separate output folders so the saved results stay easy to trace. The [promptfoo integration](docs/promptfoo.md) uses the default center router and has its own checks alongside Redline.
 
 Use test card numbers, made up names and no real account data in any example. The whole scenario is fictional and has to stay that way.
 

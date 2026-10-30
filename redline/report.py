@@ -155,29 +155,39 @@ def _attack_sentence(kind: str, k: dict) -> str:
 
 
 def _router_sentence(meta: dict) -> str:
-    k = f" with k of {meta['k']}" if meta.get("k") else ""
-    start = f"This run used the {meta['router']} router{k}."
+    if meta.get("k"):
+        start = f"This run used k-means with {meta['k']} clusters."
+    else:
+        start = "This run used center matching."
     if not meta["short_circuit"]:
-        return f"{start} Short circuit was off, so the router never decided an answer alone."
+        return f"{start} The shortcut was off. Off-topic matches still passed without the judge."
+    if meta.get("k"):
+        return (
+            f"{start} The shortcut needed at least {meta['min_members']} examples for the user's "
+            f"type in the matched cluster, with at least {_pct(meta['purity'])} sharing one label."
+        )
     return (
-        f"{start} Short circuit was on, with purity {meta['purity']}, at least "
-        f"{meta['min_members']} members and a margin of {meta['margin']:.2f}."
+        f"{start} The shortcut needed at least {meta['min_members']} good and "
+        f"{meta['min_members']} bad examples for the matched rule and user type. "
+        f"The winning match needed a score gap of at least {meta['margin']:.2f} "
+        "and had to meet the router's cutoff."
     )
 
 
 def _short_circuit_sentences(set_name: str, sc: dict, meta: dict | None) -> list[str]:
     if sc["count"]:
         line = (
-            f"On the {set_name} the router decided {sc['count']} answers on its own, "
+            f"On the {set_name} the router used the shortcut for {sc['count']} answers, "
             f"{_pct(sc['share'])} of all of them. {sc['right']} of those matched the hand label."
         )
         if sc["wrong_ids"]:
             line += f" The wrong ones were {', '.join(sc['wrong_ids'])}."
     else:
-        line = f"On the {set_name} the router decided no answers on its own."
+        line = f"On the {set_name} the router did not use the shortcut."
     if meta:
         line += (
-            f" That run made {meta['judge_calls']} judge calls and took {meta['seconds']} seconds."
+            f" {meta['judge_calls']} answers went to the judge, including saved-grade lookups. "
+            f"Grading took {meta['seconds']} seconds."
         )
     return [line, ""]
 
@@ -188,20 +198,29 @@ def _short_circuit_section(summary: dict) -> list[str]:
         return []
     run = summary.get("run") or {}
     meta = run.get("holdout") or run.get("attack")
-    lines = ["## Routing and short circuit", ""]
+    lines = ["## Routing and the shortcut", ""]
     if meta:
         lines += [_router_sentence(meta), ""]
     else:
         lines += ["No run meta files were found, so the router settings are not recorded.", ""]
     lines += [
         (
-            "A short circuit is an answer the router passed or failed by itself, because it "
-            "landed among labeled train answers that agree, so no judge call was made."
+            "The --short-circuit option lets the router pass or fail some answers using the "
+            "labeled examples, without asking the judge. Center matching compares good and bad "
+            "groups. K-means counts labels within the matched cluster for the user's type."
         ),
         "",
     ]
     for key, set_name in (("holdout", "holdout set"), ("attack", "attack run")):
         lines += _short_circuit_sentences(set_name, summary["short_circuit"][key], run.get(key))
+    lines += [
+        (
+            "These times cover grading after router setup. The saved settings don't say which "
+            "grades came from live calls or the cache. The judge count includes both, so it "
+            "isn't a count of network requests or a measure of live-model speed."
+        ),
+        "",
+    ]
     return lines
 
 
@@ -212,6 +231,9 @@ def render_report(summary: dict) -> str:
     good = summary["end_to_end"]["good"]
     prompts, breaks, caught = _attack_totals(summary)
     routing = summary["attack_routing"]
+    holdout_rules = summary["judge"]["holdout"]["per_rule"]
+    holdout_count = sum(rule["support"] for rule in holdout_rules.values())
+    off_topic_count = holdout_rules.get("none", {}).get("support", 0)
     good_passed = 100 - round(good["wrongly_failed"] * 100) - round(good["sent_to_review"] * 100)
     lines = [
         "# Results report",
@@ -223,7 +245,8 @@ def render_report(summary: dict) -> str:
         ),
         "",
         (
-            f"The judge model was {', '.join(summary['judge_model']) or 'not recorded'}. The hash "
+            f"The judge model was recorded as {', '.join(summary['judge_model']) or 'unknown'}. "
+            "These names come from the cache file, not a separate check of the model. The hash "
             "of the judge cache file is in summary.json."
         ),
         "",
@@ -235,8 +258,9 @@ def render_report(summary: dict) -> str:
         "",
         (
             f"The router picked the right rule for {_pct(router['holdout_accuracy'])} of the "
-            "56 holdout answers, the 8 off topic ones included. The holdout answers were never "
-            "used to set up the router or the judge."
+            f"{holdout_count} holdout answers, the {off_topic_count} off topic ones included. "
+            "Keep these answers separate from the examples used to set up the router and judge. "
+            "The report doesn't check that separation for you."
         ),
         "",
         (
@@ -246,22 +270,23 @@ def render_report(summary: dict) -> str:
         "",
         (
             f"It abstained on {_pct(router['abstain_rate'])} of them. An abstain means the "
-            "answer was not close to any rule, so it goes to a person."
+            "answer was not close enough to a center, so it is marked review. "
+            "Redline records that result; it doesn't send it to a person."
         ),
         "",
         *_short_circuit_section(summary),
         *_judge_section(
-            "The judge on the holdout set", summary["judge"]["holdout"], "holdout answers", True
+            "Final decisions on the holdout set", summary["judge"]["holdout"], "holdout answers", True
         ),
         *_judge_section(
-            "The judge on the attack run", summary["judge"]["attack"], "attack answers", False
+            "Final decisions on the attack run", summary["judge"]["attack"], "attack answers", False
         ),
         "## End to end on the holdout set",
         "",
         (
             f"Of the answers that broke a rule, the rig caught {_pct(bad['caught'])}. "
-            f"It missed {_pct(bad['missed'])} and sent {_pct(bad['sent_to_review'])} to a "
-            "person for review."
+            f"It passed {_pct(bad['missed'])} by mistake and marked "
+            f"{_pct(bad['sent_to_review'])} for review."
         ),
         "",
         (
@@ -279,11 +304,11 @@ def render_report(summary: dict) -> str:
         ),
         "",
         (
-            "The per rule numbers are grouped by the rule each attack targeted. The judge graded "
-            "each answer against the rule the router picked, which differed from the target for "
-            f"{routing['misrouted']} of the {routing['total']} attack answers. When the router "
-            "picks the wrong rule the judge reads the answer under the wrong rule, so a prompt "
-            "leak that talks about payments can pass as a payment answer."
+            "The per rule numbers are grouped by the rule each attack targeted. The router "
+            "picked a different rule or no rule for "
+            f"{routing['misrouted']} of the {routing['total']} attack answers. When the judge is "
+            "used, it checks the rule the router picked. A wrong match can hide a violation, "
+            "such as leaked instructions in an answer about payments."
         ),
         "",
         *(
@@ -457,6 +482,24 @@ def render_comparison(rows: list[dict]) -> str:
         (
             "This file is written by `redline compare`. Each row is one run folder, scored on "
             "the holdout set and the attack run."
+        ),
+        "",
+        (
+            "Center means one average center per rule. K-means groups similar examples into "
+            "clusters. With short circuit on, the router can pass or fail some answers using "
+            "the labeled examples, without asking the judge."
+        ),
+        "",
+        (
+            "Start with breaks caught and false alarms, called cry wolf in the table. "
+            "Short circuit right shows how many shortcut decisions matched the hand labels. "
+            "None means the shortcut made no decisions."
+        ),
+        "",
+        (
+            "Judge calls includes cached grades and replay lookups, not just network requests. "
+            "Seconds excludes router setup. These files don't record live calls separately, "
+            "so the times don't show whether one router makes live models faster."
         ),
         "",
         "| " + " | ".join(headers) + " |",

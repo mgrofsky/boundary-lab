@@ -1,6 +1,6 @@
 # Writing rules
 
-This page shows how to add a rule and write the examples that go with it. The rig only knows what the rules file and the labeled examples tell it, so most of the work is in writing those well.
+This page shows how to add a rule and write the examples that go with it. The rules and labeled examples shape what gets checked, so most of the work is in writing those well. Start with the [README](../redline/README.md) for running the tool or the [routing guide](routing.md) for choosing a router.
 
 ## Adding a rule
 
@@ -37,14 +37,16 @@ A clear label is one a second reader would give without asking you. Some things 
 - Pick the code for the specific break. Reading out a balance is DATA_DISCLOSED. Changing the mailing address without checking who is asking is IDV_SKIP.
 - Include good answers that refuse. A polite "I need to verify you first" is a good answer, and the judge needs to see that a refusal passes.
 - Use both user types where the rule allows both. Include a few bad answers to verified users too, such as giving a verified customer someone else's bill.
-- Keep good and bad examples on the same topic. The router groups a rule's examples by what they talk about, so a bad example about payments and a good one about the weather would pull the center apart.
-- Vary the wording and the length. If every bad example starts the same way, the judge learns the opening line instead of the rule.
+- Keep good and bad examples about the rule they carry. The default router averages them into one center per rule. K-means groups them by similarity before choosing a rule for each cluster. Unrelated examples can confuse either router.
+- Vary the wording and the length. If every bad example starts the same way, the judge may rely on the opening line instead of the rule.
 - Use made up data only. No real names, no numbers that look like real accounts, and only fake card numbers such as 4111 1111 1111 1111.
 
 ## How many examples, and the holdout split
 
-The train file has 20 good and 20 bad examples per rule, plus 20 off topic answers with rule_id `none`. The off topic answers give the router a center for things like small talk and weather, so those answers don't get forced onto a rule.
+The included train file has 20 good and 20 bad examples per rule, plus 20 off-topic answers with rule_id `none`. Those off-topic examples give the routers a way to pick `none` for things like small talk and weather. A wrong match to `none` can still let a rule break pass.
 
-The holdout file has 6 good and 6 bad examples per rule, plus 8 off topic. The holdout file is kept back for testing. It is never used to build the router's centers or to pick the judge's examples, so the holdout numbers show how the rig does on answers it has never seen.
+The included holdout file has 6 good and 6 bad examples per rule, plus 8 off-topic answers. These counts describe the sample data; your own rules do not need those exact counts. Include both good and bad answers, and enough different situations to check the behavior you care about. Look at results by rule as well as the overall score, since large groups can hide misses in small ones.
 
-That only works if the holdout answers are really new. Don't copy a train example and change a few words. Write a different situation in different words. If you add a rule, add its 40 train examples and its 12 holdout examples at the same time, and keep the counts the same for every rule so no rule gets more weight than the others.
+Keep some labeled answers back for testing. They should not be used to build router centers or clusters, set the cutoff, count labels for shortcuts, or pick judge examples. Don't copy a train example and change a few words. Write a different situation in different words. If you add a rule, add examples for setting it up and separate examples for checking it.
+
+If you try optional short circuits, the user types and labels matter too. The average-center shortcut needs at least five good and five bad train examples for the selected rule and user type by default. The k-means shortcut needs at least five members for that user type in the selected cluster, all sharing one label by default. Meeting those counts allows a shortcut; it does not make it correct. See the [routing guide](routing.md) for settings and ways to compare the results.

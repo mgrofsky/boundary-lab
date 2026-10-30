@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -189,6 +190,51 @@ class SQLiteStore:
                 raise StorageError(f"get_approval failed: {exc}") from exc
             return None if row is None else dict(row)
 
+    def decide_approval(
+        self, org_id: str, operation_id: str, run_id: str, approver_id: str,
+        expected_hash: str, decision: str, clock: Callable[[], float],
+        run_lifetime: int, approval_lifetime: int,
+    ) -> str:
+        """Record a decision and transition its still-pending operation atomically."""
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                now = clock()
+                op = self._conn.execute(
+                    "SELECT * FROM operations WHERE org_id = ? AND operation_id = ?",
+                    (org_id, operation_id),
+                ).fetchone()
+                run = self._conn.execute(
+                    "SELECT started_at FROM runs WHERE org_id = ? AND run_id = ?",
+                    (org_id, run_id),
+                ).fetchone()
+                if op is None or op["request_hash"] != expected_hash or op["run_id"] != run_id:
+                    result = "hash_mismatch"
+                elif op["state"] in RECORDED:
+                    result = "already_recorded"
+                elif op["state"] == "denied":
+                    result = "denied"
+                elif self.get_approval(org_id, operation_id) is not None:
+                    result = "approval_used"
+                elif run is None or now >= run["started_at"] + run_lifetime:
+                    result = "run_expired"
+                else:
+                    expires_at = min(now + approval_lifetime, run["started_at"] + run_lifetime)
+                    self.record_approval(org_id, operation_id, approver_id, expected_hash,
+                                         decision, now, expires_at)
+                    code = "APPROVED" if decision == "approved" else "DENIED_BY_APPROVER"
+                    self.set_state(org_id, operation_id, decision, code, now)
+                    result = "recorded"
+                self._conn.execute("COMMIT")
+            except (sqlite3.Error, StorageError) as exc:
+                if self._conn.in_transaction:
+                    try:
+                        self._conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                raise StorageError(f"decide_approval failed: {exc}") from exc
+            return result
+
     def reserve(
         self,
         org_id: str,
@@ -199,15 +245,20 @@ class SQLiteStore:
         needs_approval: bool,
         run_deadline: float,
         max_actions: int,
+        *,
+        clock: Callable[[], float] | None = None,
     ) -> str:
         """Reserve an operation for one dispatch inside a single transaction.
 
+        The persisted approval requirement and run identity are authoritative.
         Returns "reserved", "already_recorded", "denied", "approval_missing",
         "approval_expired", "run_expired", "run_limit" or "hash_mismatch".
         """
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
+                if clock is not None:
+                    now = clock()
                 result = self._reserve(
                     org_id,
                     operation_id,
@@ -240,16 +291,17 @@ class SQLiteStore:
         max_actions: int,
     ) -> str:
         op = self._conn.execute(
-            "SELECT state, request_hash FROM operations WHERE org_id = ? AND operation_id = ?",
+            "SELECT state, request_hash, run_id, needs_approval FROM operations"
+            " WHERE org_id = ? AND operation_id = ?",
             (org_id, operation_id),
         ).fetchone()
-        if op is None or op["request_hash"] != expected_hash:
+        if op is None or op["request_hash"] != expected_hash or op["run_id"] != run_id:
             return "hash_mismatch"
         if op["state"] in RECORDED:
             return "already_recorded"
         if op["state"] == "denied":
             return "denied"
-        if now > run_deadline:
+        if now >= run_deadline:
             return "run_expired"
         placeholders = ", ".join("?" for _ in RECORDED)
         used = self._conn.execute(
@@ -259,7 +311,7 @@ class SQLiteStore:
         ).fetchone()[0]
         if used >= max_actions:
             return "run_limit"
-        if needs_approval:
+        if op["needs_approval"]:
             approval = self._conn.execute(
                 "SELECT * FROM approvals WHERE org_id = ? AND operation_id = ?",
                 (org_id, operation_id),
