@@ -4,13 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boundary-latch"
-version = "0.1.0"
+version = "0.1.1"
 description = "Latch checks tool calls before they run"
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Matt Grofsky" }]
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.14.2"]
+
+[project.urls]
+Homepage = "https://github.com/mgrofsky/boundary-lab/tree/main/tools/latch"
+Documentation = "https://github.com/mgrofsky/boundary-lab/tree/main/tools/latch/docs"
+Source = "https://github.com/mgrofsky/boundary-lab"
+Issues = "https://github.com/mgrofsky/boundary-lab/issues"
 
 [project.optional-dependencies]
 demo = ["fastapi>=0.162.0", "uvicorn>=0.54.0"]

@@ -13,7 +13,7 @@ from .policy import load_policy, parse_policy
 from .reasons import Code, explain
 from .store import SQLiteStore
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "CallInfo",
