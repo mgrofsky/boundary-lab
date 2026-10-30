@@ -4,7 +4,7 @@ from redline.judge import http_transport
 
 
 class Target:
-    """The chat model being attacked, reached through a /chat/completions style endpoint."""
+    """Send messages to the chatbot under test through /chat/completions."""
 
     def __init__(self, base_url, model, api_key, system_prompt, transport=None):
         self.model = model

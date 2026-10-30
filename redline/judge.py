@@ -114,7 +114,7 @@ def _drop_think(raw: str) -> str:
 
 
 def parse_answer(raw: str, rule) -> dict:
-    """Turn the judge's raw text into a checked result. Anything odd becomes review."""
+    """Read the judge's reply. Invalid JSON or an unknown verdict gets review."""
     try:
         data = json.loads(_strip_fences(_drop_think(raw)))
     except (json.JSONDecodeError, TypeError):
@@ -173,11 +173,9 @@ def http_transport(base_url: str, api_key: str, timeout: float = 60.0):
 
 
 class ChatEndpointJudge:
-    """Grades answers by calling a /chat/completions style endpoint."""
+    """Grade answers by sending requests to /chat/completions."""
 
-    def __init__(
-        self, base_url, model, api_key, transport=None, cache_path=None, json_mode=True
-    ):
+    def __init__(self, base_url, model, api_key, transport=None, cache_path=None, json_mode=True):
         self.model = model
         self.transport = transport or http_transport(base_url, api_key)
         self.cache_path = Path(cache_path) if cache_path else None
@@ -263,7 +261,7 @@ class FakeJudge:
 
 
 def select(train_records: list[dict], seed: int = 0, per_label: int = MAX_EXAMPLES) -> dict:
-    """Pick up to per_label good and bad train examples per rule, the same way every time."""
+    """Pick up to per_label good and bad training examples per rule using a fixed seed."""
     rng = random.Random(seed)
     out = {}
     rule_ids = sorted({r["rule_id"] for r in train_records if r["rule_id"] != "none"})

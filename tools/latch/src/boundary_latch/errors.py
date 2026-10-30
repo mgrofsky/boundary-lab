@@ -3,12 +3,12 @@ class LatchError(Exception):
 
 
 class ConfigError(LatchError):
-    """The policy, the registry or the call shape is wrong. Not a denial."""
+    """The policy, registered tools, or request format is invalid."""
 
 
 class StorageError(LatchError):
-    """SQLite failed. Nothing was dispatched."""
+    """SQLite could not save or read Latch's records."""
 
 
 class ToolFailed(LatchError):
-    """A handler raises this to say the action did not happen and it is safe to report failed."""
+    """A tool raises this when it is sure the action did not happen."""

@@ -1,10 +1,10 @@
 # Contributing
 
-Thanks for taking a look. This project is small on purpose, and I want to keep it that way. Here is how to help without wasting your time or mine.
+I want these tools to stay small, useful, and easy to follow. If you want to help, start here.
 
 ## Before you start
 
-Open an issue first for anything bigger than a typo. Say what you want to change and why. That way we agree on the idea before you write the code.
+Open an issue before starting anything bigger than a typo fix. Say what you'd change and why it would help. That gives us a chance to agree on it before you write the code.
 
 ## Setting up
 
@@ -17,7 +17,7 @@ pytest -q
 redline readme --check
 ```
 
-Those checks cover Redline. The results table lives in [Redline's README](redline/README.md); the main README links to each project.
+Those commands check Redline. Its results table lives in [Redline's README](redline/README.md). The main README introduces Boundary Lab and links to each project.
 
 For Latch, follow the [Latch setup](tools/latch/README.md#install) and run these checks from `tools/latch`:
 
@@ -26,29 +26,29 @@ For Latch, follow the [Latch setup](tools/latch/README.md#install) and run these
 .venv/bin/pytest -q
 ```
 
-CI checks both projects and a clean install of the Latch package. A pull request has to pass those checks.
+GitHub runs these checks for both projects. It also installs Latch in a fresh environment to check the package. All of these checks need to pass before a pull request is merged.
 
 ## What a good pull request looks like
 
-- One change per pull request. A new attack prompt, a bug fix, a doc fix. Not all three.
-- Tests for code changes. The tests folder shows the style.
-- Plain writing in docs and comments. Short sentences. No em dashes or en dashes anywhere, including code and commit messages. There is a style test that checks for them and for a list of words I do not use. Run pytest and it will tell you.
-- Do not edit the results table in [Redline's README](redline/README.md) by hand. It is generated from results/summary.json and CI checks that they match. Change the wording in redline/report.py if the generated text needs an edit, then run `redline readme`.
-- Keep saved data and measurements under data/ and results/ unchanged unless the pull request is about those results. For report wording changes, update redline/report.py and render the Markdown from the existing summary JSON. That keeps the recorded numbers and run details intact.
+- Keep each pull request focused. A new attack prompt, a bug fix, and a docs update are usually separate changes.
+- Add tests for code changes. The existing tests show how to write them.
+- Keep docs and comments plain and direct. Use short sentences. Don't use em dashes or en dashes, including in code and commit messages. The style tests check for these and for words I don't use.
+- The results table in [Redline's README](redline/README.md) comes from `results/summary.json`. Don't edit the table by hand. To change its wording, edit `redline/report.py`, then run `redline readme`.
+- Keep saved data and measurements in `data/` and `results/` unchanged unless the pull request is about those results. To change report wording, edit `redline/report.py` and rebuild the Markdown from the saved summary files.
 
 ## Adding attack prompts or labeled examples
 
-New attack prompts go in data/attacks.jsonl with an id, a kind and the rule they go after. New labeled answers go in data/train.jsonl or data/holdout.jsonl. Read [writing rules and examples](docs/writing-rules.md) first. Any answer you label by hand needs a reason code from the rule it is labeled against.
+Put new attack prompts in `data/attacks.jsonl`, with an ID, a kind, and the rule they try to break. Put answers you've checked and labeled in `data/train.jsonl` or `data/holdout.jsonl`. Start with [writing rules and examples](docs/writing-rules.md).
 
-Attack labels describe the saved answers, not the prompts. If you collect different answers, label them before comparing the run with a person. Keep labels with the answers they describe. See [the attack set](docs/attacks.md) for more context.
+Each label needs a reason code from the rule you're checking. A label belongs to the answer you reviewed. If you collect a different answer, check and label that answer too. See [the attack examples](docs/attacks.md) for details.
 
-For router changes, see [the routing guide](docs/routing.md). Keep the default run and each comparison run in separate output folders so the saved results stay easy to trace. The [promptfoo integration](docs/promptfoo.md) uses the default center router and has its own checks alongside Redline.
+If you're changing how Redline picks a rule, read [the routing guide](docs/routing.md). Save each run in its own folder so you can tell which settings produced the results. The [promptfoo setup](docs/promptfoo.md) uses the default center matching and adds its own checks.
 
-Use test card numbers, made up names and no real account data in any example. The whole scenario is fictional and has to stay that way.
+Use test card numbers and made-up names. Keep real account data out of the examples.
 
 ## Merging
 
-Pull requests are squash merged, so the pull request title becomes the commit message. Write it as a plain sentence that says what changed. Branches are deleted after merge.
+Each pull request is merged as one commit. Its title becomes the commit message, so write a plain sentence that says what changed. The branch is deleted after the merge.
 
 ## License
 

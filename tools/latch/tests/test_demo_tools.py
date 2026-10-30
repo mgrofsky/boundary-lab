@@ -25,7 +25,7 @@ def sam():
 def test_profiles_are_labeled_sample_identities():
     assert set(PROFILES) == {"sam", "priya", "jordan"}
     for profile in PROFILES.values():
-        assert "sample identity" in profile["label"]
+        assert "example user" in profile["label"]
     jordan = context("jordan", "run9")
     assert jordan.org_id == "northwind"
     assert jordan.run_id == "run9"

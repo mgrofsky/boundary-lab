@@ -33,7 +33,7 @@ def test_init_refuses_a_nonempty_directory(tmp_path, capsys):
     capsys.readouterr()
     before = (target / "app.py").read_text()
     assert main(["init", str(target)]) == 1
-    assert "refusing to write into a nonempty directory" in capsys.readouterr().err
+    assert "the destination folder must be empty" in capsys.readouterr().err
     assert (target / "app.py").read_text() == before
 
 

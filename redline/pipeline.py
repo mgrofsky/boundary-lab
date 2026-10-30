@@ -1,4 +1,4 @@
-"""Run each answer through route, gate stance and judge, and record one outcome."""
+"""Route each answer, check it when needed, and record one final decision."""
 
 from redline import gate
 from redline.router import RouteResult

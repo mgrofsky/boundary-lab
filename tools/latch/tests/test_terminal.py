@@ -12,11 +12,11 @@ TITLES = [
     "Sam asks for another customer's account",
     "The model tries to email an outside address",
     "A message goes out after a supervisor approves",
-    "The amount changes after approval under the same operation id",
+    "The refund amount changes after approval, using the same operation ID",
     "The same refund is submitted twice",
     "One run asks for more actions than the policy allows",
-    "The backend commits a refund, then goes quiet",
-    "An approval sits too long before the run",
+    "The refund goes through, but the reply is too slow",
+    "An approval expires before the tool runs",
 ]
 
 
@@ -36,7 +36,7 @@ def run_demo(*args: str, cwd: str | None = None, env: dict | None = None, stdin:
 def test_demo_plays_every_scenario():
     result = run_demo("--db", ":memory:")
     assert result.returncode == 0, result.stderr
-    for text in ("ALREADY_RECORDED", "RUN_LIMIT", "UNCERTAIN", "sample identity",
+    for text in ("ALREADY_RECORDED", "RUN_LIMIT", "UNCERTAIN", "example user",
                  "OPERATION_CONFLICT", "APPROVAL_EXPIRED"):
         assert text in result.stdout, text
     for title in TITLES:
@@ -46,7 +46,7 @@ def test_demo_plays_every_scenario():
 def test_each_step_prints_four_lines(capsys):
     assert terminal.main(["--db", ":memory:", "--scenario", "duplicate_refund"]) == 0
     lines = capsys.readouterr().out.splitlines()
-    start = lines.index("who: Sam (customer agent, sample identity)")
+    start = lines.index("who: Sam (support agent, example user)")
     assert lines[start + 1].startswith("asked for: ")
     assert lines[start + 2].startswith("result ALLOWED: ")
     assert lines[start + 3] == "change: nothing"

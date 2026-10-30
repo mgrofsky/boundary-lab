@@ -1,8 +1,9 @@
-"""`boundary-latch serve`: the browser demo on loopback. It needs boundary-latch[demo].
+"""`boundary-latch serve`: the browser demo on this computer. Needs boundary-latch[demo].
 
-fastapi and uvicorn are imported inside the functions, so the core package never loads them.
-Every request must name a loopback Host. Every POST must also come from the page's own
-origin, carry the per start token from the page, and be JSON. There are no cookies.
+FastAPI and Uvicorn load only when the demo needs them. Every request must use an
+allowed local address and port. Requests other than GET and HEAD must also name
+an allowed local origin, include the token made at startup, and use JSON.
+There are no cookies.
 """
 
 import html
@@ -64,7 +65,7 @@ class EmptyBody(Body):
 
 
 class LockedSession:
-    """The parts of the session run_turn uses, one call at a time."""
+    """Let run_turn use the session safely, one call at a time."""
 
     def __init__(self, session: DemoSession, lock: threading.Lock):
         self.session = session
@@ -112,11 +113,11 @@ def create_app(
     @app.middleware("http")
     async def guard(request: Request, call_next):
         if request.headers.get("host") not in hosts:
-            return refuse(400, "this demo answers only on its loopback address")
+            return refuse(400, "use this demo's local address and port")
         if request.method not in ("GET", "HEAD"):
             sent = request.headers.get("x-latch-token", "")
             if request.headers.get("origin") not in origins:
-                return refuse(403, "request origin is not this page")
+                return refuse(403, "the request must come from this demo's local web address")
             if not secrets.compare_digest(sent.encode(), token.encode()):
                 return refuse(403, "missing or wrong page token")
             if not request.headers.get("content-type", "").startswith("application/json"):
@@ -185,7 +186,7 @@ def create_app(
     def scenario(name: str, body: EmptyBody):
         if name not in BUILDERS:
             raise HTTPException(404, f"unknown scenario {name}")
-        # Each scenario builds its own session and fake backend, like the terminal demo.
+        # Each scenario gets a new session and sample data, like the terminal demo.
         return to_data(run_one(name, db_path=scenario_db))
 
     @app.post("/api/live/turn")
@@ -217,7 +218,7 @@ def serve(
     app = create_app(session, secrets.token_urlsafe(32), port=port, live=config,
                      scenario_db=db)
     shown = f"[{host}]" if ":" in host else host
-    print(f"Latch demo on http://{shown}:{port} with sample identities and a fake backend. "
+    print(f"Latch demo on http://{shown}:{port} with example users and sample support data. "
           "Ctrl-C stops it.", flush=True)
     try:
         uvicorn.run(app, host=host, port=port, log_level="warning")

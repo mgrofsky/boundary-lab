@@ -53,7 +53,7 @@ def build(store: SQLiteStore | None = None) -> Latch:
 
 def main() -> None:
     latch = build()
-    # Replace this with your authenticated user.
+    # Use the signed-in user's details from your app here.
     ctx = UserContext(
         user_id="sample-user",
         org_id="sample-org",

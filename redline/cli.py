@@ -1,4 +1,4 @@
-"""Command line entry point for redline."""
+"""Read command line options and run the requested Redline command."""
 
 import argparse
 import json
@@ -87,8 +87,7 @@ def cmd_run(args) -> int:
         router = Router(Embedder(), short_circuit=short_circuit)
     router.fit(train)
 
-    # The clock starts after fit, so the embedding model is already loaded and the
-    # seconds show grading time only.
+    # Start timing after router setup and model loading, so this measures grading only.
     start = time.perf_counter()
     outputs = _in_chunks(
         records, lambda batch: pipeline.run(batch, rules, router, judge, examples), "graded"
@@ -209,29 +208,56 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="grade a file of answers")
-    run.add_argument("--data", required=True, help="the answers to grade, one JSON record a line")
-    run.add_argument("--judge", required=True, choices=["live", "replay"])
+    run.add_argument("--data", required=True, help="answers to grade, one JSON record per line")
+    run.add_argument(
+        "--judge",
+        required=True,
+        choices=["live", "replay"],
+        help="call a judge model (live) or read saved grades (replay)",
+    )
     run.add_argument(
         "--out", default="results/", help="folder for the output files (default: results/)"
     )
-    run.add_argument("--train", default="data/train.jsonl")
-    run.add_argument("--cache", default="data/judge_cache.jsonl")
-    run.add_argument("--rules", default="policy/rules.yaml")
-    run.add_argument("--router", choices=["center", "kmeans"], default="center")
-    run.add_argument("--k", type=int, default=12, help="clusters for the kmeans router")
+    run.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
+    run.add_argument("--cache", default="data/judge_cache.jsonl", help="file of saved judge grades")
+    run.add_argument("--rules", default="policy/rules.yaml", help="YAML file containing your rules")
     run.add_argument(
-        "--short-circuit", action="store_true", help="let the router decide clear answers"
+        "--router",
+        choices=["center", "kmeans"],
+        default="center",
+        help="match one center per rule or group similar examples with k-means",
     )
-    run.add_argument("--purity", type=float, default=1.0, help="kmeans share of one label")
-    run.add_argument("--min-members", type=int, default=5, help="fewest labeled answers needed")
-    run.add_argument("--margin", type=float, default=0.10, help="center gap between good and bad")
-    run.add_argument("--seed", type=int, default=0, help="kmeans random seed")
+    run.add_argument("--k", type=int, default=12, help="number of groups for k-means (default: 12)")
+    run.add_argument(
+        "--short-circuit", action="store_true", help="let the router pass or fail some answers"
+    )
+    run.add_argument(
+        "--purity",
+        type=float,
+        default=1.0,
+        help="k-means shortcut: share of labels that must agree (default: 1.0, or all)",
+    )
+    run.add_argument(
+        "--min-members",
+        type=int,
+        default=5,
+        help="fewest examples needed in a shortcut group (default: 5)",
+    )
+    run.add_argument(
+        "--margin",
+        type=float,
+        default=0.10,
+        help="center shortcut: required gap between good and bad match scores (default: 0.10)",
+    )
+    run.add_argument("--seed", type=int, default=0, help="random seed for repeatable k-means runs")
     run.set_defaults(func=cmd_run)
 
     attack = sub.add_parser("attack", help="send attack prompts to the model under test")
-    attack.add_argument("--prompts", required=True)
-    attack.add_argument("--out", required=True)
-    attack.add_argument("--system", default="policy/target_system_prompt.txt")
+    attack.add_argument("--prompts", required=True, help="attack prompts, one JSON record per line")
+    attack.add_argument("--out", required=True, help="file to write the chatbot's answers to")
+    attack.add_argument(
+        "--system", default="policy/target_system_prompt.txt", help="instructions for the chatbot"
+    )
     attack.set_defaults(func=cmd_attack)
 
     report = sub.add_parser("report", help="write the summary and the report")
@@ -244,16 +270,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="graded attack responses",
     )
     report.add_argument("--out", default="results/", help="folder for summary.json and report.md")
-    report.add_argument("--holdout-labels", default="data/holdout.jsonl")
-    report.add_argument("--attack-labels", default="data/runs/attack_labels.jsonl")
-    report.add_argument("--attacks", default="data/attacks.jsonl")
-    report.add_argument("--train", default="data/train.jsonl")
-    report.add_argument("--cache", default="data/judge_cache.jsonl")
+    report.add_argument(
+        "--holdout-labels", default="data/holdout.jsonl", help="hand labels for the holdout answers"
+    )
+    report.add_argument(
+        "--attack-labels",
+        default="data/runs/attack_labels.jsonl",
+        help="hand labels for the attack answers",
+    )
+    report.add_argument("--attacks", default="data/attacks.jsonl", help="original attack prompts")
+    report.add_argument(
+        "--train", default="data/train.jsonl", help="setup examples to count in the report"
+    )
+    report.add_argument(
+        "--cache",
+        default="data/judge_cache.jsonl",
+        help="saved judge grades to identify in the report",
+    )
     report.set_defaults(func=cmd_report)
 
-    compare = sub.add_parser("compare", help="write one table over several run folders")
-    compare.add_argument("--runs", nargs="+", required=True, help="folders with summary and meta")
-    compare.add_argument("--out", default="results/routers/comparison.md")
+    compare = sub.add_parser("compare", help="compare several runs in one table")
+    compare.add_argument(
+        "--runs", nargs="+", required=True, help="run folders with summaries and settings files"
+    )
+    compare.add_argument(
+        "--out", default="results/routers/comparison.md", help="path for the comparison table"
+    )
     compare.set_defaults(func=cmd_compare)
 
     readme = sub.add_parser("readme", help="update the README results table")
@@ -261,7 +303,9 @@ def build_parser() -> argparse.ArgumentParser:
     readme.add_argument(
         "--summary", default="results/summary.json", help="the summary the table is built from"
     )
-    readme.add_argument("--readme", default="redline/README.md")
+    readme.add_argument(
+        "--readme", default="redline/README.md", help="README file containing the results markers"
+    )
     readme.set_defaults(func=cmd_readme)
     return parser
 

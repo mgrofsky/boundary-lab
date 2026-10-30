@@ -368,7 +368,7 @@ def test_budget_event_line(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", io.StringIO("Keep looking\n"))
     assert live.run_live(argparse.Namespace(db=":memory:")) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[-1] == "budget RUN_LIMIT, the request budget is spent"
+    assert lines[-1] == "limit RUN_LIMIT, this turn reached the model request limit"
 
 
 def test_terminal_live_flag_reaches_run_live(monkeypatch, capsys):

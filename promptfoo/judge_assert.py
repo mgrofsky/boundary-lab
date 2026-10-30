@@ -1,9 +1,9 @@
-"""Run the redline rig as a promptfoo python assertion.
+"""Run Redline as a Python check in promptfoo.
 
-promptfoo calls get_assert(output, context) once per answer. The rig routes the answer
-to a rule, adds the stance for the user type, and asks the judge for a verdict. A pass
-verdict passes, a fail verdict fails, and a review is reported as a failure with the
-reason, since a non decision should not show up green.
+promptfoo calls get_assert(output, context) once per answer. Redline picks a rule,
+adds what that rule allows for the user type, and asks the judge. Pass and fail keep
+their usual meaning. Review is shown as a failure with a reason because the answer
+still needs a decision.
 
 The judge is picked with the REDLINE_JUDGE environment variable:
   live    call the model named by REDLINE_JUDGE_BASE_URL, REDLINE_JUDGE_MODEL and REDLINE_JUDGE_API_KEY
@@ -34,7 +34,7 @@ _rig = None
 
 
 class Rig:
-    """The three parts of the pipeline, built once per process."""
+    """Keep the rules, router, judge, and examples together. Build them once per process."""
 
     def __init__(self, rules, router, judge, examples):
         self.rules = rules
@@ -58,7 +58,7 @@ def build_rig() -> Rig:
 
 
 def grade(output: str, user_message: str, user_type: str, rig: Rig) -> dict:
-    """Route, gate and judge one answer. Returns a promptfoo GradingResult dict."""
+    """Check one answer and return a promptfoo GradingResult dict."""
     routed = rig.router.route(user_message, output)
     if routed.abstained:
         return {

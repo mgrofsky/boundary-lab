@@ -51,14 +51,14 @@ def test_scenario_details():
     assert found["exhausted_limit"].expected == ["ALLOWED", "RUN_LIMIT"]
     timeout = found["timeout_after_refund"]
     assert timeout.expected == ["ALLOWED", "UNCERTAIN", "UNCERTAIN"]
-    assert "backend refunds 1" in timeout.steps[-1].state_change
+    assert "refunds recorded 1" in timeout.steps[-1].state_change
     assert found["expired_approval"].expected[-1] == "APPROVAL_EXPIRED"
 
 
 def test_actors_are_labeled_sample_identities():
     for scenario in run_all():
         for step in scenario.steps:
-            assert "sample identity" in step.actor
+            assert "example user" in step.actor
 
 
 def test_a_shared_clock_still_passes():
@@ -81,7 +81,7 @@ def test_render_text_shows_every_step():
     assert "RUN_LIMIT" in text
     assert "APPROVAL_EXPIRED" in text
     assert "UNCERTAIN" in text
-    assert "sample identity" in text
+    assert "example user" in text
     assert "9 of 9 scenarios matched" in text
 
 

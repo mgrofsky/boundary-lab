@@ -1,8 +1,8 @@
 """One demo session shared by the terminal and browser demos.
 
-The session holds one Northwind backend, one store and one Latch, plus the pending
-prepared actions in memory. The store keeps its records across a restart. The fake
-backend and the pending actions do not.
+The session holds one Northwind support system, one store, and one Latch, plus the
+requests waiting to run. A store saved to a file keeps its records across a restart.
+The demo's support data and pending requests do not survive a restart.
 """
 
 from __future__ import annotations
@@ -111,10 +111,10 @@ class DemoSession:
         return {"rows": self.store.audit_rows(ORG_ID)}
 
     def _recorded(self, operation_id: str) -> dict[str, Any]:
-        """The stored outcome for an operation this session holds no pending action for."""
+        """Look up the saved record when this session has no matching pending request."""
         status = self.status(operation_id)
         if status["found"]:
             status["replayed"] = True
         else:
-            status["explanation"] = "No pending action or record has this operation id."
+            status["explanation"] = "No pending request or saved record has this operation ID."
         return {**status, "state": self.state()}

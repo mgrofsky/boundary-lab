@@ -1,4 +1,4 @@
-"""A fake Northwind backend held in memory. It forgets everything on restart."""
+"""A made-up Northwind support system. Its data resets on restart."""
 
 from __future__ import annotations
 
@@ -58,18 +58,18 @@ class Northwind:
     def refund(self, account_id: str, amount_minor: int, operation_id: str) -> dict[str, Any]:
         with self._lock:
             if operation_id in self.refunds:
-                raise ToolFailed("already refunded under this operation id")
+                raise ToolFailed("already refunded under this operation ID")
             account = self.accounts[account_id]
             if amount_minor > account["refundable_minor"]:
-                raise ToolFailed("over refundable balance")
+                raise ToolFailed("the amount is more than the account can refund")
             account["balance_minor"] -= amount_minor
             account["refundable_minor"] -= amount_minor
             record = {"account_id": account_id, "amount_minor": amount_minor}
             self.refunds[operation_id] = record
-        # The refund is committed. A slow or broken link after this point is the
-        # case Latch records as uncertain.
+        # The refund has happened. If the reply is too slow or never arrives,
+        # Latch records the outcome as uncertain.
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
         if self.fail_after_commit:
-            raise RuntimeError("connection lost after the refund was committed")
+            raise RuntimeError("connection lost after the refund went through")
         return {"operation_id": operation_id, **record}

@@ -4,11 +4,11 @@ Part of [Boundary Lab](../README.md).
 
 Redline checks chatbot answers against rules you write. Use it to test a chatbot, compare ways of checking its answers, or work through the included examples and see how the pieces fit.
 
-The example is Northwind Power, a made-up utility with a billing assistant. It has four rules covering account data, identity checks, card numbers and the assistant's own instructions.
+The example is Northwind Power, a made-up utility with a billing assistant. It has four rules covering account data, identity checks, card numbers, and the assistant's own instructions.
 
 For each prompt and response, a router picks the closest rule. A second model, called the judge, checks the answer against that rule and the user's permissions. You can also try letting the router decide some answers without asking the judge.
 
-Each answer gets a pass, fail or review, with a reason attached. Review means someone needs to check it; Redline records that result but doesn't send it to a person.
+Each answer gets a pass, fail, or review, with a reason attached. Review means someone needs to check it. Redline records that result but doesn't send it to a person.
 
 This checks responses after they're produced. It doesn't sit in front of a chatbot and block them.
 
@@ -54,16 +54,16 @@ The saved run used two models running locally on Ollama: `llama3.2:3b` as the ch
 | What we measured | Result |
 | --- | --- |
 | Router accuracy on holdout | 84 percent |
-| Rig accuracy on holdout (router and judge together) | 80 percent |
-| Judge agreement with hand labels on holdout (kappa) | 0.78 |
-| Rule breaks caught end to end | 88 percent |
-| Cry wolf rate on holdout | 9 percent |
+| Overall accuracy on holdout (router and judge) | 80 percent |
+| Agreement with hand labels on holdout (kappa) | 0.78 |
+| Rule breaks caught on holdout | 88 percent |
+| False alarm rate on holdout | 9 percent |
 | Attack prompts that broke a rule | 21 of 80 |
-| Of those, caught by the rig | 17 of 21 (81 percent) |
-| Cry wolf rate on attack prompts | 15 percent |
-| Judge agreement with hand labels on attack prompts (kappa) | 0.61 |
+| Of those, caught by Redline | 17 of 21 (81 percent) |
+| False alarm rate on attack answers | 15 percent |
+| Agreement with hand labels on attack answers (kappa) | 0.61 |
 
-This table is written from results/summary.json by `redline readme`, so do not edit it by hand.
+Run `redline readme` to update this table from `results/summary.json`. Don't edit the table by hand.
 <!-- results:end -->
 
 The holdout examples were kept out of router training and judge example selection. The attacks tried to extract instructions, bypass identity checks, get card numbers, or use roleplay to break the rules.
@@ -72,11 +72,11 @@ A few details matter when reading the table:
 
 - Router accuracy measures whether the code picked the labeled rule. Off-topic examples are included.
 
-- Rig accuracy measures the whole pipeline's final decision, including routing. Review counts as a miss, since it isn't a decision.
+- Overall accuracy measures Redline's final decision, including routing. Review counts as a miss because the answer still needs a decision.
 
-- Kappa measures agreement after adjusting for chance, also using the whole pipeline's decisions. It compares fail against pass or review, so it treats review differently from accuracy.
+- Kappa measures agreement with the hand labels after accounting for chance. It uses Redline's final decisions and groups pass and review together, so it treats review differently from accuracy.
 
-- Rule breaks caught is recall. The cry wolf rate is the share of good answers marked fail by mistake. The final four rows describe the attack run, including its false alarms and agreement with hand labels.
+- Rule breaks caught is also called recall. The false alarm rate is the share of good answers marked fail by mistake. The final four rows describe the attack run, including its false alarms and agreement with hand labels.
 
 The [full report](../results/report.md) includes results for each rule and how often answers went to review. The [saved summary](../results/summary.json) is the source for the table above.
 
@@ -84,7 +84,7 @@ The [router comparison](../results/routers/comparison.md) includes k-means with 
 
 With center matching, the shortcut caught 18 of 21 attack violations instead of 17. But false alarms rose from 15 percent to 31 percent. I'd start with the default and check the other settings against your own examples.
 
-Each saved judge answer records its model name, and `results/summary.json` stores a SHA-256 hash of the cache file. Replay reproduces the calculations from those answers. It doesn't independently verify that the named model produced them.
+Each saved judge answer records its model name. `results/summary.json` stores a SHA-256 hash, a fingerprint of the cache file's contents. Replay repeats the calculations from those answers. It doesn't check whether the named model produced them.
 
 ## Try a live chatbot
 
@@ -105,7 +105,7 @@ redline run --data data/holdout.jsonl --judge live --out results/local/live --ca
 
 These commands keep new results separate from the saved run. Label new attack responses before comparing their grades; the saved labels only describe the original responses.
 
-Live mode also reuses cached grades. Use a fresh cache file when changing the judge model, since cache keys contain the grading prompt but not the model name. New valid grades are saved for later replay.
+Live mode also reuses saved grades. Use a fresh cache file when changing the judge model. Redline looks up grades using the grading prompt, and that lookup doesn't include the model name. New valid grades are saved for later replay.
 
 Add `--router kmeans --k 12` to both `redline run` commands to try that routing option. The [routing guide](../docs/routing.md) shows how to make reports with the right files and compare runs.
 

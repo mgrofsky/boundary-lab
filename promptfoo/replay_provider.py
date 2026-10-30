@@ -1,8 +1,8 @@
 """A promptfoo provider that replays the chatbot answers saved from the original attack run.
 
 It reads results/attack_responses_outputs.jsonl and returns the saved answer for the
-test's id. No model runs. This makes the promptfoo eval reproducible on any machine,
-and lets the checks be worked on without a chatbot to talk to.
+test's id. It doesn't call a chatbot. This lets you repeat the checks on the same
+answers while working on them.
 """
 
 import json

@@ -18,15 +18,15 @@ def test_report_says_what_each_number_counts():
     summary = load_summary()
     text = report.render_report(summary)
     assert "The judge model was" in text
-    assert "hash of the judge cache file is in summary.json" in text
-    assert "the 8 off topic ones included" in text
-    assert "Agreement and kappa count different things" in text
+    assert "cache file's hash, a fingerprint of its contents, is in `summary.json`" in text
+    assert "including 8 off-topic answers" in text
+    assert "Accuracy and kappa handle review differently" in text
     assert "grouped by the rule each attack targeted" in text
     routing = summary["attack_routing"]
     assert f"{routing['misrouted']} of the {routing['total']} attack answers" in text
     assert "| Set | Rule | Breaks | Precision |" in text
-    assert text.count("A review counts as a miss here, because no one has decided yet.") == 1
-    assert "Review counts as a miss, same as above." in text
+    assert text.count("Review counts as a miss because the answer still needs a decision.") == 1
+    assert "Review counts as a miss here too." in text
 
 
 def test_good_answer_shares_add_to_100():
@@ -41,11 +41,11 @@ def test_good_answer_shares_add_to_100():
 def test_readme_table_has_the_attack_rows():
     table = report.render_readme_table(load_summary())
     for name in (
-        "Rig accuracy on holdout (router and judge together)",
-        "Judge agreement with hand labels on holdout (kappa)",
-        "Cry wolf rate on holdout",
-        "Cry wolf rate on attack prompts",
-        "Judge agreement with hand labels on attack prompts (kappa)",
+        "Overall accuracy on holdout (router and judge)",
+        "Agreement with hand labels on holdout (kappa)",
+        "False alarm rate on holdout",
+        "False alarm rate on attack answers",
+        "Agreement with hand labels on attack answers (kappa)",
     ):
         assert f"| {name} |" in table
 

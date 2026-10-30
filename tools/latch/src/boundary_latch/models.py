@@ -57,9 +57,9 @@ class Decision(Strict):
 class PreparedAction(BaseModel):
     """A checked request waiting to run.
 
-    Only the engine builds one, with PreparedAction.model_construct(...) and then
-    obj._args_json = canonical. The argument snapshot lives in that private string,
-    so arguments returns a fresh dict each time and editing it changes nothing.
+    The engine builds one with PreparedAction.model_construct(...) and saves the
+    arguments as JSON in obj._args_json. The arguments property returns a new dict
+    each time, so editing that dict does not change the saved request.
     """
 
     model_config = ConfigDict(frozen=True)

@@ -1,6 +1,6 @@
 "use strict";
 
-// Every piece of text from the server goes into the page through textContent, never as markup.
+// Add server text with textContent so the browser treats it as text, not HTML.
 
 const token = document.querySelector('meta[name="latch-token"]').getAttribute("content");
 let tools = [];
@@ -34,11 +34,11 @@ function money(minor) {
   return whole + "." + cents;
 }
 
-// Dollars as typed, for example "60" or "60.5" or "60.25", to whole cents. No floats.
+// Convert dollar amounts such as "60", "60.5", or "60.25" to whole cents.
 function toMinor(text) {
   const match = /^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(text.trim());
   if (!match) {
-    throw new Error("amount must look like 60 or 60.00");
+    throw new Error("Enter an amount such as 60 or 60.00.");
   }
   const cents = (match[2] || "").padEnd(2, "0");
   return Number(match[1]) * 100 + Number(cents);
@@ -108,7 +108,7 @@ function logResult(action, result) {
     lines.push("operation " + result.operation_id);
   }
   if (result.replayed) {
-    lines.push("replayed, the recorded outcome is shown and nothing ran again");
+    lines.push("Showing the saved record. The tool was not run again.");
   }
   log(labels[profile()] + ", " + action, lines, codeKind(result.code));
 }
@@ -256,7 +256,7 @@ async function propose(event) {
 async function act(path, verb) {
   const op = byId("operation-id").value.trim();
   if (!op) {
-    logError(verb, new Error("propose something first, or paste an operation id"));
+    logError(verb, new Error("Click Propose first, or paste an operation ID."));
     return;
   }
   try {
@@ -316,7 +316,7 @@ async function liveTurn(event) {
       if (e.event === "tool") {
         return "tool " + e.tool + " " + e.code + ", operation " + e.operation_id;
       }
-      return "budget " + e.code + ", the request budget is spent";
+      return "limit " + e.code + ", this turn reached the model request limit";
     });
     log(labels[profile()] + ", asked the model: " + text, lines);
     const held = result.events.filter((e) => e.code === "NEEDS_APPROVAL").pop();

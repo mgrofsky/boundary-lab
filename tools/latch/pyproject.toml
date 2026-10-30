@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "boundary-latch"
 version = "0.1.0"
-description = "Latch, a Boundary Lab tool that checks AI tool calls before they run"
+description = "Latch checks tool calls before they run"
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Matt Grofsky" }]

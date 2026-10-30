@@ -1,4 +1,4 @@
-"""Optional live model adapter. It needs boundary-latch[live] for httpx.
+"""Optional connection to a live model. Needs boundary-latch[live] for httpx.
 
 The model only names tools and gives arguments. Latch decides, and approval is never a tool.
 Model text is passed back as an event and never read for instructions.
@@ -23,7 +23,7 @@ SYSTEM_PROMPT = (
 
 
 class MalformedResponse(LatchError):
-    """The model server sent a response Latch will not guess about."""
+    """The model server sent a response Latch cannot read safely."""
 
 
 class ModelRequestFailed(LatchError):
@@ -78,7 +78,7 @@ def tool_schemas(latch: Latch) -> list[dict[str, Any]]:
 
 
 class ChatClient:
-    """One plain request to an OpenAI style chat completions endpoint."""
+    """Send one request to an API that uses the OpenAI chat completions format."""
 
     def __init__(self, config: LiveConfig):
         self.config = config
@@ -176,7 +176,7 @@ def run_turn(
     session: Session, profile: str, user_text: str, client: Client, config: LiveConfig,
     tools: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Send one user message and act on the tool calls that come back, within a request budget."""
+    """Send a user message and handle tool calls, up to the model request limit."""
     if tools is None:
         latch = getattr(session, "latch", None)
         tools = tool_schemas(latch) if latch is not None else []
@@ -214,7 +214,7 @@ def event_line(event: dict[str, Any]) -> str:
         return "assistant: " + " ".join(event["text"].split())
     if event["event"] == "tool":
         return f"tool {event['tool']} {event['code']}, operation {event['operation_id']}"
-    return f"budget {event['code']}, the request budget is spent"
+    return f"limit {event['code']}, this turn reached the model request limit"
 
 
 def run_live(args: Any) -> int:

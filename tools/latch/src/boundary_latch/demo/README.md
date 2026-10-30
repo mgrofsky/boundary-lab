@@ -1,8 +1,8 @@
 # Northwind demo
 
-The Northwind demo runs Latch against a fake support backend with three sample identities.
+The Northwind demo uses a sample support system and three example users to show how Latch checks tool calls.
 
 - `boundary-latch demo` plays the nine scenarios in the terminal.
-- `scenarios.py` holds the scenarios. They run through `session.py`, the same code path the browser demo uses.
+- `scenarios.py` contains the scenarios. They call `session.py`, which the browser demo also uses.
 
-Durable reservations are Latch's, the fake backend forgets. After a restart the store still knows every operation id and its outcome, but the accounts, outbox and refunds start over.
+When you use a database file and keep it between restarts, Latch remembers operation IDs and recorded outcomes. The sample support system starts over each time, so its accounts, outbox, and refunds reset. A call Latch already recorded will not run again just because the sample data reset.

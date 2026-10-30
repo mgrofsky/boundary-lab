@@ -1,9 +1,8 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
 #
 # Replay run: the same 80 tests, but the chatbot answers come from the saved attack run
-# and the rig's judge uses its saved answers. Nothing calls a model, so this runs
-# anywhere and gives the same result every time. The llm-rubric checks are left out
-# because they need a grader model.
+# and Redline's judge uses saved grades. The router still needs its text-matching
+# model. The llm-rubric checks are left out because they need a grader model call.
 #
 #   REDLINE_JUDGE=replay promptfoo eval -c promptfooconfig.replay.yaml
 

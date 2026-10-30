@@ -1,31 +1,36 @@
 # Latch
 
-Latch checks tool calls before they run. It sits between the model and your app's functions, and the model only gets to name a tool and give arguments. Your app decides who the user is, and Latch decides whether that user may make this exact call right now.
+Latch checks tool calls before they run. The model asks to use one of your app's functions and supplies the arguments. Your app tells Latch who the user is, and Latch checks whether that user can make that exact call.
 
 Latch is part of [Boundary Lab](../../README.md). It is a separate package from [Redline](../../redline/README.md) and does not share any code with it. Redline grades answers after they are written. Latch blocks calls before they happen.
 
 ## What it checks
 
-- The arguments match the tool, with no extra fields.
+- The arguments match what the tool accepts, with no extra fields.
 
-- The user holds the permission the tool needs.
+- The user has the permission the tool needs.
+
 - The recipient is on the allowed list, if the tool has one.
 
-- Your own access hook says this user may touch this record.
+- Your app's access check says this user can use the requested record.
+
 - The run has not used up its call limit or its time.
 
-- Big actions wait for another user to approve them. The approval is tied to the exact request, expires, and works once.
-- The same operation id never dispatches twice, even after a restart.
+- Calls that need approval wait for another user. The approval covers that exact request, expires, and works once.
 
-Every decision comes back with a reason code and one plain sentence.
+- Repeating the same request with the same operation ID in the same run does not run the tool again. This still works after a restart if you keep the SQLite database.
+
+A run groups the calls for one conversation. An operation ID identifies one requested action within your organization.
+
+Every decision comes back with a reason code and a short explanation.
 
 ## Install
 
-The core needs only pydantic.
+The core package needs only pydantic, which checks the tool arguments.
 
     pip install boundary-latch
 
-Two extras are optional.
+Install an optional extra to use the browser demo or connect a model.
 
     pip install "boundary-latch[demo]"    # the browser demo (fastapi, uvicorn)
     pip install "boundary-latch[live]"    # the live model adapter (httpx)
@@ -40,21 +45,21 @@ To work on Latch itself, from this folder:
 
     boundary-latch demo
 
-Nine scenarios play out one at a time. Each step shows who asked for what, the reason code, and what changed in a fake backend for Northwind, a made-up company. The people are labeled sample identities. Sam and Priya are customer agents, and Jordan is a supervisor.
+Nine scenarios run one at a time. Each step shows who asked for what, the reason code, and what changed in the sample support system for Northwind, a made-up company. Sam and Priya are support agents, and Jordan is a supervisor. These are example users.
 
 For the same scenarios in a browser:
 
     boundary-latch serve
 
-Open http://127.0.0.1:8765. Run a scenario from a button, or try the steps yourself: act as Sam, propose a refund over $50, then switch to Jordan and approve it. Switch back to Sam and click Run. The balance moves once.
+Open [the local demo](http://127.0.0.1:8765). Run a scenario from a button, or try the steps yourself: act as Sam, propose a refund over $50, then switch to Jordan and approve it. Switch back to Sam and click Run. The balance changes once.
 
-The server only listens on 127.0.0.1. To see the codes without any interface, run `boundary-latch scenarios`, or add `--json` for machine output.
+The server only listens on 127.0.0.1. To print the scenario results, run `boundary-latch scenarios`, or add `--json` to get JSON output.
 
 Check a policy file with `boundary-latch check policy.toml`. Copy a starter project with `boundary-latch init my-app`.
 
 ## Use it in your app
 
-This is the shape of the starter project. The full file is `src/boundary_latch/starter/app.py`.
+Here is how the starter project connects Latch to an app. The full example is in [app.py](src/boundary_latch/starter/app.py).
 
     from boundary_latch import Decision, Latch, SQLiteStore, ToolSpec, UserContext, load_policy
 
@@ -67,31 +72,36 @@ This is the shape of the starter project. The full file is `src/boundary_latch/s
     if not isinstance(prepared, Decision):
         result = latch.execute(prepared, ctx)
 
-`prepare` returns a `Decision` when the call is blocked. Otherwise it returns a `PreparedAction`, and `needs_approval` tells you whether to wait for a supervisor first.
+`prepare` returns a `Decision` when the call is blocked. Otherwise it returns a `PreparedAction`. Check `needs_approval` before calling `execute`; if it is true, wait for an authorized person to approve the request. The handler is your function that does the work.
 
 ## What Latch does not do
 
-- It does not log anyone in. Your app owns identity.
+- It doesn't log anyone in. Your app checks who the user is.
 
-- It has no policy server. The policy is one TOML file.
-- It is not a sandbox. A handler runs with your app's own rights.
+- You set the rules in one TOML file. There's no separate service for managing them.
 
-- It does not detect prompt injection. It limits what an injected call can do.
-- It cannot make a remote action happen exactly once. It records the attempt and refuses to retry an uncertain one.
+- It doesn't isolate your functions from the rest of your system. They run with your app's permissions.
 
-- It does not purge reservations or offer a retry command.
-- It does not stream model responses.
+- It doesn't detect text that tries to trick a model into following unwanted instructions. It checks the tool calls the model asks to make.
 
-- It supports one host. It is not tested across several processes.
+- It can't confirm what happened in another system after a timeout or lost connection. It records the attempt and won't try it again automatically.
+
+- It doesn't clear records of attempted calls or offer a retry command.
+
+- The live example doesn't show partial model replies as they arrive.
+
+- It's tested with one app process on one machine. Running several app processes against the same database isn't supported.
 
 ## Docs
 
-- [Integration](docs/integration.md): replace the sample login, database and tools.
+- [Use Latch in your app](docs/integration.md): replace the sample login, database, and tools.
 
-- [Policy](docs/policy.md): every key in the TOML file.
-- [Approvals](docs/approvals.md): what an approval is tied to and how it ends.
+- [Policy](docs/policy.md): set permissions, approvals, and limits.
 
-- [Limits](docs/limits.md): run limits, deadlines and uncertain outcomes.
+- [Approvals](docs/approvals.md): what an approval covers and when it expires.
+
+- [Limits](docs/limits.md): call limits, time limits, and what to do when the outcome is unclear.
+
 - [Live model](docs/live.md): point the demo at a real model.
 
 - [Release](docs/release.md): how a version gets published.
