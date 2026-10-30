@@ -1,5 +1,5 @@
 name: Idea or change
-description: A new rule, attack prompt, metric or anything else.
+description: Suggest a rule, an example, a check, or another useful change.
 labels: [enhancement]
 body:
   - type: textarea
@@ -13,15 +13,15 @@ body:
     id: why
     attributes:
       label: Why it helps
-      description: What question it answers that the project cannot answer today.
+      description: What would this help you do?
     validations:
       required: true
   - type: dropdown
     id: willing
     attributes:
-      label: Would you want to build it
+      label: Would you like to work on it?
       options:
-        - Yes, with a go ahead
+        - Yes, once we agree on the change
         - No, just suggesting
     validations:
       required: true

@@ -76,7 +76,7 @@ class Latch:
         if now >= started_at + limits.run_lifetime_seconds:
             return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
 
-        # A resubmitted operation id does not count against the run limit.
+        # Submitting the same operation ID again does not count against the run limit.
         existing = self.store.get_operation(ctx.org_id, operation_id)
         if existing is None:
             count = self.store.count_submission(ctx.org_id, ctx.run_id)
@@ -262,7 +262,7 @@ class Latch:
     def _gate(
         self, prepared: PreparedAction, ctx: UserContext
     ) -> ExecutionResult | tuple[ToolSpec, dict[str, Any], CallInfo]:
-        """Recheck identity and access, then reserve the operation for one dispatch."""
+        """Recheck who is asking and their access, then reserve the operation to run once."""
         now = self.clock()
 
         def refuse(code: Code) -> ExecutionResult:
@@ -332,7 +332,7 @@ class Latch:
     def _validate_prepared(
         self, prepared: PreparedAction
     ) -> Code | tuple[ToolSpec, ToolPolicy, BaseModel]:
-        """Bind the argument snapshot to the current registry, policy and stored operation."""
+        """Check that the saved request still matches the tool, policy, and stored operation."""
         spec = self._tools.get(prepared.tool)
         if spec is None:
             return Code.UNKNOWN_TOOL

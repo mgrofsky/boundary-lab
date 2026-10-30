@@ -1,1 +1,1 @@
-"""The Northwind demo: a fake backend, sample identities and built in scenarios."""
+"""The Northwind demo: a made-up support system, example users, and built-in scenarios."""

@@ -1,4 +1,4 @@
-"""Nine built in Northwind scenarios. They need no model and double as the demo's test oracle."""
+"""Nine built-in Northwind scenarios with expected results. They need no model."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .session import DemoSession
 
 
 class FakeClock:
-    """A clock the scenarios move by hand, so expiry needs no sleeping."""
+    """A clock the scenarios advance by hand to test time limits without waiting."""
 
     def __init__(self, now: float = 1_800_000_000.0):
         self.now = now
@@ -49,9 +49,9 @@ class Scenario:
 
 
 class Run:
-    """One scenario's world: its own demo session, so a fresh backend and run id.
+    """Each scenario gets its own demo session, sample data, and run ID.
 
-    The operation ids carry the session's random tag, so a file database can be
+    The operation IDs include the session's random tag, so a database file can be
     reused across demo runs.
     """
 
@@ -91,7 +91,7 @@ class Run:
     def execute(self, profile: str, op: str, change: Callable[[], str]) -> dict[str, Any]:
         result = self.session.run(profile, op)
         code = result["code"]
-        # A replay shows ALREADY_RECORDED, except UNCERTAIN, which keeps its warning.
+        # A repeated call shows ALREADY_RECORDED unless its outcome is still UNCERTAIN.
         if result.get("replayed") and code != Code.UNCERTAIN:
             code = Code.ALREADY_RECORDED
         self.record(profile, f"run {self.tools[op]} {op}", str(code), change())
@@ -124,7 +124,7 @@ def allowed_lookup(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
                         ["ALLOWED", "EXECUTED"])
     run = Run(scenario.name, clock, db_path)
     op = run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1")
-    run.execute("sam", op, lambda: f"none, read only: A1 balance {money(run.balance('A1'))}")
+    run.execute("sam", op, lambda: f"no changes: A1 balance {money(run.balance('A1'))}")
     return run.finish(scenario)
 
 
@@ -159,7 +159,7 @@ def message_with_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenar
 def changed_after_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     scenario = Scenario(
         "changed_after_approval",
-        "The amount changes after approval under the same operation id",
+        "The refund amount changes after approval, using the same operation ID",
         ["NEEDS_APPROVAL", "APPROVED", "OPERATION_CONFLICT", "EXECUTED"],
     )
     run = Run(scenario.name, clock, db_path)
@@ -193,7 +193,7 @@ def exhausted_limit(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
         run.session.propose("sam", "lookup_account", {"account_id": "A1"}, run.next_id())["code"]
         for _ in range(limit)
     ]
-    # The allowed lookups are folded into one step; any other code would show here.
+    # Show the allowed lookups as one step; any unexpected result would appear here.
     first = next((code for code in codes if code != Code.ALLOWED), Code.ALLOWED)
     run.record("sam", f"look up account A1, {limit} times", first)
     run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1 once more")
@@ -201,7 +201,7 @@ def exhausted_limit(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
 
 
 def timeout_after_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
-    scenario = Scenario("timeout_after_refund", "The backend commits a refund, then goes quiet",
+    scenario = Scenario("timeout_after_refund", "The refund goes through, but the reply is too slow",
                         ["ALLOWED", "UNCERTAIN", "UNCERTAIN"])
     run = Run(scenario.name, clock, db_path, timeout_seconds=0.1)
     run.nw.delay_seconds = 0.5
@@ -211,14 +211,14 @@ def timeout_after_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenari
     run.execute("sam", op, run.balance_change("A1", before))
 
     def after_retry() -> str:
-        return f"backend refunds {len(run.nw.refunds)}, A1 balance {money(run.balance('A1'))}"
+        return f"refunds recorded {len(run.nw.refunds)}, A1 balance {money(run.balance('A1'))}"
 
     run.execute("sam", op, after_retry)
     return run.finish(scenario)
 
 
 def expired_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
-    scenario = Scenario("expired_approval", "An approval sits too long before the run",
+    scenario = Scenario("expired_approval", "An approval expires before the tool runs",
                         ["NEEDS_APPROVAL", "APPROVED", "APPROVAL_EXPIRED"])
     run = Run(scenario.name, clock, db_path)
     op = run.prepare("sam", "issue_refund", {"account_id": "A1", "amount_minor": 6000},
@@ -250,7 +250,7 @@ def run_one(name: str, clock: FakeClock | None = None, db_path: str = ":memory:"
 
 
 def run_all(clock: FakeClock | None = None, db_path: str = ":memory:") -> list[Scenario]:
-    """Run every scenario. A given clock is shared and moved; otherwise each gets a fresh one."""
+    """Run every scenario with the given clock, or give each scenario its own clock."""
     return [run_one(name, clock, db_path) for name in BUILDERS]
 
 

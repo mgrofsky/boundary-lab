@@ -36,18 +36,18 @@ def _unit(vec: np.ndarray) -> np.ndarray:
 
 
 def _threshold(best: np.ndarray) -> float:
-    """The lowest score still kept when 95 percent of train records sit at or above it."""
+    """Choose a cutoff that at least 95 percent of the training examples meet."""
     best = np.sort(best)
     n = len(best)
     return float(best[n - math.ceil(0.95 * n)])
 
 
 class Router:
-    """Sends each answer to the rule whose center it is closest to.
+    """Send each answer to the closest rule center.
 
-    A center is the average of the labeled train answers for one rule, plus one
-    center for off topic answers under "none". When an answer is far from every
-    center, the router abstains and the answer goes to a person.
+    Each center averages the embeddings for one rule's labeled training answers.
+    Off-topic answers have their own center under "none". An answer too far from
+    every center gets review. Redline records that result without assigning it to anyone.
     """
 
     def __init__(self, embedder=None, short_circuit: ShortCircuit | None = None):
@@ -75,7 +75,7 @@ class Router:
         return router
 
     def fit(self, records: list[dict]) -> "Router":
-        """Build one center per rule_id in the records and pick the threshold."""
+        """Build one center per rule_id and choose the matching cutoff."""
         vectors = self.embedder.encode([text(r["prompt"], r["response"]) for r in records])
         groups: dict[str, list[int]] = {}
         sub_groups: dict[tuple[str, str, str], list[int]] = {}
@@ -126,16 +126,16 @@ class Router:
         return VERDICTS[winner], note
 
     def route(self, prompt: str, response: str, user_type: str | None = None) -> RouteResult:
-        """Embed a prompt and its answer, then route the vector."""
+        """Turn a prompt and its answer into numbers, then find the closest center."""
         return self.route_vector(self.embedder.encode([text(prompt, response)])[0], user_type)
 
 
 class KMeansRouter:
-    """Sends each answer to the nearest of k clusters of labeled train answers.
+    """Send each answer to the closest of k groups of labeled training answers.
 
-    Each cluster takes the rule most of its members carry. A cluster can also
-    decide an answer on its own when its members for one user type all share
-    the same label.
+    Each group, called a cluster, takes the rule most of its examples belong to.
+    The optional shortcut decides an answer when enough examples for its user type
+    agree on a label. By default, all of them must agree.
     """
 
     def __init__(
@@ -165,7 +165,7 @@ class KMeansRouter:
         threshold: float,
         short_circuit: ShortCircuit | None = None,
     ) -> "KMeansRouter":
-        """Build a router from given clusters, with no embedding model and no fit."""
+        """Build a router from existing clusters without loading a model or fitting new groups."""
         router = cls(k=len(centers), short_circuit=short_circuit)
         router.centers = np.vstack([_unit(np.asarray(c, dtype=np.float32)) for c in centers])
         router.rule_ids = list(rule_ids)
@@ -175,7 +175,7 @@ class KMeansRouter:
         return router
 
     def fit(self, records: list[dict]) -> "KMeansRouter":
-        """Cluster the train answers, name each cluster and pick the threshold."""
+        """Group the training answers, assign each group a rule, and choose the cutoff."""
         # Imported here because loading the library takes a moment.
         from sklearn.cluster import KMeans
 
@@ -190,7 +190,7 @@ class KMeansRouter:
         self.rule_ids, self.counts = [], []
         for idx in self.members:
             rules = Counter(records[i]["rule_id"] for i in idx)
-            # Most members wins, ties go to the rule that sorts first. An empty cluster is "none".
+            # The most common rule wins. Break ties by sort order. Empty clusters use "none".
             ranked = sorted(rules.items(), key=lambda kv: (-kv[1], kv[0]))
             self.rule_ids.append(ranked[0][0] if ranked else "none")
             self.counts.append(
@@ -238,5 +238,5 @@ class KMeansRouter:
         return VERDICTS[label], note
 
     def route(self, prompt: str, response: str, user_type: str | None = None) -> RouteResult:
-        """Embed a prompt and its answer, then route the vector."""
+        """Turn a prompt and its answer into numbers, then find the closest cluster."""
         return self.route_vector(self.embedder.encode([text(prompt, response)])[0], user_type)

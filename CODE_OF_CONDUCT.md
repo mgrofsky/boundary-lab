@@ -1,25 +1,25 @@
 # Code of conduct
 
-Be decent to each other. That covers most of it, but here is the longer version.
+Be decent to each other. Here's what that means for this project.
 
-## Expected
+## Working together
 
-- Treat people with respect, in issues, pull requests and anywhere else this project is discussed.
+- Treat people with respect in issues, pull requests, and anywhere else the project is discussed.
 - Assume good intent. Ask before you accuse.
 - Give feedback about the work, not the person.
 - Accept that the maintainer makes the final call on what goes in.
 
-## Not accepted
+## What's not okay
 
 - Insults, harassment, threats or personal attacks.
 - Publishing someone's private information.
 - Sexual language or imagery.
 - Any behavior that would get you asked to leave a professional meeting.
 
-## Enforcement
+## If there's a problem
 
-If someone breaks these rules, open a private report through the Security tab, or email the maintainer at the address on the commits. Reports are kept private. The maintainer may remove comments, close pull requests or block accounts, depending on what happened.
+If someone breaks these rules, send a private report through the Security tab or email the maintainer at the address listed on the commits. Reports stay private. Depending on what happened, the maintainer may remove comments, close pull requests, or block accounts.
 
-## Scope
+## Where this applies
 
-This applies in the repository and in any public space where someone is representing the project.
+These rules apply here and anywhere someone is speaking or acting on behalf of the project.

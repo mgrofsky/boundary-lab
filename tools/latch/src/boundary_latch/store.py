@@ -49,7 +49,7 @@ RECORDED = ("reserved", "succeeded", "failed", "uncertain")
 
 
 class OperationExists(Exception):
-    """An operation with this org and operation id is already stored."""
+    """An operation with this organization and operation ID is already stored."""
 
 
 class ApprovalExists(Exception):
@@ -57,11 +57,11 @@ class ApprovalExists(Exception):
 
 
 class _Connection(sqlite3.Connection):
-    """A plain connection that tests may patch, since the base type is read only."""
+    """A connection tests can change, since the base type is read-only."""
 
 
 class SQLiteStore:
-    """Runs, operations, approvals and audit rows in one SQLite database.
+    """Runs, operations, approvals, and audit records in one SQLite database.
 
     One connection is shared by every thread, and a lock guards every method.
     Every sqlite3 error becomes StorageError.
@@ -195,7 +195,7 @@ class SQLiteStore:
         expected_hash: str, decision: str, clock: Callable[[], float],
         run_lifetime: int, approval_lifetime: int,
     ) -> str:
-        """Record a decision and transition its still-pending operation atomically."""
+        """Save the decision and update the pending operation together, or save neither."""
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
@@ -248,9 +248,9 @@ class SQLiteStore:
         *,
         clock: Callable[[], float] | None = None,
     ) -> str:
-        """Reserve an operation for one dispatch inside a single transaction.
+        """Reserve an operation to run once, saving all changes together.
 
-        The persisted approval requirement and run identity are authoritative.
+        Use the approval requirement and run ID saved in the database.
         Returns "reserved", "already_recorded", "denied", "approval_missing",
         "approval_expired", "run_expired", "run_limit" or "hash_mismatch".
         """

@@ -4,7 +4,7 @@
 #
 #   1. string checks that need no model (no tool names leaked, no card number echoed, ...)
 #   2. promptfoo's llm-rubric, graded by the same model the saved run used as its judge
-#   3. the redline rig itself, as a python assertion (route, gate, judge)
+#   3. Redline as a Python check (router, gate, judge)
 #
 # Run from this folder with the project installed (pip install -e . at the root):
 #
@@ -13,7 +13,7 @@
 #   promptfoo view
 #
 # The defaults below point at a local Ollama server, matching the saved run. Any
-# provider promptfoo knows works in its place. The rig's judge reads REDLINE_JUDGE_BASE_URL,
+# provider promptfoo supports can work in its place. Redline's judge reads REDLINE_JUDGE_BASE_URL,
 # REDLINE_JUDGE_MODEL and REDLINE_JUDGE_API_KEY from the environment or the root .env file.
 
 description: Northwind Power billing assistant against its four rules

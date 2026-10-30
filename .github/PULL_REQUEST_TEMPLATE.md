@@ -1,14 +1,13 @@
 ## What changed
 
-One or two sentences. This becomes the commit message when the pull request is squash merged.
+Describe the change in one or two sentences. Give the pull request a clear title; that title becomes the commit message.
 
 ## Why
 
-The issue number if there is one, or a short reason.
+Explain why this helps. Link the issue if there is one.
 
 ## Checks
 
-- [ ] `ruff check .` passes
-- [ ] `pytest -q` passes, including the style test
-- [ ] `redline readme --check` passes
-- [ ] No edits to data/ or results/, or the pull request explains why
+- [ ] Redline's checks pass: `ruff check .`, `pytest -q`, and `redline readme --check`.
+- [ ] Latch's checks pass when changed: `ruff check .` and `pytest -q` from `tools/latch` with its dependencies installed.
+- [ ] Any changes to saved data or results are explained above.

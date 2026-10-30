@@ -1,12 +1,12 @@
 name: Bug report
-description: Something gives the wrong result or does not run.
+description: Something gives the wrong result or won't run.
 labels: [bug]
 body:
   - type: textarea
     id: what
     attributes:
       label: What happened
-      description: What you ran and what you got.
+      description: Tell us what you ran and what happened.
     validations:
       required: true
   - type: textarea
@@ -18,7 +18,7 @@ body:
   - type: input
     id: command
     attributes:
-      label: The exact command
+      label: What to run or click
       placeholder: redline run --data data/holdout.jsonl --judge replay
     validations:
       required: true

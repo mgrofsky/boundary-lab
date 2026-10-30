@@ -1,8 +1,8 @@
 # Policy
 
-The policy is one TOML file. Unknown keys are rejected, so a typo is an error and not a silent gap. Load it with `load_policy(path)`, or with `parse_policy(text)` for a string. Check a file with `boundary-latch check policy.toml`.
+The policy is one TOML file. It sets the rules for each tool. Latch rejects unknown keys, so a misspelled key causes an error. Load the file with `load_policy(path)`, or pass its text to `parse_policy(text)`. Check a file with `boundary-latch check policy.toml`.
 
-Latch hashes the policy contents into a digest. The digest is part of every request hash, so editing the file after a call is prepared turns that operation id into a conflict. Submit a new operation id and get a new approval. Editing any tool changes the digest for all of them.
+Latch makes a fingerprint of the loaded policy settings, called a digest. It includes that fingerprint when it records each request. If you change the settings and load the new policy, a pending request prepared under the old policy returns `OPERATION_CONFLICT`. Check what happened to the old request, then submit a new operation ID and get a new approval if needed. Changing one tool's policy changes the fingerprint for all tools. Comments and formatting do not change it.
 
 ## Limits
 
@@ -33,11 +33,11 @@ Each tool you register needs a `[tools.<name>]` table.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| require_permission | string | required | The permission the user must hold |
-| approve_permission | string | none | The permission an approver must hold |
+| require_permission | string | required | The permission the user must have |
+| approve_permission | string | none | The permission an approver must have |
 | recipient_field | string | none | The argument that holds the recipient |
 | allowed_recipients | list of strings | none | The only values allowed in that argument |
-| approval | table | mode never | When the call waits for an approver |
+| approval | table | mode never | When the call waits for approval |
 
 `recipient_field` and `allowed_recipients` go together. Set both or neither. A tool whose approval mode is not `never` must set `approve_permission`.
 
@@ -45,7 +45,7 @@ Each tool you register needs a `[tools.<name>]` table.
 
 - `never`: the call needs no approval. This is the default.
 - `always`: every call waits for an approver.
-- `over_amount`: the call waits when one argument is above a threshold.
+- `over_amount`: the call waits when an amount is above the limit you set.
 
 `over_amount` needs two more keys, and no other mode accepts them.
 
@@ -56,4 +56,4 @@ Each tool you register needs a `[tools.<name>]` table.
 
 ## Minor units
 
-Amounts are whole numbers in minor units, such as cents. A threshold of 5000 means 50.00. A call of exactly 5000 runs without approval. A call of 5001 waits. Keep money out of floats, and name the argument with a `_minor` suffix so nobody reads it as dollars.
+Amounts use whole numbers in the currency's smallest unit, called a minor unit. For dollars, that means cents. A `threshold_minor` of 5000 means $50.00: exactly 5000 needs no approval, while 5001 does. Use integers for money instead of floating-point numbers, and end the argument name with `_minor` so readers know how to interpret it.

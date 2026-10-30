@@ -9,29 +9,29 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg" alt="AGPL-3.0-only license"></a>
 </p>
 
-Boundary Lab is a collection of practical safety and security tools for apps that use language models. It gives you working code to try, learn from, and use in your own projects.
+Boundary Lab is a set of safety and security tools for chatbots and the apps around them. You can run the examples, see what happens, and use the code in your own projects.
 
-The goal is to make these checks easier to understand and apply. You can test whether a chatbot follows your rules, or check whether a user is allowed to run a tool call. The examples show what happens and why.
+The idea is simple: show how the checks work with code you can actually use. Test whether a chatbot follows your rules. Check what a user is allowed to do. See what gets caught and what slips through.
 
-It's for developers building applications, security people testing them, and anyone learning how these checks fit into an app.
+It's for developers building apps, security people testing them, and anyone who wants to learn how these checks work.
 
 ## Projects
 
 | Project | What you can do with it | Get started |
 | --- | --- | --- |
-| **Redline** | Test chatbot answers against your rules. See which violations the checks catch, what they miss, and which good answers get flagged. | [Redline README](redline/README.md) |
-| **Latch** | Check tool calls before they run. Add permissions, approval steps, and limits to an application. | [Latch README](tools/latch/README.md) |
+| **Redline** | Check chatbot answers against your rules. See which problems it catches, what it misses, and which good answers it flags by mistake. | [Redline README](redline/README.md) |
+| **Latch** | Check a tool call before your app runs it. Add permissions, approval steps, and limits on what can happen. | [Latch README](tools/latch/README.md) |
 
-Each project stands on its own. You can use either one without setting up the other. Their READMEs hold the installation steps, examples, settings, results, and limits.
+Each project works on its own. Pick the one you need and open its README for setup, examples, settings, results, and limits.
 
 ## Start with an example
 
-Run the included example first. Change a rule or permission and see how the result changes. Then replace the sample data or functions with your own.
+Start with the included example. Change a rule or permission and see what happens. Then try your own data or connect your own functions.
 
-The examples use made-up businesses and data, so you can try things without connecting a real customer account. The code and explanations show where the checks work and where your application needs to do more.
+The examples use made-up businesses and data, so you can try things without connecting a real customer account. Each project explains what it checks, what it misses, and what your app still needs to handle.
 
 ## Help improve it
 
-Found a confusing step, a check that misses something, or an example that would help? Open an issue. See [Contributing](CONTRIBUTING.md) for how to make a change.
+If a step is confusing, a check misses something, or another example would help, open an issue. See [Contributing](CONTRIBUTING.md) to make a change.
 
 Copyright (c) 2026 Matt Grofsky. Licensed under the GNU Affero General Public License, version 3 only (AGPL-3.0-only). See [LICENSE](LICENSE).

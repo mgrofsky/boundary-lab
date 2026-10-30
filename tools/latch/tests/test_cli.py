@@ -27,7 +27,7 @@ def test_check_accepts_a_valid_policy(tmp_path):
     path.write_text(GOOD)
     result = run_cli("check", str(path))
     assert result.returncode == 0
-    assert result.stdout.startswith("policy ok, 2 tools, digest ")
+    assert result.stdout.startswith("policy ok, 2 tools, policy hash ")
     digest = boundary_latch.load_policy(path).digest
     assert result.stdout.strip().endswith(digest[:12])
 

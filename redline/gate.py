@@ -17,7 +17,7 @@ def _article(user_type: str) -> str:
 
 
 def check(rule, user_type: str) -> Stance:
-    """Return the stance for this user type under this rule. The gate never decides alone."""
+    """Tell the judge what this rule allows for the user type. Don't grade the answer here."""
     if not rule.allowed_for:
         return Stance(
             False,

@@ -1,4 +1,4 @@
-"""Turn text into normalized vectors with a small sentence embedding model."""
+"""Turn text into lists of numbers, called embeddings, so the router can compare it."""
 
 import numpy as np
 
@@ -6,12 +6,12 @@ DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def text(prompt: str, response: str) -> str:
-    """Join a prompt and its answer into the one string we embed."""
+    """Join a prompt and its answer so the model reads them together."""
     return f"User: {prompt}\nAssistant: {response}"
 
 
 class Embedder:
-    """Wraps the embedding model. The model loads on the first call to encode."""
+    """Load the model when encode is first called, then reuse it."""
 
     def __init__(self, model_name: str = DEFAULT_MODEL):
         self.model_name = model_name

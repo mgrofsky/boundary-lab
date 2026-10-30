@@ -22,7 +22,7 @@ def check(path: str) -> int:
     except OSError as exc:
         print(f"policy rejected: could not read {path}: {exc.strerror}", file=sys.stderr)
         return 1
-    print(f"policy ok, {len(policy.tools)} tools, digest {policy.digest[:12]}")
+    print(f"policy ok, {len(policy.tools)} tools, policy hash {policy.digest[:12]}")
     return 0
 
 
@@ -37,7 +37,7 @@ def scenarios(as_json: bool) -> int:
 def init(directory: str) -> int:
     target = Path(directory)
     if target.exists() and any(target.iterdir()):
-        print("refusing to write into a nonempty directory", file=sys.stderr)
+        print("the destination folder must be empty", file=sys.stderr)
         return 1
     with as_file(files("boundary_latch") / "starter") as starter:
         shutil.copytree(
@@ -69,8 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="boundary-latch", description="Check AI tool calls before they run."
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    check_cmd = commands.add_parser("check", help="validate a policy file")
-    check_cmd.add_argument("policy", help="path to a policy TOML file")
+    check_cmd = commands.add_parser("check", help="check a policy file")
+    check_cmd.add_argument("policy", help="path to a TOML policy file")
     demo_cmd = commands.add_parser("demo", help="play the Northwind scenarios in the terminal")
     add_demo_arguments(demo_cmd)
     serve_cmd = commands.add_parser("serve", help="run the browser demo on 127.0.0.1")
@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--db", default=DEFAULT_DB, help=f"SQLite file for the demo (default ./{DEFAULT_DB})"
     )
     serve_cmd.add_argument("--live", action="store_true", help="let a live model take turns")
-    scenarios_cmd = commands.add_parser("scenarios", help="run the built in scenarios")
+    scenarios_cmd = commands.add_parser("scenarios", help="run the built-in scenarios")
     scenarios_cmd.add_argument("--json", action="store_true", help="print JSON")
     init_cmd = commands.add_parser("init", help="copy the starter project")
     init_cmd.add_argument("directory", help="where to write the starter project")

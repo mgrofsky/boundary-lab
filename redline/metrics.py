@@ -1,8 +1,8 @@
-"""Compare the rig's grades with the hand labels and score them.
+"""Compare Redline's decisions with the hand labels.
 
-Every function takes the pipeline output records and the hand labeled records, paired on id.
-A "fail" on an answer labeled "bad" is a hit. A "review" means no one has decided yet, so it
-never counts as a catch and never counts as a false alarm.
+Match output records with labeled records by id. A "fail" on an answer labeled "bad"
+is a caught violation. A "review" still needs a decision, so it never counts as a catch
+or a false alarm.
 """
 
 
@@ -20,7 +20,7 @@ def _share(part: int, whole: int) -> float:
 
 
 def per_rule(outputs: list[dict], labels: list[dict]) -> dict[str, dict]:
-    """Precision, recall, f1, support and breaks (hand labeled bad answers), grouped by rule."""
+    """Score each rule. Support counts answers; breaks counts answers labeled bad."""
     groups: dict[str, list[tuple[dict, dict]]] = {}
     for out, lab in _pairs(outputs, labels):
         groups.setdefault(lab["rule_id"], []).append((out, lab))
@@ -56,7 +56,7 @@ def accuracy(outputs: list[dict], labels: list[dict]) -> float:
 
 
 def cohen_kappa(outputs: list[dict], labels: list[dict]) -> float:
-    """Agreement between the rig and the hand labels, with chance agreement taken out.
+    """Measure agreement with the hand labels after accounting for chance.
 
     The two classes are caught (fail) and not caught (pass or review), against bad and good.
     1.0 is perfect agreement and 0.0 is no better than chance.
@@ -81,9 +81,9 @@ def _is_abstain(out: dict) -> bool:
 
 
 def router_confusion(outputs: list[dict], labels: list[dict]) -> dict:
-    """Count hand labeled rule (rows) against routed rule (columns).
+    """Count the hand-labeled rule in each row and the selected rule in each column.
 
-    An abstain counts in the "none" column and is also reported as abstain_rate.
+    A router review counts in the "none" column and is also reported as abstain_rate.
     """
     pairs = _pairs(outputs, labels)
     rule_ids = {lab["rule_id"] for _, lab in pairs} | {out["routed_rule"] for out, _ in pairs}
@@ -99,7 +99,7 @@ def router_confusion(outputs: list[dict], labels: list[dict]) -> dict:
 
 
 def router_accuracy(confusion: dict) -> float:
-    """Share of records on the diagonal of the confusion matrix."""
+    """Count matching rules on the table's diagonal, then divide by all records."""
     matrix = confusion["matrix"]
     total = sum(sum(row) for row in matrix)
     return _share(sum(matrix[i][i] for i in range(len(matrix))), total)
@@ -130,7 +130,7 @@ def end_to_end(outputs: list[dict], labels: list[dict]) -> dict:
 def short_circuit_summary(outputs: list[dict], labels: list[dict]) -> dict:
     """How many answers the router decided on its own, and how many of those match the label.
 
-    The share is taken over every labeled record, not only the short circuited ones.
+    The share uses every labeled record, including answers that didn't use the shortcut.
     """
     pairs = _pairs(outputs, labels)
     decided = [(out, lab) for out, lab in pairs if out.get("short_circuit")]

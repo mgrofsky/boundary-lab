@@ -10,7 +10,7 @@ A new answer goes to the closest center. Good and bad examples both help pick th
 
 ## K-means clusters
 
-`--router kmeans --k 12` groups the examples into 12 clusters based on how similar they are. Each cluster gets the rule most of its examples belong to. More than one cluster can have the same rule, and a cluster can contain examples from different rules.
+`--router kmeans --k 12` sorts similar examples into 12 groups, called clusters. Each cluster gets the rule most of its examples belong to. More than one cluster can have the same rule, and a cluster can contain examples from different rules.
 
 A new answer goes to the closest cluster center. That gives a rule room to appear in several groups, but it doesn't guarantee a better match. In the saved runs, both 4 and 12 clusters did worse than the default on overall accuracy.
 
@@ -24,7 +24,7 @@ With **center matching**, Redline also builds separate centers for good and bad 
 
 With **k-means**, Redline counts good and bad examples for the user's type in the matched cluster. By default, it needs at least 5 examples, all with the same label. Those counts include every rule represented in the cluster. A mix of labels goes to the judge unless you lower `--purity`.
 
-These checks describe agreement among the examples, not certainty about a new answer. Check the shortcut's wrong decisions as well as how often it skips the judge.
+Even when the examples agree, the shortcut can get a new answer wrong. Check its wrong decisions as well as how often it skips the judge.
 
 | Setting | Default | What it changes |
 | --- | --- | --- |

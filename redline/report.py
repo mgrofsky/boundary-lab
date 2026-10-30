@@ -1,4 +1,4 @@
-"""Write the summary file, the long report and the README results table."""
+"""Write the summary file, full report, and README results table."""
 
 import hashlib
 import json
@@ -20,7 +20,7 @@ def _judge_block(outputs, labels) -> dict:
 
 
 def _read_cache(cache_path) -> tuple[bytes, list[str]]:
-    """The cache file as bytes and the sorted model names in it. A missing file is empty."""
+    """Read the cache and its model names. Return empty values if the file is missing."""
     if cache_path is None or not Path(cache_path).is_file():
         return b"", []
     data = Path(cache_path).read_bytes()
@@ -49,7 +49,7 @@ def build_summary(
     cache_path=None,
     run_meta=None,
 ) -> dict:
-    """Score the holdout run and the attack run and gather every number in one dict.
+    """Score both runs and collect the results in one dict.
 
     run_meta holds the "holdout" and "attack" meta files written by `redline run`, or is None.
     """
@@ -107,7 +107,7 @@ def _rule_sentences(per_rule: dict) -> list[str]:
         if rule_id == "none":
             continue
         lines.append(
-            f"For {rule_id}, when the rig said an answer broke the rule, it was right "
+            f"For {rule_id}, when Redline said an answer broke the rule, it was right "
             f"{_pct(m['precision'])} of the time. Of the answers that really broke the rule, "
             f"it caught {_pct(m['recall'])}."
         )
@@ -116,28 +116,28 @@ def _rule_sentences(per_rule: dict) -> list[str]:
 
 def _judge_section(title: str, block: dict, set_name: str, first: bool) -> list[str]:
     miss = (
-        "A review counts as a miss here, because no one has decided yet."
+        "Review counts as a miss because the answer still needs a decision."
         if first
-        else "Review counts as a miss, same as above."
+        else "Review counts as a miss here too."
     )
     return [
         f"## {title}",
         "",
         (
-            f"The rig's final answer matched the hand label for {_pct(block['accuracy'])} of the "
-            f"{set_name}, where the rig's final answer is pass, fail or review. {miss}"
+            f"Redline's final decision matched the hand label for {_pct(block['accuracy'])} of the "
+            f"{set_name}. Each decision is pass, fail, or review. {miss}"
         ),
         "",
         (
-            f"Kappa, a measure of agreement with luck taken out, is {block['cohen_kappa']:.2f}. "
-            "A kappa of 0 is no better than guessing and 1 is perfect agreement."
+            f"Kappa is {block['cohen_kappa']:.2f}. It measures agreement after accounting for "
+            "agreement expected by chance. A score of 0 matches that chance level; "
+            "1 means complete agreement."
         ),
         "",
         (
-            "Agreement and kappa count different things. Agreement compares the rig's final "
-            "answer (pass, fail or review) with the hand label, and a review is a miss. Kappa "
-            "compares a yes or no on whether the rig failed the answer with a yes or no on "
-            "whether the hand label said bad, so a review counts as did not fail."
+            "Accuracy and kappa handle review differently. Accuracy counts a review as a miss. "
+            "Kappa compares fail against pass or review, and checks that against the bad or "
+            "good hand label. Both scores include the router's decisions."
         ),
         "",
         *(line for sentence in _rule_sentences(block["per_rule"]) for line in (sentence, "")),
@@ -145,11 +145,17 @@ def _judge_section(title: str, block: dict, set_name: str, first: bool) -> list[
 
 
 def _attack_sentence(kind: str, k: dict) -> str:
-    start = f"The {kind} kind sent {k['prompts']} prompts"
+    names = {
+        "card_elicitation": "getting card details into chat",
+        "prompt_extraction": "getting the chatbot's instructions",
+        "roleplay_injection": "using roleplay to override the rules",
+        "verification_bypass": "skipping identity checks",
+    }
+    start = f"The group for {names.get(kind, kind)} had {k['prompts']} prompts"
     if not k["rule_breaks"]:
         return f"{start}, and none of them got the model to break a rule."
     return (
-        f"{start}, and {k['rule_breaks']} of them got the model to break a rule. The rig "
+        f"{start}, and {k['rule_breaks']} of them got the model to break a rule. Redline "
         f"caught {k['caught_by_rig']} of those and missed {k['missed']}."
     )
 
@@ -177,13 +183,13 @@ def _router_sentence(meta: dict) -> str:
 def _short_circuit_sentences(set_name: str, sc: dict, meta: dict | None) -> list[str]:
     if sc["count"]:
         line = (
-            f"On the {set_name} the router used the shortcut for {sc['count']} answers, "
-            f"{_pct(sc['share'])} of all of them. {sc['right']} of those matched the hand label."
+            f"On the {set_name}, the router used the shortcut for {sc['count']} answers, "
+            f"or {_pct(sc['share'])} of the total. {sc['right']} matched the hand label."
         )
         if sc["wrong_ids"]:
             line += f" The wrong ones were {', '.join(sc['wrong_ids'])}."
     else:
-        line = f"On the {set_name} the router did not use the shortcut."
+        line = f"On the {set_name}, the router did not use the shortcut."
     if meta:
         line += (
             f" {meta['judge_calls']} answers went to the judge, including saved-grade lookups. "
@@ -193,7 +199,7 @@ def _short_circuit_sentences(set_name: str, sc: dict, meta: dict | None) -> list
 
 
 def _short_circuit_section(summary: dict) -> list[str]:
-    """The routing and short circuit section. Summaries made before it existed get none."""
+    """Describe the router and shortcut. Skip summaries that don't have these results."""
     if "short_circuit" not in summary:
         return []
     run = summary.get("run") or {}
@@ -202,12 +208,13 @@ def _short_circuit_section(summary: dict) -> list[str]:
     if meta:
         lines += [_router_sentence(meta), ""]
     else:
-        lines += ["No run meta files were found, so the router settings are not recorded.", ""]
+        lines += ["No run settings files were found, so the router settings aren't recorded.", ""]
     lines += [
         (
-            "The --short-circuit option lets the router pass or fail some answers using the "
-            "labeled examples, without asking the judge. Center matching compares good and bad "
-            "groups. K-means counts labels within the matched cluster for the user's type."
+            "The `--short-circuit` option lets the router pass or fail some answers using the "
+            "labeled examples, without asking the judge. Center matching averages examples "
+            "for each rule and compares separate good and bad groups. K-means groups similar "
+            "examples into clusters, then counts labels in the matched cluster for the user's type."
         ),
         "",
     ]
@@ -225,7 +232,7 @@ def _short_circuit_section(summary: dict) -> list[str]:
 
 
 def render_report(summary: dict) -> str:
-    """Return the long report as markdown, in plain sentences with one table at the end."""
+    """Return the full report as Markdown, with one table at the end."""
     router = summary["router"]
     bad = summary["end_to_end"]["bad"]
     good = summary["end_to_end"]["good"]
@@ -239,18 +246,24 @@ def render_report(summary: dict) -> str:
         "# Results report",
         "",
         (
-            f"This file is written by `redline report`. It was made at "
-            f"{summary['produced_at']}. Answers were turned into numbers with "
-            f"{summary['embedding_model']}."
+            f"This report uses the results saved at {summary['produced_at']}. "
+            f"The router used `{summary['embedding_model']}` to turn text into numbers "
+            "it could compare. `redline report` writes this file."
         ),
         "",
         (
             f"The judge model was recorded as {', '.join(summary['judge_model']) or 'unknown'}. "
-            "These names come from the cache file, not a separate check of the model. The hash "
-            "of the judge cache file is in summary.json."
+            "These names come from the cache file. They haven't been checked separately. "
+            "The cache file's hash, a fingerprint of its contents, is in `summary.json`."
         ),
         "",
         "## The data",
+        "",
+        (
+            "The holdout set contains answers kept back for checking the tool. The attack run "
+            "contains the chatbot's answers to prompts that tried to make it break a rule. "
+            "Both sets use labels written by hand."
+        ),
         "",
         *(f"- {path} has {n} records." for path, n in summary["counts"].items()),
         "",
@@ -258,41 +271,44 @@ def render_report(summary: dict) -> str:
         "",
         (
             f"The router picked the right rule for {_pct(router['holdout_accuracy'])} of the "
-            f"{holdout_count} holdout answers, the {off_topic_count} off topic ones included. "
+            f"{holdout_count} holdout answers, including {off_topic_count} off-topic answers. "
             "Keep these answers separate from the examples used to set up the router and judge. "
             "The report doesn't check that separation for you."
         ),
         "",
         (
-            "On an on topic answer, an abstain counts as wrong here. On an off topic answer, "
-            "an abstain counts as right."
+            "If the router can't find a close enough match, it marks the answer for review. "
+            "That counts as a wrong match for an answer about a rule, and a correct match "
+            "for an off-topic answer."
         ),
         "",
         (
-            f"It abstained on {_pct(router['abstain_rate'])} of them. An abstain means the "
-            "answer was not close enough to a center, so it is marked review. "
+            f"The router marked {_pct(router['abstain_rate'])} of the answers for review. "
             "Redline records that result; it doesn't send it to a person."
         ),
         "",
         *_short_circuit_section(summary),
         *_judge_section(
-            "Final decisions on the holdout set", summary["judge"]["holdout"], "holdout answers", True
+            "Final decisions on the holdout set",
+            summary["judge"]["holdout"],
+            "holdout answers",
+            True,
         ),
         *_judge_section(
             "Final decisions on the attack run", summary["judge"]["attack"], "attack answers", False
         ),
-        "## End to end on the holdout set",
+        "## Violations, false alarms, and reviews on the holdout set",
         "",
         (
-            f"Of the answers that broke a rule, the rig caught {_pct(bad['caught'])}. "
+            f"Of the answers that broke a rule, Redline caught {_pct(bad['caught'])}. "
             f"It passed {_pct(bad['missed'])} by mistake and marked "
             f"{_pct(bad['sent_to_review'])} for review."
         ),
         "",
         (
-            "Of the answers that followed the rules, the rig failed "
-            f"{_pct(good['wrongly_failed'])} by mistake. That is the cry wolf rate. It sent "
-            f"{_pct(good['sent_to_review'])} of them to review and passed the other "
+            "Of the answers that followed the rules, Redline failed "
+            f"{_pct(good['wrongly_failed'])} by mistake. That's the false alarm rate. It marked "
+            f"{_pct(good['sent_to_review'])} of them for review and passed the other "
             f"{good_passed} percent."
         ),
         "",
@@ -300,11 +316,11 @@ def render_report(summary: dict) -> str:
         "",
         (
             f"The model under test got {prompts} attack prompts, and {breaks} of them got it to "
-            f"break a rule, going by the hand labels. The rig caught {caught} of those."
+            f"break a rule, going by the hand labels. Redline caught {caught} of those."
         ),
         "",
         (
-            "The per rule numbers are grouped by the rule each attack targeted. The router "
+            "The results are grouped by the rule each attack targeted. The router "
             "picked a different rule or no rule for "
             f"{routing['misrouted']} of the {routing['total']} attack answers. When the judge is "
             "used, it checks the rule the router picked. A wrong match can hide a violation, "
@@ -316,11 +332,11 @@ def render_report(summary: dict) -> str:
             for kind, k in summary["attack"].items()
             for line in (_attack_sentence(kind, k), "")
         ),
-        "## Per rule numbers",
+        "## Results for each rule",
         "",
         (
             "Precision is how often a fail was right. Recall is how many of the real rule breaks "
-            "were caught. F1 blends the two into one number from 0 to 1. The off topic answers are "
+            "were caught. F1 combines the two into one score from 0 to 1. Off-topic answers are "
             "not in the table because there is no rule for them to break."
         ),
         "",
@@ -353,23 +369,23 @@ def render_readme_table(summary: dict) -> str:
     rows = [
         ("Router accuracy on holdout", _pct(summary["router"]["holdout_accuracy"])),
         (
-            "Rig accuracy on holdout (router and judge together)",
+            "Overall accuracy on holdout (router and judge)",
             _pct(holdout["accuracy"]),
         ),
         (
-            "Judge agreement with hand labels on holdout (kappa)",
+            "Agreement with hand labels on holdout (kappa)",
             f"{holdout['cohen_kappa']:.2f}",
         ),
-        ("Rule breaks caught end to end", _pct(bad["caught"])),
-        ("Cry wolf rate on holdout", _pct(summary["end_to_end"]["good"]["wrongly_failed"])),
+        ("Rule breaks caught on holdout", _pct(bad["caught"])),
+        ("False alarm rate on holdout", _pct(summary["end_to_end"]["good"]["wrongly_failed"])),
         ("Attack prompts that broke a rule", f"{breaks} of {prompts}"),
-        ("Of those, caught by the rig", f"{caught} of {breaks}{caught_share}"),
+        ("Of those, caught by Redline", f"{caught} of {breaks}{caught_share}"),
         (
-            "Cry wolf rate on attack prompts",
+            "False alarm rate on attack answers",
             _pct(summary["attack_end_to_end"]["good"]["wrongly_failed"]),
         ),
         (
-            "Judge agreement with hand labels on attack prompts (kappa)",
+            "Agreement with hand labels on attack answers (kappa)",
             f"{summary['judge']['attack']['cohen_kappa']:.2f}",
         ),
     ]
@@ -378,8 +394,8 @@ def render_readme_table(summary: dict) -> str:
     lines += [
         "",
         (
-            "This table is written from results/summary.json by `redline readme`, "
-            "so do not edit it by hand."
+            "Run `redline readme` to update this table from `results/summary.json`. "
+            "Don't edit the table by hand."
         ),
     ]
     return "\n".join(lines)
@@ -411,18 +427,18 @@ NO_SHORT_CIRCUIT = {"count": 0, "share": 0.0, "right": 0, "wrong_ids": []}
 # (header, row key) for each column of the comparison table, after the run label.
 COMPARISON_COLUMNS = [
     ("Router accuracy holdout", "router_accuracy_holdout"),
-    ("Rig accuracy holdout", "rig_accuracy_holdout"),
+    ("Overall accuracy holdout", "rig_accuracy_holdout"),
     ("Kappa holdout", "kappa_holdout"),
     ("Breaks caught holdout", "breaks_caught_holdout"),
-    ("Cry wolf holdout", "cry_wolf_holdout"),
+    ("False alarms holdout", "cry_wolf_holdout"),
     ("Attack caught (x of y)", "attack_caught"),
-    ("Cry wolf attack", "cry_wolf_attack"),
+    ("False alarms attack", "cry_wolf_attack"),
     ("Kappa attack", "kappa_attack"),
-    ("Short circuit share holdout", "short_circuit_share_holdout"),
-    ("Short circuit right holdout", "short_circuit_right_holdout"),
-    ("Short circuit share attack", "short_circuit_share_attack"),
-    ("Short circuit right attack", "short_circuit_right_attack"),
-    ("Judge calls (holdout + attack)", "judge_calls"),
+    ("Shortcut share holdout", "short_circuit_share_holdout"),
+    ("Shortcut correct holdout", "short_circuit_right_holdout"),
+    ("Shortcut share attack", "short_circuit_share_attack"),
+    ("Shortcut correct attack", "short_circuit_right_attack"),
+    ("Answers sent to judge (holdout + attack)", "judge_calls"),
     ("Seconds (holdout + attack)", "seconds"),
 ]
 
@@ -474,30 +490,37 @@ def _cell(key: str, value) -> str:
 
 
 def render_comparison(rows: list[dict]) -> str:
-    """Return the side by side table for several runs as markdown."""
+    """Return a Markdown table comparing several runs."""
     headers = ["Run"] + [header for header, _ in COMPARISON_COLUMNS]
     lines = [
         "# Router comparison",
         "",
         (
-            "This file is written by `redline compare`. Each row is one run folder, scored on "
-            "the holdout set and the attack run."
+            "`redline compare` writes this file. Each row is one run folder, scored on "
+            "the holdout set and the attack run. Holdout answers are kept back for checking "
+            "the tool. Attack answers come from prompts that tried to make the chatbot break a rule."
         ),
         "",
         (
-            "Center means one average center per rule. K-means groups similar examples into "
-            "clusters. With short circuit on, the router can pass or fail some answers using "
+            "Center matching averages the examples for each rule. K-means groups similar examples into "
+            "clusters. With the shortcut on, the router can pass or fail some answers using "
             "the labeled examples, without asking the judge."
         ),
         "",
         (
-            "Start with breaks caught and false alarms, called cry wolf in the table. "
-            "Short circuit right shows how many shortcut decisions matched the hand labels. "
+            "Start with breaks caught and false alarms. A false alarm means a good answer "
+            "was marked fail. Shortcut correct shows how many shortcut decisions matched the hand labels. "
             "None means the shortcut made no decisions."
         ),
         "",
         (
-            "Judge calls includes cached grades and replay lookups, not just network requests. "
+            "Overall accuracy counts review as a miss. Kappa measures agreement after "
+            "accounting for chance, with pass and review grouped together. Both scores include "
+            "the router's decisions."
+        ),
+        "",
+        (
+            "The judge count includes cached grades and replay lookups as well as network requests. "
             "Seconds excludes router setup. These files don't record live calls separately, "
             "so the times don't show whether one router makes live models faster."
         ),

@@ -54,7 +54,7 @@ def test_every_element_the_app_uses_is_on_the_page():
 
 
 def test_page_labels():
-    assert "Sample identities, not real users" in INDEX
+    assert "Choose an example user" in INDEX
     for label in ("Propose", "Approve", "Deny", "Run", "Scenarios"):
         assert f">{label}<" in INDEX, label
 
