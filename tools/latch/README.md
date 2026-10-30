@@ -2,7 +2,7 @@
 
 Latch checks tool calls before they run. The model asks to use one of your app's functions and supplies the arguments. Your app tells Latch who the user is, and Latch checks whether that user can make that exact call.
 
-Latch is part of [Boundary Lab](../../README.md). It is a separate package from [Redline](../../redline/README.md) and does not share any code with it. Redline grades answers after they are written. Latch blocks calls before they happen.
+Latch is part of [Boundary Lab](https://github.com/mgrofsky/boundary-lab/blob/main/README.md). It is a separate package from [Redline](https://github.com/mgrofsky/boundary-lab/blob/main/redline/README.md) and does not share any code with it. Redline grades answers after they are written. Latch blocks calls before they happen.
 
 ## What it checks
 
@@ -59,7 +59,7 @@ Check a policy file with `boundary-latch check policy.toml`. Copy a starter proj
 
 ## Use it in your app
 
-Here is how the starter project connects Latch to an app. The full example is in [app.py](src/boundary_latch/starter/app.py).
+Here is how the starter project connects Latch to an app. The full example is in [app.py](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/src/boundary_latch/starter/app.py).
 
     from boundary_latch import Decision, Latch, SQLiteStore, ToolSpec, UserContext, load_policy
 
@@ -94,16 +94,16 @@ Here is how the starter project connects Latch to an app. The full example is in
 
 ## Docs
 
-- [Use Latch in your app](docs/integration.md): replace the sample login, database, and tools.
+- [Use Latch in your app](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/integration.md): replace the sample login, database, and tools.
 
-- [Policy](docs/policy.md): set permissions, approvals, and limits.
+- [Policy](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/policy.md): set permissions, approvals, and limits.
 
-- [Approvals](docs/approvals.md): what an approval covers and when it expires.
+- [Approvals](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/approvals.md): what an approval covers and when it expires.
 
-- [Limits](docs/limits.md): call limits, time limits, and what to do when the outcome is unclear.
+- [Limits](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/limits.md): call limits, time limits, and what to do when the outcome is unclear.
 
-- [Live model](docs/live.md): point the demo at a real model.
+- [Live model](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/live.md): point the demo at a real model.
 
-- [Release](docs/release.md): how a version gets published.
+- [Release](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/release.md): how a version gets published.
 
-Latch is licensed under AGPL-3.0-only. See [LICENSE](LICENSE).
+Latch is licensed under AGPL-3.0-only. See [LICENSE](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/LICENSE).
