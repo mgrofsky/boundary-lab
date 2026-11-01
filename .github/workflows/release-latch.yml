@@ -23,7 +23,7 @@ jobs:
           tag="${GITHUB_REF_NAME#latch-v}"
           version=$(python -c "import tomllib; print(tomllib.load(open('tools/latch/pyproject.toml','rb'))['project']['version'])")
           test "$tag" = "$version" || { echo "tag $tag does not match version $version"; exit 1; }
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: latch-dist
           path: tools/latch/dist/
@@ -34,7 +34,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: latch-dist
           path: dist/
@@ -48,7 +48,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: latch-dist
           path: dist/
