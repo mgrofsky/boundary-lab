@@ -393,6 +393,8 @@ class Latch:
     ) -> Code | None:
         if tp.require_permission not in ctx.permissions:
             return Code.MISSING_PERMISSION
+        if tp.tainted_arguments == "deny" and self._tainted(ctx, args):
+            return Code.TAINTED_ARGUMENTS
         recipients = tp.allowed_recipients or []
         if tp.recipient_field is not None and getattr(args, tp.recipient_field) not in recipients:
             return Code.RECIPIENT_NOT_ALLOWED
@@ -404,6 +406,12 @@ class Latch:
             if not ok:
                 return Code.ACCESS_DENIED
         return None
+
+    @staticmethod
+    def _tainted(ctx: UserContext, args: BaseModel) -> bool:
+        """True when a tainted path names a top level field of this tool's arguments."""
+        fields = type(args).model_fields
+        return any(path.split(".")[0].split("[")[0] in fields for path in ctx.tainted_fields)
 
     @staticmethod
     def _needs_approval(tp: ToolPolicy, args: BaseModel) -> bool:

@@ -36,6 +36,7 @@ class ToolPolicy(Strict):
     allowed_recipients: list[str] | None = None
     recipient_field: str | None = None
     approval: Approval = Approval()
+    tainted_arguments: Literal["allow", "deny"] = "allow"
 
     @model_validator(mode="after")
     def check_pairs(self):

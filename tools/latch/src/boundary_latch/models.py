@@ -18,6 +18,7 @@ class UserContext(Strict):
     org_id: str = Field(min_length=1, max_length=128)
     permissions: frozenset[str]
     run_id: str = Field(min_length=1, max_length=128)
+    tainted_fields: frozenset[str] = frozenset()
 
 
 class CallInfo(Strict):

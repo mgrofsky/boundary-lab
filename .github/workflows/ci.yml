@@ -44,6 +44,20 @@ jobs:
       - run: pip install -e ".[dev,demo,live]"
       - run: ruff check .
       - run: pytest -q
+  dye:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/dye
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest -q
   latch-wheel:
     runs-on: ubuntu-latest
     timeout-minutes: 15
