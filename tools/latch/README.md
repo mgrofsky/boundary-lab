@@ -14,6 +14,8 @@ Latch is part of [Boundary Lab](https://github.com/mgrofsky/boundary-lab/blob/ma
 
 - Your app's access check says this user can use the requested record.
 
+- Whether any argument was copied from untrusted text, if your app marks it. Dye, another Boundary Lab project, produces that mark.
+
 - The run has not used up its call limit or its time.
 
 - Calls that need approval wait for another user. The approval covers that exact request, expires, and works once.
@@ -82,7 +84,7 @@ Here is how the starter project connects Latch to an app. The full example is in
 
 - It doesn't isolate your functions from the rest of your system. They run with your app's permissions.
 
-- It doesn't detect text that tries to trick a model into following unwanted instructions. It checks the tool calls the model asks to make.
+- It doesn't detect text that tries to trick a model into following unwanted instructions. It checks the tool calls the model asks to make. Pair it with Dye to see which arguments came from that text.
 
 - It can't confirm what happened in another system after a timeout or lost connection. It records the attempt and won't try it again automatically.
 

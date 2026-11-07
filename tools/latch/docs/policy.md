@@ -38,8 +38,17 @@ Each tool you register needs a `[tools.<name>]` table.
 | recipient_field | string | none | The argument that holds the recipient |
 | allowed_recipients | list of strings | none | The only values allowed in that argument |
 | approval | table | mode never | When the call waits for approval |
+| tainted_arguments | "allow" or "deny" | allow | Block the call when the app marks an argument as copied from untrusted text |
 
 `recipient_field` and `allowed_recipients` go together. Set both or neither. A tool whose approval mode is not `never` must set `approve_permission`.
+
+## Tainted arguments
+
+Your app can tell Latch which arguments were copied from text it does not trust, such as a ticket body or a web page, by setting `tainted_fields` on the `UserContext`. Dye, another Boundary Lab project, produces that set. With `tainted_arguments = "deny"`, Latch blocks the call with `TAINTED_ARGUMENTS` when any of those fields belongs to this tool. The default, `allow`, ignores the mark. Pass the same `UserContext` to `prepare` and `execute`, because Latch checks again before the tool runs.
+
+    [tools.issue_refund]
+    require_permission = "refunds:create"
+    tainted_arguments = "deny"
 
 ## Approval modes
 
