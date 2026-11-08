@@ -72,8 +72,8 @@ def cmd_demo(ns: argparse.Namespace) -> int:
         print(f"== {scenario.title}")
         for label, text in scenario.sources:
             print(f"   {label}: {text}")
-        if scenario.trusted:
-            print(f"   app trusts {', '.join(scenario.trusted)}")
+        if scenario.known:
+            print(f"   app knows {', '.join(scenario.known)}")
         print(f"   model proposes {scenario.tool}({json.dumps(scenario.arguments)})")
         if result.report.findings:
             for finding in result.report.findings:

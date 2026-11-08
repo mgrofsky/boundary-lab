@@ -20,7 +20,7 @@ class Scenario:
     arguments: dict[str, Any]
     expected: tuple[str, ...]
     note: str
-    trusted: tuple[str, ...] = ()
+    known: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class Result:
             "title": self.scenario.title,
             "tool": self.scenario.tool,
             "arguments": self.scenario.arguments,
-            "trusted": list(self.scenario.trusted),
+            "known": list(self.scenario.known),
             "expected": sorted(self.scenario.expected),
             "tainted": body["tainted"],
             "findings": body["findings"],
@@ -77,7 +77,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         tool="lookup_account",
         arguments={"account_id": "NW-100482"},
         expected=(),
-        trusted=("NW-100482",),
+        known=("NW-100482",),
         note="The app trusted the signed in account, so the value is not reported.",
     ),
     Scenario(
@@ -107,7 +107,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         tool="set_plan",
         arguments={"account_id": "NW-100482", "tier": 2},
         expected=("tier",),
-        trusted=("NW-100482",),
+        known=("NW-100482",),
         note="The tier matched as a whole word. The trusted account is not reported.",
     ),
 )
@@ -117,7 +117,7 @@ def run(scenario: Scenario) -> Result:
     tracker = Tracker()
     for label, text in scenario.sources:
         tracker.mark(label, text)
-    tracker.trust(*scenario.trusted)
+    tracker.trust(*scenario.known)
     return Result(scenario, tracker.check(scenario.arguments))
 
 
