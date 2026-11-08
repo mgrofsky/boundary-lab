@@ -19,10 +19,32 @@ def test_digits_match_crosses_separators():
     assert report.findings == (Finding("amount_minor", "42000", "ticket", "digits"),)
 
 
-def test_short_values_are_skipped():
+def test_short_values_match_as_whole_words():
     tracker = Tracker()
     tracker.mark("ticket", "set my plan to tier 2")
-    assert tracker.check({"tier": 2}).clean is True
+    assert tracker.check({"tier": 2}).tainted == frozenset({"tier"})
+    assert tracker.check({"tier": 22}).clean is True
+
+
+def test_no_match_inside_a_longer_value():
+    tracker = Tracker()
+    tracker.mark("ticket", "paid on 2026-11-07 for order ORD-5531")
+    assert tracker.check({"code": 1107, "order_id": "ORD-553"}).clean is True
+
+
+def test_spelled_out_email_matches():
+    tracker = Tracker()
+    tracker.mark("ticket", "write to j dot doe at example dot com instead")
+    report = tracker.check({"to": "j.doe@example.com"})
+    assert report.findings == (Finding("to", "j.doe@example.com", "ticket", "text"),)
+
+
+def test_trusted_values_are_never_reported():
+    tracker = Tracker()
+    tracker.mark("ticket", "my account NW-100482 bill went up")
+    tracker.trust("NW-100482")
+    assert tracker.check({"account_id": "NW-100482"}).clean is True
+    assert tracker.check({"note": "bill went up"}).tainted == frozenset({"note"})
 
 
 def test_nested_paths():
@@ -38,18 +60,10 @@ def test_no_sources_means_clean():
     assert report.clean is True
 
 
-def test_min_length_is_configurable():
-    tracker = Tracker(min_length=1)
-    tracker.mark("ticket", "tier 2")
-    assert tracker.check({"tier": 2}).tainted == frozenset({"tier"})
-    with pytest.raises(ValueError):
-        Tracker(min_length=0)
-
-
-def test_bool_and_none_are_skipped():
+def test_bool_none_and_empty_are_skipped():
     tracker = Tracker()
     tracker.mark("ticket", "true none false")
-    assert tracker.check({"flag": True, "note": None, "other": False}).clean is True
+    assert tracker.check({"flag": True, "note": None, "other": False, "empty": ""}).clean is True
 
 
 def test_first_matching_source_wins_and_to_dict_shape():

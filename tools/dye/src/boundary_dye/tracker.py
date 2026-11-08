@@ -7,11 +7,11 @@ from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from typing import Any
 
-DEFAULT_MIN_LENGTH = 4
-
 _SPACES = re.compile(r"\s+")
 _JOINERS = re.compile(r"(?<=\d)[ .,-](?=\d)")
 _DIGIT_RUN = re.compile(r"\d+")
+_SPELLED_DOT = re.compile(r"\s*[(\[]?\bdot\b[)\]]?\s*")
+_SPELLED_AT = re.compile(r"\s*[(\[]?\bat\b[)\]]?\s*")
 
 
 def normalize(text: str) -> str:
@@ -19,18 +19,28 @@ def normalize(text: str) -> str:
     return _SPACES.sub(" ", text.strip()).lower()
 
 
-def digit_runs(text: str) -> tuple[str, ...]:
-    """Digit runs with the spaces, dots, commas and dashes between digits removed.
+def spelled_out(text: str) -> str:
+    """Turn "j dot doe at example dot com" into "j.doe@example.com"."""
+    return _SPELLED_AT.sub("@", _SPELLED_DOT.sub(".", text))
 
-    "$420.00" gives ("42000",) and "4471 2201" gives ("44712201",).
+
+def digit_runs(text: str) -> frozenset[str]:
+    """Whole numbers in the text, with spaces, dots, commas and dashes between digits removed.
+
+    "$420.00" gives {"42000"} and "4471 2201" gives {"44712201"}.
     """
-    return tuple(_DIGIT_RUN.findall(_JOINERS.sub("", text)))
+    return frozenset(_DIGIT_RUN.findall(_JOINERS.sub("", text)))
 
 
 def numeric_form(text: str) -> str | None:
     """The digits of a value made only of digits and joiners, else None."""
     joined = _JOINERS.sub("", text.strip())
     return joined if joined.isascii() and joined.isdigit() else None
+
+
+def contains_term(text: str, term: str) -> bool:
+    """True when term appears in text with no letter or digit touching either end."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", text) is not None
 
 
 @dataclass(frozen=True)
@@ -81,12 +91,10 @@ def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
 class Tracker:
     """Holds the untrusted text for one run and checks proposed arguments against it."""
 
-    def __init__(self, min_length: int = DEFAULT_MIN_LENGTH):
-        if min_length < 1:
-            raise ValueError("min_length must be at least 1")
-        self.min_length = min_length
+    def __init__(self) -> None:
         self._sources: list[Source] = []
-        self._index: list[tuple[Source, str, tuple[str, ...]]] = []
+        self._index: list[tuple[Source, str, str, frozenset[str]]] = []
+        self._trusted: set[str] = set()
 
     @property
     def sources(self) -> tuple[Source, ...]:
@@ -97,9 +105,14 @@ class Tracker:
         if not label:
             raise ValueError("label is required")
         source = Source(label, text)
+        plain = normalize(text)
         self._sources.append(source)
-        self._index.append((source, normalize(text), digit_runs(text)))
+        self._index.append((source, plain, spelled_out(plain), digit_runs(text)))
         return source
+
+    def trust(self, *values: Any) -> None:
+        """Record values the app supplied itself, such as the signed in account. They are never reported."""
+        self._trusted.update(normalize(str(value)) for value in values)
 
     def check(self, arguments: dict[str, Any]) -> Report:
         """Report every argument value that appears in the marked text."""
@@ -108,14 +121,14 @@ class Tracker:
             if value is None or isinstance(value, bool):
                 continue
             text = normalize(str(value))
-            if len(text) < self.min_length:
+            if not text or text in self._trusted:
                 continue
             number = numeric_form(text)
-            for source, source_text, runs in self._index:
-                if text in source_text:
+            for source, plain, spelled, runs in self._index:
+                if contains_term(plain, text) or contains_term(spelled, text):
                     findings.append(Finding(path, str(value), source.label, "text"))
                     break
-                if number is not None and any(number in run for run in runs):
+                if number is not None and number in runs:
                     findings.append(Finding(path, str(value), source.label, "digits"))
                     break
         return Report(tuple(findings))

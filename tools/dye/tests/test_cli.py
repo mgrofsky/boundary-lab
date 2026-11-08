@@ -30,10 +30,11 @@ def test_check_reads_source_files_and_exits_one_when_tainted(tmp_path, capsys):
     assert [finding["matcher"] for finding in data["findings"]] == ["text", "digits"]
 
 
-def test_check_exits_zero_when_clean(tmp_path, capsys):
+def test_check_exits_zero_when_clean_and_honours_trust(tmp_path, capsys):
     ticket = tmp_path / "ticket.txt"
-    ticket.write_text("why did my bill go up")
+    ticket.write_text("why did my bill for NW-100482 go up")
     args_file = tmp_path / "args.json"
     args_file.write_text('{"account_id": "NW-100482"}')
-    assert main(["check", "--source", f"ticket={ticket}", "--args", f"@{args_file}"]) == 0
+    command = ["check", "--source", f"ticket={ticket}", "--args", f"@{args_file}"]
+    assert main(command + ["--trust", "NW-100482"]) == 0
     assert json.loads(capsys.readouterr().out) == {"tainted": [], "findings": []}

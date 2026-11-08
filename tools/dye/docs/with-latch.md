@@ -15,6 +15,7 @@ Dye does not import Latch and Latch does not import Dye. The link between them i
 
     tracker = Tracker()
     tracker.mark("ticket 4471", ticket_body)
+    tracker.trust(user.account_id)
 
     report = tracker.check(model_arguments)
     ctx = UserContext(
@@ -42,7 +43,3 @@ Pass the same `ctx` to `prepare` and `execute`. Latch runs its checks again befo
     require_permission = "orders:read"
 
 `refund` is blocked with `TAINTED_ARGUMENTS` when any tainted path names one of its arguments. `lookup_order` keeps the default, `allow`, because a customer quoting an order number is normal and the tool only reads.
-
-## What this does not cover
-
-Latch only has `allow` and `deny` for tainted arguments. There is no mode that sends a tainted call to an approver. The check uses the paths Dye reports, not the values, so a tainted `items[0].sku` counts as the `items` field.
