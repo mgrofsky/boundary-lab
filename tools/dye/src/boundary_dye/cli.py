@@ -27,7 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--args", required=True, help="The proposed arguments as JSON, or @path to a JSON file"
     )
-    check.add_argument("--min-length", type=int, default=4, help="Shortest value to track")
+    check.add_argument(
+        "--trust", action="append", default=[], metavar="VALUE",
+        help="A value the app supplied itself; repeat for more",
+    )
     return parser
 
 
@@ -40,12 +43,13 @@ def _load_args(spec: str) -> dict[str, Any]:
 
 
 def cmd_check(ns: argparse.Namespace) -> int:
-    tracker = Tracker(min_length=ns.min_length)
+    tracker = Tracker()
     for item in ns.source:
         label, sep, path = item.partition("=")
         if not sep or not label or not path:
             raise SystemExit(f"--source needs LABEL=PATH, got {item!r}")
         tracker.mark(label, Path(path).read_text())
+    tracker.trust(*ns.trust)
     report = tracker.check(_load_args(ns.args))
     print(json.dumps(report.to_dict(), indent=2))
     return 1 if report.findings else 0
@@ -68,6 +72,8 @@ def cmd_demo(ns: argparse.Namespace) -> int:
         print(f"== {scenario.title}")
         for label, text in scenario.sources:
             print(f"   {label}: {text}")
+        if scenario.trusted:
+            print(f"   app trusts {', '.join(scenario.trusted)}")
         print(f"   model proposes {scenario.tool}({json.dumps(scenario.arguments)})")
         if result.report.findings:
             for finding in result.report.findings:
