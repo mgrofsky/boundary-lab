@@ -21,3 +21,10 @@ updates:
     groups:
       latch:
         patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /tools/dye
+    schedule:
+      interval: monthly
+    groups:
+      dye:
+        patterns: ["*"]
