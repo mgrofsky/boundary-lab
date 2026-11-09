@@ -83,7 +83,14 @@ def test_reserve_after_finish_is_already_recorded(store):
 def test_reserve_denied_operation(store):
     store.insert_operation(op_row())
     store.set_state("o1", "op1", "denied", "DENIED_BY_APPROVER", NOW + 1)
-    assert reserve(store) == "denied"
+    assert reserve(store) == "closed"
+
+
+def test_reserve_cancelled_operation(store):
+    store.insert_operation(op_row())
+    assert store.cancel("o1", "op1", op_row()["request_hash"], NOW + 1) == "cancelled"
+    assert reserve(store) == "closed"
+    assert store.get_operation("o1", "op1")["code"] == "CANCELLED"
 
 
 def test_reserve_after_run_deadline(store):

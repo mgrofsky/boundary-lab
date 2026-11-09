@@ -1,11 +1,17 @@
 # One tool. Add a [tools.<name>] table for each tool you register in app.py.
 
 [limits]
+# How many tool calls one run can carry out.
 max_actions_per_run = 20
+# Seconds a run lasts from its first call. 0 means no limit.
 run_lifetime_seconds = 900
+# Seconds a run can sit quiet before it expires. 0 turns this off.
+run_idle_seconds = 0
 approval_lifetime_seconds = 600
 
 [tools.create_ticket]
 require_permission = "tickets:create"
+# What to do when an argument was copied from text the model read: allow, deny or approve.
+copied_arguments = "allow"
 [tools.create_ticket.approval]
 mode = "never"

@@ -4,9 +4,23 @@
 
 The defaults are 20 actions per run, a run lifetime of 900 seconds and an approval lifetime of 600 seconds. Change them in the `[limits]` table of the policy.
 
-A run groups calls that share a `run_id` within one organization. A new operation ID counts toward the run's limit. Once Latch stores the operation, submitting it again in the same run does not count twice. An operation stays tied to its original run; moving it to another run gives `OPERATION_CONFLICT`.
+A run groups calls that share a `run_id` within one organization. An operation stays tied to its original run; moving it to another run gives `OPERATION_CONFLICT`.
 
-When you exceed the call limit, Latch returns `RUN_LIMIT`. When the run expires, it returns `RUN_EXPIRED`. A new conversation can start a new run, but that does not let an old pending action run again. Use `operation_status` to look up an earlier operation without submitting it again.
+Latch counts two things in a run.
+
+- `max_actions_per_run` counts what runs. It is checked at `execute`. Every operation in the run that Latch has reserved or finished counts, whether it succeeded, failed, or was uncertain. The count happens inside the same database transaction that reserves the operation, so two threads cannot both pass the limit.
+- `max_proposals_per_run` counts what the model asks for. It is checked at `prepare` and is off by default. Every new operation ID counts, even one that `prepare` blocks. Preparing a stored operation again does not count twice.
+
+Past the action limit, `execute` returns outcome `denied` with `RUN_LIMIT` and the handler does not run. Latch closes that operation with the `RUN_LIMIT` code and writes an audit row. Running it again returns `RUN_LIMIT`, and preparing it again returns `OPERATION_CLOSED`. Past the proposal limit, `prepare` returns `RUN_LIMIT`. In the `exhausted_limit` scenario, Sam runs 20 lookups, prepares a 21st, and gets `RUN_LIMIT` when it tries to run. When the run expires, Latch returns `RUN_EXPIRED`.
+
+## How long a run lasts
+
+Two settings decide when a run expires. Latch checks both at `prepare`, `approve`, and `execute`, and returns `RUN_EXPIRED` when either one has passed.
+
+- `run_lifetime_seconds` counts from the run's first call. The default is 900 seconds. Set it to 0 for no limit.
+- `run_idle_seconds` counts from the run's last activity. The run expires when that much time passes with no `prepare` or `execute` call. The default is 0, which turns it off. A call that gets `RUN_EXPIRED` does not count as activity, and neither does an approval.
+
+A conversation that can last for hours fits better with a lifetime of 0 and an idle time such as 1800. An approval still expires after `approval_lifetime_seconds`, or when the run reaches its lifetime if that comes first. A new conversation can start a new run, but that does not let an old pending action run again. Use `operation_status` to look up an earlier operation without submitting it again.
 
 ## What happens at the time limit
 
@@ -24,7 +38,13 @@ A handler can finish in three ways.
 
 Latch cannot tell whether an uncertain call changed anything, so it records the outcome and refuses to run that operation ID again. In the `timeout_after_refund` scenario, the refund goes through before the handler exceeds its time limit. A second call to `execute` returns the recorded `UNCERTAIN` outcome. The refund count stays at 1.
 
-Recording the outcome can also fail after the handler has run. That raises `StorageError`, and the change may already have happened. Latch records the attempt before calling the handler, which blocks a second attempt while that database record remains. Keep the operation ID and check the system the handler called before deciding what to do next.
+When the handler raises, `ExecutionResult.error` holds the error's type name and the first line of its message, cut at 200 characters. It is set for `ToolFailed`, for the time limit, and for any other error. It is not saved in the audit table.
+
+## When the outcome is not recorded
+
+Recording the outcome can fail after the handler has run. Latch does not raise then. `execute` returns the outcome the handler produced with `recorded` set to `False`, and `error` describes the storage error. The change may already have happened.
+
+`recorded` false means your app must keep the operation ID and check the real system before deciding anything. Do not treat the result as final, and do not run the request again under a new operation ID until you know what happened. Latch records the attempt before calling the handler, which blocks a second attempt while that database record remains.
 
 ## Before trying again
 

@@ -30,6 +30,7 @@ class Step:
     code: str
     explanation: str
     state_change: str = "nothing"
+    summary: str = ""
 
 
 @dataclass
@@ -71,16 +72,18 @@ class Run:
         self.count += 1
         return f"{self.name}-{self.count}-{self.tag}"
 
-    def record(self, profile: str, action: str, code: str, change: str = "nothing") -> None:
+    def record(
+        self, profile: str, action: str, code: str, change: str = "nothing", summary: str = ""
+    ) -> None:
         label = PROFILES[profile]["label"]
-        self.steps.append(Step(label, action, code, explain(Code(code)), change))
+        self.steps.append(Step(label, action, code, explain(Code(code)), change, summary))
 
     def prepare(
         self, profile: str, tool: str, args: dict[str, Any], action: str, op: str | None = None
     ) -> str:
         result = self.session.propose(profile, tool, args, op or self.next_id())
         self.tools.setdefault(result["operation_id"], tool)
-        self.record(profile, action, result["code"])
+        self.record(profile, action, result["code"], summary=result.get("summary", ""))
         return result["operation_id"]
 
     def approve(self, profile: str, op: str) -> dict[str, Any]:
@@ -185,18 +188,19 @@ def duplicate_refund(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
 
 
 def exhausted_limit(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
-    scenario = Scenario("exhausted_limit", "One run asks for more actions than the policy allows",
-                        ["ALLOWED", "RUN_LIMIT"])
+    scenario = Scenario("exhausted_limit", "One run tries to run more actions than the policy allows",
+                        ["EXECUTED", "ALLOWED", "RUN_LIMIT"])
     run = Run(scenario.name, clock, db_path)
     limit = run.session.latch.policy.limits.max_actions_per_run
-    codes = [
-        run.session.propose("sam", "lookup_account", {"account_id": "A1"}, run.next_id())["code"]
-        for _ in range(limit)
-    ]
-    # Show the allowed lookups as one step; any unexpected result would appear here.
-    first = next((code for code in codes if code != Code.ALLOWED), Code.ALLOWED)
-    run.record("sam", f"look up account A1, {limit} times", first)
-    run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1 once more")
+    codes = []
+    for _ in range(limit):
+        op = run.session.propose("sam", "lookup_account", {"account_id": "A1"}, run.next_id())
+        codes.append(run.session.run("sam", op["operation_id"])["code"])
+    # Show the lookups that ran as one step; any unexpected result would appear here.
+    first = next((code for code in codes if code != Code.EXECUTED), Code.EXECUTED)
+    run.record("sam", f"look up account A1 and run it, {limit} times", first)
+    op = run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1 once more")
+    run.execute("sam", op, nothing)
     return run.finish(scenario)
 
 
@@ -259,6 +263,8 @@ def render_scenario(number: int, scenario: Scenario) -> str:
     for step in scenario.steps:
         lines.append(f"who: {step.actor}")
         lines.append(f"asked for: {step.action}")
+        if step.summary:
+            lines.append(f"summary: {step.summary}")
         lines.append(f"result {step.code}: {step.explanation}")
         lines.append(f"change: {step.state_change}")
         lines.append("")

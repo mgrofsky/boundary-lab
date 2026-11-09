@@ -36,7 +36,7 @@ class ToolPolicy(Strict):
     allowed_recipients: list[str] | None = None
     recipient_field: str | None = None
     approval: Approval = Approval()
-    tainted_arguments: Literal["allow", "deny"] = "allow"
+    copied_arguments: Literal["allow", "deny", "approve"] = "allow"
 
     @model_validator(mode="after")
     def check_pairs(self):
@@ -44,12 +44,16 @@ class ToolPolicy(Strict):
             raise ValueError("allowed_recipients and recipient_field go together")
         if self.approval.mode != "never" and not self.approve_permission:
             raise ValueError("a tool that can need approval needs approve_permission")
+        if self.copied_arguments == "approve" and not self.approve_permission:
+            raise ValueError('copied_arguments = "approve" needs approve_permission')
         return self
 
 
 class Limits(Strict):
     max_actions_per_run: int = Field(default=20, ge=1, le=10000)
-    run_lifetime_seconds: int = Field(default=900, ge=1)
+    max_proposals_per_run: int | None = Field(default=None, ge=1)
+    run_lifetime_seconds: int = Field(default=900, ge=0)
+    run_idle_seconds: int = Field(default=0, ge=0)
     approval_lifetime_seconds: int = Field(default=600, ge=1)
 
 

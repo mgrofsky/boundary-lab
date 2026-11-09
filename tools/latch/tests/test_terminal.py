@@ -14,7 +14,7 @@ TITLES = [
     "A message goes out after a supervisor approves",
     "The refund amount changes after approval, using the same operation ID",
     "The same refund is submitted twice",
-    "One run asks for more actions than the policy allows",
+    "One run tries to run more actions than the policy allows",
     "The refund goes through, but the reply is too slow",
     "An approval expires before the tool runs",
 ]
@@ -37,20 +37,21 @@ def test_demo_plays_every_scenario():
     result = run_demo("--db", ":memory:")
     assert result.returncode == 0, result.stderr
     for text in ("ALREADY_RECORDED", "RUN_LIMIT", "UNCERTAIN", "example user",
-                 "OPERATION_CONFLICT", "APPROVAL_EXPIRED"):
+                 "OPERATION_CONFLICT", "APPROVAL_EXPIRED", "summary: Refund $"):
         assert text in result.stdout, text
     for title in TITLES:
         assert title in result.stdout, title
 
 
-def test_each_step_prints_four_lines(capsys):
+def test_each_step_prints_its_lines(capsys):
     assert terminal.main(["--db", ":memory:", "--scenario", "duplicate_refund"]) == 0
     lines = capsys.readouterr().out.splitlines()
     start = lines.index("who: Sam (support agent, example user)")
     assert lines[start + 1].startswith("asked for: ")
-    assert lines[start + 2].startswith("result ALLOWED: ")
-    assert lines[start + 3] == "change: nothing"
-    assert lines[start + 4] == ""
+    assert lines[start + 2] == "summary: Refund $20.00 to account A1"
+    assert lines[start + 3].startswith("result ALLOWED: ")
+    assert lines[start + 4] == "change: nothing"
+    assert lines[start + 5] == ""
     assert "change: A1 balance 100.00 -> 80.00" in lines
     assert any(line.startswith("result ALREADY_RECORDED: ") for line in lines)
 

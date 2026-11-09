@@ -18,7 +18,6 @@ class UserContext(Strict):
     org_id: str = Field(min_length=1, max_length=128)
     permissions: frozenset[str]
     run_id: str = Field(min_length=1, max_length=128)
-    tainted_fields: frozenset[str] = frozenset()
 
 
 class CallInfo(Strict):
@@ -31,6 +30,7 @@ class CallInfo(Strict):
 
 
 AccessHook = Callable[[UserContext, dict[str, Any]], bool]
+Describe = Callable[[BaseModel], str]
 Handler = (
     Callable[[dict[str, Any], CallInfo], Any]
     | Callable[[dict[str, Any], CallInfo], Awaitable[Any]]
@@ -46,6 +46,7 @@ class ToolSpec(BaseModel):
     access_hook: AccessHook | None = None
     description: str = ""
     timeout_seconds: float = 30.0
+    describe: Describe | None = None
 
 
 class Decision(Strict):
@@ -74,6 +75,8 @@ class PreparedAction(BaseModel):
     request_hash: str
     code: Code
     explanation: str
+    copied: frozenset[str] = frozenset()
+    summary: str = ""
     _args_json: str = PrivateAttr()
 
     @property
@@ -89,6 +92,11 @@ class ExecutionResult(Strict):
     value: Any = None
     replayed: bool = False
     duration_ms: int = 0
+    reference: str | None = None
+    # The handler or storage error as "Type: first line", cut at 200 characters.
+    error: str | None = None
+    # False when Latch could not save the outcome. Check the real system before acting.
+    recorded: bool = True
 
 
 class OperationStatus(Strict):
@@ -98,3 +106,9 @@ class OperationStatus(Strict):
     tool: str
     created_at: float
     updated_at: float
+    needs_approval: bool
+    user_id: str
+    run_id: str
+    summary: str = ""
+    copied: frozenset[str] = frozenset()
+    reference: str | None = None

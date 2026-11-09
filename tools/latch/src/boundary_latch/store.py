@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sqlite3
 import threading
 from collections.abc import Callable
@@ -11,23 +12,25 @@ from .errors import StorageError
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
   org_id TEXT NOT NULL, run_id TEXT NOT NULL, started_at REAL NOT NULL,
-  submissions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (org_id, run_id));
+  submissions INTEGER NOT NULL DEFAULT 0, last_at REAL, PRIMARY KEY (org_id, run_id));
 CREATE TABLE IF NOT EXISTS operations (
   org_id TEXT NOT NULL, operation_id TEXT NOT NULL, run_id TEXT NOT NULL,
   user_id TEXT NOT NULL, tool TEXT NOT NULL, tool_version TEXT NOT NULL,
   request_hash TEXT NOT NULL, needs_approval INTEGER NOT NULL,
   state TEXT NOT NULL, code TEXT NOT NULL,
   created_at REAL NOT NULL, updated_at REAL NOT NULL,
+  copied TEXT NOT NULL DEFAULT '[]', summary TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, operation_id));
 CREATE TABLE IF NOT EXISTS approvals (
   org_id TEXT NOT NULL, operation_id TEXT NOT NULL, approver_id TEXT NOT NULL,
   request_hash TEXT NOT NULL, decision TEXT NOT NULL, decided_at REAL NOT NULL,
-  expires_at REAL NOT NULL, consumed_at REAL,
+  expires_at REAL NOT NULL, consumed_at REAL, reference TEXT,
   PRIMARY KEY (org_id, operation_id));
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, org_id TEXT NOT NULL,
   run_id TEXT, operation_id TEXT, user_id TEXT, tool TEXT, event TEXT NOT NULL,
-  code TEXT NOT NULL, outcome TEXT, duration_ms INTEGER);
+  code TEXT NOT NULL, outcome TEXT, duration_ms INTEGER, summary TEXT, copied TEXT,
+  reference TEXT);
 """
 
 OPERATION_COLUMNS = (
@@ -43,9 +46,37 @@ OPERATION_COLUMNS = (
     "code",
     "created_at",
     "updated_at",
+    "copied",
+    "summary",
 )
 
+# Values for the optional operation columns when a caller leaves them out.
+OPERATION_DEFAULTS: dict[str, Any] = {"copied": "[]", "summary": ""}
+
+# Columns added after 0.2.0. A database written by an older release gets them when opened.
+ADDED_COLUMNS = {
+    "runs": [("last_at", "REAL")],
+    "operations": [
+        ("copied", "TEXT NOT NULL DEFAULT '[]'"),
+        ("summary", "TEXT NOT NULL DEFAULT ''"),
+    ],
+    "approvals": [("reference", "TEXT")],
+    "audit": [("summary", "TEXT"), ("copied", "TEXT"), ("reference", "TEXT")],
+}
+
 RECORDED = ("reserved", "succeeded", "failed", "uncertain")
+# States that can never run again. The operation row's code says why.
+CLOSED = ("denied", "cancelled")
+
+
+def run_deadline(started_at: float, last_at: float | None, lifetime: int, idle: int) -> float:
+    """The time a run expires. A lifetime or idle time of 0 sets no limit."""
+    deadline = math.inf
+    if lifetime:
+        deadline = started_at + lifetime
+    if idle:
+        deadline = min(deadline, (started_at if last_at is None else last_at) + idle)
+    return deadline
 
 
 class OperationExists(Exception):
@@ -82,8 +113,16 @@ class SQLiteStore:
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            self._add_missing_columns()
         except sqlite3.Error as exc:
             raise StorageError(f"could not open the store: {exc}") from exc
+
+    def _add_missing_columns(self) -> None:
+        for table, columns in ADDED_COLUMNS.items():
+            have = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            for name, declaration in columns:
+                if name not in have:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
     def close(self) -> None:
         with self._lock:
@@ -96,8 +135,9 @@ class SQLiteStore:
         with self._lock:
             try:
                 self._conn.execute(
-                    "INSERT OR IGNORE INTO runs (org_id, run_id, started_at) VALUES (?, ?, ?)",
-                    (org_id, run_id, now),
+                    "INSERT OR IGNORE INTO runs (org_id, run_id, started_at, last_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (org_id, run_id, now, now),
                 )
                 row = self._conn.execute(
                     "SELECT started_at, submissions FROM runs WHERE org_id = ? AND run_id = ?",
@@ -106,6 +146,30 @@ class SQLiteStore:
             except sqlite3.Error as exc:
                 raise StorageError(f"touch_run failed: {exc}") from exc
             return row["started_at"], row["submissions"]
+
+    def last_touch(self, org_id: str, run_id: str) -> float | None:
+        """When the run last had activity, or when it started for a run from 0.2.0."""
+        with self._lock:
+            try:
+                row = self._conn.execute(
+                    "SELECT COALESCE(last_at, started_at) AS last FROM runs"
+                    " WHERE org_id = ? AND run_id = ?",
+                    (org_id, run_id),
+                ).fetchone()
+            except sqlite3.Error as exc:
+                raise StorageError(f"last_touch failed: {exc}") from exc
+            return None if row is None else row["last"]
+
+    def mark_touch(self, org_id: str, run_id: str, now: float) -> None:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "UPDATE runs SET last_at = MAX(COALESCE(last_at, started_at), ?)"
+                    " WHERE org_id = ? AND run_id = ?",
+                    (now, org_id, run_id),
+                )
+            except sqlite3.Error as exc:
+                raise StorageError(f"mark_touch failed: {exc}") from exc
 
     def count_submission(self, org_id: str, run_id: str) -> int:
         with self._lock:
@@ -139,7 +203,7 @@ class SQLiteStore:
             try:
                 self._conn.execute(
                     f"INSERT INTO operations ({columns}) VALUES ({marks})",
-                    tuple(row[name] for name in OPERATION_COLUMNS),
+                    tuple(row.get(name, OPERATION_DEFAULTS.get(name)) for name in OPERATION_COLUMNS),
                 )
             except sqlite3.IntegrityError as exc:
                 raise OperationExists(row["operation_id"]) from exc
@@ -166,13 +230,16 @@ class SQLiteStore:
         decision: str,
         now: float,
         expires_at: float,
+        reference: str | None = None,
     ) -> None:
         with self._lock:
             try:
                 self._conn.execute(
                     "INSERT INTO approvals (org_id, operation_id, approver_id, request_hash,"
-                    " decision, decided_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (org_id, operation_id, approver_id, request_hash, decision, now, expires_at),
+                    " decision, decided_at, expires_at, reference)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (org_id, operation_id, approver_id, request_hash, decision, now, expires_at,
+                     reference),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ApprovalExists(operation_id) from exc
@@ -193,7 +260,8 @@ class SQLiteStore:
     def decide_approval(
         self, org_id: str, operation_id: str, run_id: str, approver_id: str,
         expected_hash: str, decision: str, clock: Callable[[], float],
-        run_lifetime: int, approval_lifetime: int,
+        run_lifetime: int, approval_lifetime: int, reference: str | None = None,
+        run_idle: int = 0,
     ) -> str:
         """Save the decision and update the pending operation together, or save neither."""
         with self._lock:
@@ -205,23 +273,26 @@ class SQLiteStore:
                     (org_id, operation_id),
                 ).fetchone()
                 run = self._conn.execute(
-                    "SELECT started_at FROM runs WHERE org_id = ? AND run_id = ?",
+                    "SELECT started_at, last_at FROM runs WHERE org_id = ? AND run_id = ?",
                     (org_id, run_id),
                 ).fetchone()
                 if op is None or op["request_hash"] != expected_hash or op["run_id"] != run_id:
                     result = "hash_mismatch"
                 elif op["state"] in RECORDED:
                     result = "already_recorded"
-                elif op["state"] == "denied":
-                    result = "denied"
+                elif op["state"] in CLOSED:
+                    result = "closed"
                 elif self.get_approval(org_id, operation_id) is not None:
                     result = "approval_used"
-                elif run is None or now >= run["started_at"] + run_lifetime:
+                elif run is None or now >= run_deadline(
+                    run["started_at"], run["last_at"], run_lifetime, run_idle
+                ):
                     result = "run_expired"
                 else:
-                    expires_at = min(now + approval_lifetime, run["started_at"] + run_lifetime)
+                    end = run_deadline(run["started_at"], None, run_lifetime, 0)
+                    expires_at = min(now + approval_lifetime, end)
                     self.record_approval(org_id, operation_id, approver_id, expected_hash,
-                                         decision, now, expires_at)
+                                         decision, now, expires_at, reference)
                     code = "APPROVED" if decision == "approved" else "DENIED_BY_APPROVER"
                     self.set_state(org_id, operation_id, decision, code, now)
                     result = "recorded"
@@ -299,8 +370,8 @@ class SQLiteStore:
             return "hash_mismatch"
         if op["state"] in RECORDED:
             return "already_recorded"
-        if op["state"] == "denied":
-            return "denied"
+        if op["state"] in CLOSED:
+            return "closed"
         if now >= run_deadline:
             return "run_expired"
         placeholders = ", ".join("?" for _ in RECORDED)
@@ -310,6 +381,12 @@ class SQLiteStore:
             (org_id, run_id, *RECORDED),
         ).fetchone()[0]
         if used >= max_actions:
+            # Refused for good: the operation is closed with the RUN_LIMIT code.
+            self._conn.execute(
+                "UPDATE operations SET state = 'denied', code = 'RUN_LIMIT', updated_at = ?"
+                " WHERE org_id = ? AND operation_id = ?",
+                (now, org_id, operation_id),
+            )
             return "run_limit"
         if op["needs_approval"]:
             approval = self._conn.execute(
@@ -333,7 +410,67 @@ class SQLiteStore:
             " WHERE org_id = ? AND operation_id = ?",
             (now, org_id, operation_id),
         )
+        self._conn.execute(
+            "UPDATE runs SET last_at = MAX(COALESCE(last_at, started_at), ?)"
+            " WHERE org_id = ? AND run_id = ?",
+            (now, org_id, run_id),
+        )
         return "reserved"
+
+    def cancel(self, org_id: str, operation_id: str, expected_hash: str, now: float) -> str:
+        """Mark a prepared or approved operation cancelled, unless it was reserved or closed.
+
+        Returns "cancelled", "already_recorded", "closed" or "hash_mismatch".
+        """
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                op = self._conn.execute(
+                    "SELECT state, request_hash FROM operations"
+                    " WHERE org_id = ? AND operation_id = ?",
+                    (org_id, operation_id),
+                ).fetchone()
+                if op is None or op["request_hash"] != expected_hash:
+                    result = "hash_mismatch"
+                elif op["state"] in RECORDED:
+                    result = "already_recorded"
+                elif op["state"] in CLOSED:
+                    result = "closed"
+                else:
+                    self._conn.execute(
+                        "UPDATE operations SET state = 'cancelled', code = 'CANCELLED',"
+                        " updated_at = ? WHERE org_id = ? AND operation_id = ?",
+                        (now, org_id, operation_id),
+                    )
+                    result = "cancelled"
+                self._conn.execute("COMMIT")
+            except sqlite3.Error as exc:
+                if self._conn.in_transaction:
+                    try:
+                        self._conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                raise StorageError(f"cancel failed: {exc}") from exc
+            return result
+
+    def pending(self, org_id: str, run_id: str | None = None) -> list[dict[str, Any]]:
+        """Prepared operations that need approval and have no decision yet, oldest first."""
+        query = (
+            "SELECT o.* FROM operations o WHERE o.org_id = ? AND o.state = 'prepared'"
+            " AND o.needs_approval = 1 AND NOT EXISTS (SELECT 1 FROM approvals a"
+            " WHERE a.org_id = o.org_id AND a.operation_id = o.operation_id)"
+        )
+        params: list[Any] = [org_id]
+        if run_id is not None:
+            query += " AND o.run_id = ?"
+            params.append(run_id)
+        query += " ORDER BY o.created_at, o.rowid"
+        with self._lock:
+            try:
+                rows = self._conn.execute(query, params).fetchall()
+            except sqlite3.Error as exc:
+                raise StorageError(f"pending failed: {exc}") from exc
+            return [dict(row) for row in rows]
 
     def finish(self, org_id: str, operation_id: str, outcome: str, code: str, now: float) -> None:
         self.set_state(org_id, operation_id, outcome, code, now)
@@ -350,17 +487,23 @@ class SQLiteStore:
         outcome: str | None = None,
         duration_ms: int | None = None,
         now: float = 0.0,
-    ) -> None:
+        summary: str | None = None,
+        copied: str | None = None,
+        reference: str | None = None,
+    ) -> dict[str, Any]:
+        """Write one audit row and return it as a dict."""
         with self._lock:
             try:
-                self._conn.execute(
+                row = self._conn.execute(
                     "INSERT INTO audit (at, org_id, run_id, operation_id, user_id, tool, event,"
-                    " code, outcome, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " code, outcome, duration_ms, summary, copied, reference)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
                     (now, org_id, run_id, operation_id, user_id, tool, event, code, outcome,
-                     duration_ms),
-                )
+                     duration_ms, summary, copied, reference),
+                ).fetchone()
             except sqlite3.Error as exc:
                 raise StorageError(f"audit failed: {exc}") from exc
+            return dict(row)
 
     def audit_rows(self, org_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -371,3 +514,33 @@ class SQLiteStore:
             except sqlite3.Error as exc:
                 raise StorageError(f"audit_rows failed: {exc}") from exc
             return [dict(row) for row in rows]
+
+
+def read_audit(
+    path: str | Path, org_id: str | None = None, after_id: int = 0, last: int | None = None
+) -> list[dict[str, Any]]:
+    """Read audit rows from a database file without changing it, oldest first.
+
+    after_id skips rows up to that id. last keeps only the newest rows.
+    """
+    try:
+        conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise StorageError(f"could not open {path}: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    query = "SELECT * FROM audit WHERE id > ?"
+    params: list[Any] = [after_id]
+    if org_id is not None:
+        query += " AND org_id = ?"
+        params.append(org_id)
+    query += " ORDER BY id DESC" if last is not None else " ORDER BY id"
+    if last is not None:
+        query += " LIMIT ?"
+        params.append(last)
+    try:
+        rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+    except sqlite3.Error as exc:
+        raise StorageError(f"could not read the audit table: {exc}") from exc
+    finally:
+        conn.close()
+    return rows[::-1] if last is not None else rows

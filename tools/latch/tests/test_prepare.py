@@ -10,7 +10,7 @@ from boundary_latch.policy import parse_policy
 from boundary_latch.reasons import Code, explain
 from boundary_latch.store import SQLiteStore
 
-from .conftest import POLICY, LookupArgs, make_ctx, no_calls
+from .conftest import POLICY, LookupArgs, account_hook, make_ctx, no_calls
 
 
 def denied(result, code: Code) -> bool:
@@ -97,7 +97,11 @@ def test_recipient_outside_the_list(latch, handlers):
     assert no_calls(handlers)
 
 
-def test_run_limit_counts_denials(latch, handlers):
+def test_proposal_limit_counts_denials(clock, handlers):
+    latch = Latch(parse_policy("[limits]\nmax_proposals_per_run = 20\n" + POLICY), SQLiteStore(),
+                  clock=clock)
+    latch.register(ToolSpec(name="lookup_account", version="1", args_model=LookupArgs,
+                            handler=handlers["lookup_account"], access_hook=account_hook))
     ctx = make_ctx()
     for n in range(19):
         assert isinstance(latch.prepare(ctx, "lookup_account", {"account_id": "A1"}, f"op{n}"),

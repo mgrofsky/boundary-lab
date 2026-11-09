@@ -5,6 +5,7 @@ import concurrent.futures
 import hashlib
 import inspect
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -12,7 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from .errors import ConfigError, ToolFailed
+from .errors import ConfigError, StorageError, ToolFailed
+from .events import to_event
 from .models import (
     CallInfo,
     Decision,
@@ -24,10 +26,16 @@ from .models import (
 )
 from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
-from .store import OperationExists, SQLiteStore
+from .store import CLOSED, OperationExists, SQLiteStore, run_deadline
+
+logger = logging.getLogger("boundary_latch")
+
+SUMMARY_LIMIT = 300
+
+REFERENCE_LIMIT = 128
+ERROR_LIMIT = 200
 
 RESERVE_CODES = {
-    "denied": Code.DENIED_BY_APPROVER,
     "approval_missing": Code.APPROVAL_REQUIRED,
     "approval_expired": Code.APPROVAL_EXPIRED,
     "run_expired": Code.RUN_EXPIRED,
@@ -36,13 +44,25 @@ RESERVE_CODES = {
 }
 
 
+def error_text(exc: BaseException) -> str:
+    """The error's type name, a colon, a space, and the first line of its message."""
+    lines = str(exc).splitlines()
+    return f"{type(exc).__name__}: {lines[0] if lines else ''}"[:ERROR_LIMIT]
+
+
 class Latch:
     """Checks tool calls against a policy before they run."""
 
     def __init__(
-        self, policy: Policy, store: SQLiteStore, clock: Callable[[], float] = time.time
+        self,
+        policy: Policy,
+        store: SQLiteStore,
+        clock: Callable[[], float] = time.time,
+        on_event: Callable[[dict[str, Any]], Any] | None = None,
     ):
+        """on_event, if set, is called with each audit row as a dict after it is written."""
         self.policy, self.store, self.clock = policy, store, clock
+        self.on_event = on_event
         self._tools: dict[str, ToolSpec] = {}
         self._pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="latch"
@@ -50,9 +70,13 @@ class Latch:
 
     @classmethod
     def from_toml(
-        cls, path: str | Path, store: SQLiteStore, clock: Callable[[], float] = time.time
+        cls,
+        path: str | Path,
+        store: SQLiteStore,
+        clock: Callable[[], float] = time.time,
+        on_event: Callable[[dict[str, Any]], Any] | None = None,
     ) -> Latch:
-        return cls(load_policy(path), store, clock)
+        return cls(load_policy(path), store, clock, on_event)
 
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._tools:
@@ -68,19 +92,34 @@ class Latch:
         return list(self._tools.values())
 
     def prepare(
-        self, ctx: UserContext, tool: str, arguments: dict[str, Any], operation_id: str
+        self,
+        ctx: UserContext,
+        tool: str,
+        arguments: dict[str, Any],
+        operation_id: str,
+        *,
+        copied: Any = (),
     ) -> Decision | PreparedAction:
+        """Check a tool call and save it, ready to run.
+
+        copied lists argument paths, such as "account_id" or "items[0].sku", whose
+        values were copied from text the model read. It also accepts any object with
+        a .copied attribute holding such paths, such as a Dye report.
+        """
+        requested = self._copied_input(copied)
         now = self.clock()
         limits = self.policy.limits
-        started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
-        if now >= started_at + limits.run_lifetime_seconds:
+        deadline = self._deadline(ctx, now)
+        if now >= deadline:
             return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
+        self.store.mark_touch(ctx.org_id, ctx.run_id, now)
 
-        # Submitting the same operation ID again does not count against the run limit.
+        # Submitting the same operation ID again does not count against the proposal limit.
         existing = self.store.get_operation(ctx.org_id, operation_id)
         if existing is None:
             count = self.store.count_submission(ctx.org_id, ctx.run_id)
-            if count > limits.max_actions_per_run:
+            cap = limits.max_proposals_per_run
+            if cap is not None and count > cap:
                 return self._deny_prepare(ctx, tool, operation_id, Code.RUN_LIMIT, now)
 
         spec = self._tools.get(tool)
@@ -95,22 +134,32 @@ class Latch:
         except ValidationError:
             return self._deny_prepare(ctx, tool, operation_id, Code.INVALID_ARGUMENTS, now)
 
-        code = self._check_access(ctx, spec, tp, args)
+        paths = self._copied_fields(spec, requested)
+        code = self._check_access(ctx, spec, tp, args, paths)
         if code is not None:
             return self._deny_prepare(ctx, tool, operation_id, code, now)
+        summary = self._summary(spec, args)
+        if summary is None:
+            return self._deny_prepare(ctx, tool, operation_id, Code.DESCRIBE_FAILED, now)
 
         now = self.clock()
-        if now >= started_at + limits.run_lifetime_seconds:
+        if now >= deadline:
             return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
 
-        needs_approval = self._needs_approval(tp, args)
+        needs_approval = self._needs_approval(tp, args, paths)
         canonical = json.dumps(args.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
         request_hash = self._request_hash(ctx, spec, canonical, operation_id)
 
         if existing is not None:
-            if existing["request_hash"] != request_hash:
+            stored = frozenset(json.loads(existing["copied"]))
+            # The approver must have seen every copied field, so a new one is a conflict.
+            if existing["request_hash"] != request_hash or not paths <= stored:
                 return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CONFLICT, now)
+            if existing["state"] in CLOSED:
+                return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CLOSED, now)
             needs_approval = bool(existing["needs_approval"])
+            paths = stored
+            summary = existing["summary"]
         code = Code.NEEDS_APPROVAL if needs_approval else Code.ALLOWED
         if existing is None:
             try:
@@ -128,27 +177,112 @@ class Latch:
                         "code": str(code),
                         "created_at": now,
                         "updated_at": now,
+                        "copied": json.dumps(sorted(paths)),
+                        "summary": summary,
                     }
                 )
             except OperationExists:
                 return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CONFLICT, now)
 
-        self._audit("prepare", code, ctx, tool, operation_id, now)
+        self._audit("prepare", code, ctx, tool, operation_id, now, summary=summary,
+                    copied=json.dumps(sorted(paths)))
         return self._build_prepared(ctx, spec, operation_id, needs_approval, request_hash,
-                                    canonical, code)
+                                    canonical, code, paths, summary)
 
-    def approve(self, prepared: PreparedAction, approver: UserContext) -> Decision:
-        return self._decide(prepared, approver, approve=True)
+    def approve(
+        self, prepared: PreparedAction, approver: UserContext, reference: str | None = None
+    ) -> Decision:
+        """Approve a pending request. reference names the evidence, such as a ticket."""
+        return self._decide(prepared, approver, True, self._check_reference(reference))
 
-    def deny(self, prepared: PreparedAction, approver: UserContext) -> Decision:
-        return self._decide(prepared, approver, approve=False)
+    def deny(
+        self, prepared: PreparedAction, approver: UserContext, reference: str | None = None
+    ) -> Decision:
+        """Deny a pending request. reference names the evidence, such as a ticket."""
+        return self._decide(prepared, approver, False, self._check_reference(reference))
 
-    def _decide(self, prepared: PreparedAction, approver: UserContext, approve: bool) -> Decision:
+    def pending(self, org_id: str, run_id: str | None = None) -> list[OperationStatus]:
+        """Prepared operations that need approval and have no decision yet, oldest first."""
+        return [self._status(row) for row in self.store.pending(org_id, run_id)]
+
+    def cancel(self, prepared: PreparedAction, by: UserContext) -> Decision:
+        """Stop a prepared or approved operation before it runs.
+
+        The requester can cancel, and so can a user in the same organization with the
+        tool's approve_permission. A cancelled operation returns CANCELLED.
+        """
+        now = self.clock()
+
+        def answer(code: Code, explanation: str | None = None) -> Decision:
+            self._write_audit(
+                "cancel",
+                str(code),
+                prepared.org_id,
+                run_id=prepared.run_id,
+                operation_id=prepared.operation_id,
+                user_id=by.user_id,
+                tool=prepared.tool,
+                now=now,
+            )
+            return Decision(
+                allowed=False,
+                code=code,
+                explanation=explanation or explain(code),
+                operation_id=prepared.operation_id,
+            )
+
+        if by.org_id != prepared.org_id:
+            return answer(Code.IDENTITY_MISMATCH)
+        binding = self._validate_prepared(prepared)
+        if isinstance(binding, Code):
+            return answer(binding)
+        _, tp, _ = binding
+        requester = by.user_id == prepared.user_id
+        approver = tp.approve_permission is not None and tp.approve_permission in by.permissions
+        if not (requester or approver):
+            return answer(
+                Code.APPROVER_NOT_ALLOWED,
+                "Only the requester or a user with this tool's approval permission can cancel.",
+            )
+        result = self.store.cancel(prepared.org_id, prepared.operation_id,
+                                   prepared.request_hash, now)
+        if result == "cancelled":
+            return answer(Code.CANCELLED)
+        if result == "closed":
+            return answer(self._row_code(prepared))
+        if result == "already_recorded":
+            return answer(Code.ALREADY_RECORDED)
+        return answer(Code.OPERATION_CONFLICT)
+
+    @staticmethod
+    def _check_reference(reference: str | None) -> str | None:
+        if reference is None:
+            return None
+        if not isinstance(reference, str):
+            raise ValueError("reference must be a string")  # noqa: TRY004 one error type for callers
+        if len(reference) > REFERENCE_LIMIT:
+            raise ValueError(f"reference must be at most {REFERENCE_LIMIT} characters")
+        if not reference.isprintable():
+            raise ValueError("reference must not contain control characters")
+        return reference
+
+    def _row_code(self, prepared: PreparedAction) -> Code:
+        row = self.store.get_operation(prepared.org_id, prepared.operation_id)
+        return Code(row["code"])
+
+    def _reference(self, org_id: str, operation_id: str) -> str | None:
+        approval = self.store.get_approval(org_id, operation_id)
+        return None if approval is None else approval["reference"]
+
+    def _decide(
+        self, prepared: PreparedAction, approver: UserContext, approve: bool,
+        reference: str | None,
+    ) -> Decision:
         now = self.clock()
         event = "approve" if approve else "deny"
 
         def answer(code: Code, explanation: str | None = None) -> Decision:
-            self.store.audit(
+            self._write_audit(
                 event,
                 str(code),
                 prepared.org_id,
@@ -157,6 +291,7 @@ class Latch:
                 user_id=approver.user_id,
                 tool=prepared.tool,
                 now=now,
+                reference=reference,
             )
             return Decision(
                 allowed=code == Code.APPROVED,
@@ -191,10 +326,13 @@ class Latch:
             self.clock,
             limits.run_lifetime_seconds,
             limits.approval_lifetime_seconds,
+            reference,
+            run_idle=limits.run_idle_seconds,
         )
+        if result == "closed":
+            return answer(self._row_code(prepared))
         failures = {
             "already_recorded": Code.ALREADY_RECORDED,
-            "denied": Code.DENIED_BY_APPROVER,
             "approval_used": Code.APPROVAL_USED,
             "hash_mismatch": Code.OPERATION_CONFLICT,
             "run_expired": Code.RUN_EXPIRED,
@@ -216,13 +354,13 @@ class Latch:
         future = self._pool.submit(spec.handler, args, info)
         try:
             value = future.result(timeout=spec.timeout_seconds)
-        except ToolFailed:
-            return self._finish(prepared, "failed", Code.FAILED, t0)
-        except TimeoutError:
+        except ToolFailed as exc:
+            return self._finish(prepared, "failed", Code.FAILED, t0, error=exc)
+        except TimeoutError as exc:
             # The thread keeps running on its own; the outcome is unknown.
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
-        except Exception:  # noqa: BLE001 any other handler error is uncertain
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
+        except Exception as exc:  # noqa: BLE001 any other handler error is uncertain
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
         return self._finish(prepared, "succeeded", Code.EXECUTED, t0, value)
 
     async def aexecute(self, prepared: PreparedAction, ctx: UserContext) -> ExecutionResult:
@@ -238,18 +376,21 @@ class Latch:
             call = loop.run_in_executor(self._pool, spec.handler, args, info)
         try:
             value = await asyncio.wait_for(call, spec.timeout_seconds)
-        except ToolFailed:
-            return self._finish(prepared, "failed", Code.FAILED, t0)
-        except TimeoutError:
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
-        except Exception:  # noqa: BLE001 any other handler error is uncertain
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+        except ToolFailed as exc:
+            return self._finish(prepared, "failed", Code.FAILED, t0, error=exc)
+        except TimeoutError as exc:
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
+        except Exception as exc:  # noqa: BLE001 any other handler error is uncertain
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
         return self._finish(prepared, "succeeded", Code.EXECUTED, t0, value)
 
     def operation_status(self, org_id: str, operation_id: str) -> OperationStatus | None:
         row = self.store.get_operation(org_id, operation_id)
         if row is None:
             return None
+        return self._status(row)
+
+    def _status(self, row: dict[str, Any]) -> OperationStatus:
         return OperationStatus(
             operation_id=row["operation_id"],
             state=row["state"],
@@ -257,6 +398,12 @@ class Latch:
             tool=row["tool"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            needs_approval=bool(row["needs_approval"]),
+            user_id=row["user_id"],
+            run_id=row["run_id"],
+            summary=row["summary"],
+            copied=frozenset(json.loads(row["copied"])),
+            reference=self._reference(row["org_id"], row["operation_id"]),
         )
 
     def _gate(
@@ -266,13 +413,15 @@ class Latch:
         now = self.clock()
 
         def refuse(code: Code) -> ExecutionResult:
+            reference = self._reference(prepared.org_id, prepared.operation_id)
             self._audit("execute", code, ctx, prepared.tool, prepared.operation_id, now,
-                        outcome="denied")
+                        outcome="denied", reference=reference)
             return ExecutionResult(
                 operation_id=prepared.operation_id,
                 outcome="denied",
                 code=code,
                 explanation=explain(code),
+                reference=reference,
             )
 
         same = (ctx.user_id, ctx.org_id, ctx.run_id) == (
@@ -282,17 +431,19 @@ class Latch:
         )
         if not same:
             return refuse(Code.IDENTITY_MISMATCH)
+        if self._copied_denied(prepared):
+            return refuse(Code.COPIED_ARGUMENTS)
         binding = self._validate_prepared(prepared)
         if isinstance(binding, Code):
             return refuse(binding)
         spec, tp, checked = binding
-        code = self._check_access(ctx, spec, tp, checked)
+        code = self._check_access(ctx, spec, tp, checked, prepared.copied)
         if code is not None:
             return refuse(code)
 
         now = self.clock()
         limits = self.policy.limits
-        started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
+        deadline = self._deadline(ctx, now)
         result = self.store.reserve(
             ctx.org_id,
             prepared.operation_id,
@@ -300,7 +451,7 @@ class Latch:
             prepared.request_hash,
             now,
             prepared.needs_approval,
-            started_at + limits.run_lifetime_seconds,
+            deadline,
             limits.max_actions_per_run,
             clock=self.clock,
         )
@@ -314,7 +465,10 @@ class Latch:
                 code=code,
                 explanation=explain(code),
                 replayed=True,
+                reference=self._reference(ctx.org_id, prepared.operation_id),
             )
+        if result == "closed":
+            return refuse(self._row_code(prepared))
         if result != "reserved":
             return refuse(RESERVE_CODES[result])
 
@@ -328,6 +482,14 @@ class Latch:
             tool_version=spec.version,
         )
         return spec, args, info
+
+    def _deadline(self, ctx: UserContext, now: float) -> float:
+        """Start the run if it is new and return when it expires."""
+        limits = self.policy.limits
+        started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
+        last_at = self.store.last_touch(ctx.org_id, ctx.run_id)
+        return run_deadline(started_at, last_at, limits.run_lifetime_seconds,
+                            limits.run_idle_seconds)
 
     def _validate_prepared(
         self, prepared: PreparedAction
@@ -346,39 +508,50 @@ class Latch:
         canonical = json.dumps(checked.model_dump(mode="json"), sort_keys=True,
                                separators=(",", ":"))
         expected_hash = self._request_hash(prepared, spec, canonical, prepared.operation_id)
-        needs_approval = self._needs_approval(tp, checked)
+        needs_approval = self._needs_approval(tp, checked, prepared.copied)
         if (prepared.request_hash != expected_hash or prepared.tool_version != spec.version
                 or prepared.needs_approval != needs_approval):
             return Code.OPERATION_CONFLICT
         row = self.store.get_operation(prepared.org_id, prepared.operation_id)
         if row is None or (
             row["request_hash"], row["run_id"], row["user_id"], row["tool"],
-            row["tool_version"], bool(row["needs_approval"])
+            row["tool_version"], bool(row["needs_approval"]),
+            frozenset(json.loads(row["copied"])),
         ) != (
             expected_hash, prepared.run_id, prepared.user_id, spec.name,
-            spec.version, needs_approval
+            spec.version, needs_approval, prepared.copied,
         ):
             return Code.OPERATION_CONFLICT
         return spec, tp, checked
 
     def _finish(
-        self, prepared: PreparedAction, outcome: str, code: Code, t0: float, value: Any = None
+        self, prepared: PreparedAction, outcome: str, code: Code, t0: float, value: Any = None,
+        error: BaseException | None = None,
     ) -> ExecutionResult:
+        """Save the outcome. The handler already ran, so a storage error is reported, not raised."""
         duration_ms = int((time.perf_counter() - t0) * 1000)
         now = self.clock()
-        self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
-        self.store.audit(
-            "execute",
-            str(code),
-            prepared.org_id,
-            run_id=prepared.run_id,
-            operation_id=prepared.operation_id,
-            user_id=prepared.user_id,
-            tool=prepared.tool,
-            outcome=outcome,
-            duration_ms=duration_ms,
-            now=now,
-        )
+        recorded = True
+        message = None if error is None else error_text(error)
+        reference = None
+        try:
+            reference = self._reference(prepared.org_id, prepared.operation_id)
+            self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
+            self._write_audit(
+                "execute",
+                str(code),
+                prepared.org_id,
+                run_id=prepared.run_id,
+                operation_id=prepared.operation_id,
+                user_id=prepared.user_id,
+                tool=prepared.tool,
+                outcome=outcome,
+                duration_ms=duration_ms,
+                now=now,
+                reference=reference,
+            )
+        except StorageError as exc:
+            recorded, message = False, error_text(exc)
         return ExecutionResult(
             operation_id=prepared.operation_id,
             outcome=outcome,
@@ -386,15 +559,19 @@ class Latch:
             explanation=explain(code),
             value=value,
             duration_ms=duration_ms,
+            reference=reference,
+            error=message,
+            recorded=recorded,
         )
 
     def _check_access(
-        self, ctx: UserContext, spec: ToolSpec, tp: ToolPolicy, args: BaseModel
+        self, ctx: UserContext, spec: ToolSpec, tp: ToolPolicy, args: BaseModel,
+        copied: frozenset[str],
     ) -> Code | None:
         if tp.require_permission not in ctx.permissions:
             return Code.MISSING_PERMISSION
-        if tp.tainted_arguments == "deny" and self._tainted(ctx, args):
-            return Code.TAINTED_ARGUMENTS
+        if tp.copied_arguments == "deny" and copied:
+            return Code.COPIED_ARGUMENTS
         recipients = tp.allowed_recipients or []
         if tp.recipient_field is not None and getattr(args, tp.recipient_field) not in recipients:
             return Code.RECIPIENT_NOT_ALLOWED
@@ -408,13 +585,48 @@ class Latch:
         return None
 
     @staticmethod
-    def _tainted(ctx: UserContext, args: BaseModel) -> bool:
-        """True when a tainted path names a top level field of this tool's arguments."""
-        fields = type(args).model_fields
-        return any(path.split(".")[0].split("[")[0] in fields for path in ctx.tainted_fields)
+    def _summary(spec: ToolSpec, args: BaseModel) -> str | None:
+        """One line from the tool's describe function, or None when it fails."""
+        if spec.describe is None:
+            return ""
+        try:
+            text = spec.describe(args)
+        except Exception:  # noqa: BLE001 any describe error blocks the call
+            return None
+        if not isinstance(text, str):
+            return None
+        text = "".join(" " if not ch.isprintable() else ch for ch in text)
+        return " ".join(text.split())[:SUMMARY_LIMIT]
 
     @staticmethod
-    def _needs_approval(tp: ToolPolicy, args: BaseModel) -> bool:
+    def _copied_input(copied: Any) -> frozenset[str]:
+        """Read the paths from an iterable of strings or an object with a .copied attribute."""
+        if hasattr(copied, "copied"):
+            copied = copied.copied
+        if isinstance(copied, str):
+            copied = (copied,)
+        paths = frozenset(copied)
+        if not all(isinstance(path, str) for path in paths):
+            raise TypeError("copied must hold argument paths as strings")
+        return paths
+
+    @staticmethod
+    def _copied_fields(spec: ToolSpec, paths: frozenset[str]) -> frozenset[str]:
+        """Keep the paths whose top level field names a field of this tool's arguments."""
+        fields = spec.args_model.model_fields
+        return frozenset(p for p in paths if p.split(".")[0].split("[")[0] in fields)
+
+    def _copied_denied(self, prepared: PreparedAction) -> bool:
+        spec = self._tools.get(prepared.tool)
+        tp = self.policy.tools.get(prepared.tool)
+        if spec is None or tp is None or tp.copied_arguments != "deny":
+            return False
+        return bool(self._copied_fields(spec, frozenset(prepared.copied)))
+
+    @staticmethod
+    def _needs_approval(tp: ToolPolicy, args: BaseModel, copied: frozenset[str]) -> bool:
+        if tp.copied_arguments == "approve" and copied:
+            return True
         if tp.approval.mode == "always":
             return True
         if tp.approval.mode == "over_amount":
@@ -449,6 +661,8 @@ class Latch:
         request_hash: str,
         canonical: str,
         code: Code,
+        copied: frozenset[str],
+        summary: str,
     ) -> PreparedAction:
         prepared = PreparedAction.model_construct(
             operation_id=operation_id,
@@ -461,6 +675,8 @@ class Latch:
             request_hash=request_hash,
             code=code,
             explanation=explain(code),
+            copied=copied,
+            summary=summary,
         )
         prepared._args_json = canonical
         return prepared
@@ -473,6 +689,16 @@ class Latch:
             allowed=False, code=code, explanation=explain(code), operation_id=operation_id
         )
 
+    def _write_audit(self, *args: Any, **kwargs: Any) -> None:
+        row = self.store.audit(*args, **kwargs)
+        if self.on_event is None:
+            return
+        # A listener error is logged and never changes the decision.
+        try:
+            self.on_event(to_event(row))
+        except Exception:
+            logger.warning("on_event failed for audit row %s", row.get("id"), exc_info=True)
+
     def _audit(
         self,
         event: str,
@@ -482,8 +708,11 @@ class Latch:
         operation_id: str,
         now: float,
         outcome: str | None = None,
+        summary: str | None = None,
+        copied: str | None = None,
+        reference: str | None = None,
     ) -> None:
-        self.store.audit(
+        self._write_audit(
             event,
             str(code),
             ctx.org_id,
@@ -493,4 +722,7 @@ class Latch:
             tool=tool,
             outcome=outcome,
             now=now,
+            summary=summary,
+            copied=copied,
+            reference=reference,
         )
