@@ -13,7 +13,7 @@ from ..engine import Latch
 from ..models import CallInfo, ToolSpec
 from ..policy import Policy, parse_policy
 from ..store import SQLiteStore
-from .northwind import Northwind
+from .northwind import Northwind, money
 
 
 class LookupArgs(BaseModel):
@@ -31,6 +31,15 @@ class RefundArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     account_id: str
     amount_minor: int = Field(ge=1)
+
+
+def describe_send(args: SendArgs) -> str:
+    # The summary is saved in the audit table, so it names the message but leaves out its text.
+    return f"Send a {len(args.body)} character message to {args.to}"
+
+
+def describe_refund(args: RefundArgs) -> str:
+    return f"Refund ${money(args.amount_minor)} to account {args.account_id}"
 
 
 def demo_policy() -> Policy:
@@ -68,6 +77,7 @@ def tool_specs(nw: Northwind, timeout_seconds: float = 30.0) -> list[ToolSpec]:
             handler=send,
             description="Send a message to a Northwind support address.",
             timeout_seconds=timeout_seconds,
+            describe=describe_send,
         ),
         ToolSpec(
             name="issue_refund",
@@ -77,6 +87,7 @@ def tool_specs(nw: Northwind, timeout_seconds: float = 30.0) -> list[ToolSpec]:
             access_hook=owns_account,
             description="Refund an amount in cents to one customer account.",
             timeout_seconds=timeout_seconds,
+            describe=describe_refund,
         ),
     ]
 

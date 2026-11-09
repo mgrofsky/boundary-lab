@@ -30,6 +30,7 @@ class CallInfo(Strict):
 
 
 AccessHook = Callable[[UserContext, dict[str, Any]], bool]
+Describe = Callable[[BaseModel], str]
 Handler = (
     Callable[[dict[str, Any], CallInfo], Any]
     | Callable[[dict[str, Any], CallInfo], Awaitable[Any]]
@@ -45,6 +46,7 @@ class ToolSpec(BaseModel):
     access_hook: AccessHook | None = None
     description: str = ""
     timeout_seconds: float = 30.0
+    describe: Describe | None = None
 
 
 class Decision(Strict):
@@ -74,6 +76,7 @@ class PreparedAction(BaseModel):
     code: Code
     explanation: str
     copied: frozenset[str] = frozenset()
+    summary: str = ""
     _args_json: str = PrivateAttr()
 
     @property
@@ -99,3 +102,4 @@ class OperationStatus(Strict):
     created_at: float
     updated_at: float
     copied: frozenset[str] = frozenset()
+    summary: str = ""

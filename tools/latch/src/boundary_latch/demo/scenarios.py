@@ -30,6 +30,7 @@ class Step:
     code: str
     explanation: str
     state_change: str = "nothing"
+    summary: str = ""
 
 
 @dataclass
@@ -71,16 +72,18 @@ class Run:
         self.count += 1
         return f"{self.name}-{self.count}-{self.tag}"
 
-    def record(self, profile: str, action: str, code: str, change: str = "nothing") -> None:
+    def record(
+        self, profile: str, action: str, code: str, change: str = "nothing", summary: str = ""
+    ) -> None:
         label = PROFILES[profile]["label"]
-        self.steps.append(Step(label, action, code, explain(Code(code)), change))
+        self.steps.append(Step(label, action, code, explain(Code(code)), change, summary))
 
     def prepare(
         self, profile: str, tool: str, args: dict[str, Any], action: str, op: str | None = None
     ) -> str:
         result = self.session.propose(profile, tool, args, op or self.next_id())
         self.tools.setdefault(result["operation_id"], tool)
-        self.record(profile, action, result["code"])
+        self.record(profile, action, result["code"], summary=result.get("summary", ""))
         return result["operation_id"]
 
     def approve(self, profile: str, op: str) -> dict[str, Any]:
@@ -259,6 +262,8 @@ def render_scenario(number: int, scenario: Scenario) -> str:
     for step in scenario.steps:
         lines.append(f"who: {step.actor}")
         lines.append(f"asked for: {step.action}")
+        if step.summary:
+            lines.append(f"summary: {step.summary}")
         lines.append(f"result {step.code}: {step.explanation}")
         lines.append(f"change: {step.state_change}")
         lines.append("")

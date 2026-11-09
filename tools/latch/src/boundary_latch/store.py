@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS operations (
   request_hash TEXT NOT NULL, needs_approval INTEGER NOT NULL,
   state TEXT NOT NULL, code TEXT NOT NULL,
   created_at REAL NOT NULL, updated_at REAL NOT NULL,
-  copied TEXT NOT NULL DEFAULT '[]',
+  copied TEXT NOT NULL DEFAULT '[]', summary TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (org_id, operation_id));
 CREATE TABLE IF NOT EXISTS approvals (
   org_id TEXT NOT NULL, operation_id TEXT NOT NULL, approver_id TEXT NOT NULL,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS approvals (
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, org_id TEXT NOT NULL,
   run_id TEXT, operation_id TEXT, user_id TEXT, tool TEXT, event TEXT NOT NULL,
-  code TEXT NOT NULL, outcome TEXT, duration_ms INTEGER);
+  code TEXT NOT NULL, outcome TEXT, duration_ms INTEGER, summary TEXT, copied TEXT);
 """
 
 OPERATION_COLUMNS = (
@@ -45,14 +45,19 @@ OPERATION_COLUMNS = (
     "created_at",
     "updated_at",
     "copied",
+    "summary",
 )
 
 # Values for the optional operation columns when a caller leaves them out.
-OPERATION_DEFAULTS: dict[str, Any] = {"copied": "[]"}
+OPERATION_DEFAULTS: dict[str, Any] = {"copied": "[]", "summary": ""}
 
 # Columns added after 0.2.0. A database written by an older release gets them when opened.
 ADDED_COLUMNS = {
-    "operations": [("copied", "TEXT NOT NULL DEFAULT '[]'")],
+    "operations": [
+        ("copied", "TEXT NOT NULL DEFAULT '[]'"),
+        ("summary", "TEXT NOT NULL DEFAULT ''"),
+    ],
+    "audit": [("summary", "TEXT"), ("copied", "TEXT")],
 }
 
 RECORDED = ("reserved", "succeeded", "failed", "uncertain")
@@ -368,14 +373,17 @@ class SQLiteStore:
         outcome: str | None = None,
         duration_ms: int | None = None,
         now: float = 0.0,
+        summary: str | None = None,
+        copied: str | None = None,
     ) -> None:
         with self._lock:
             try:
                 self._conn.execute(
                     "INSERT INTO audit (at, org_id, run_id, operation_id, user_id, tool, event,"
-                    " code, outcome, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " code, outcome, duration_ms, summary, copied)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (now, org_id, run_id, operation_id, user_id, tool, event, code, outcome,
-                     duration_ms),
+                     duration_ms, summary, copied),
                 )
             except sqlite3.Error as exc:
                 raise StorageError(f"audit failed: {exc}") from exc

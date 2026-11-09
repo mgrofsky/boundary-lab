@@ -49,7 +49,9 @@ def test_a_0_2_database_gets_the_new_columns(tmp_path):
     store = SQLiteStore(path)
     row = store.get_operation("o", "op1")
     assert row["copied"] == "[]"
-    assert "copied" in columns(store, "operations")
+    assert row["summary"] == ""
+    assert {"copied", "summary"} <= columns(store, "operations")
+    assert {"summary", "copied"} <= columns(store, "audit")
     store.close()
     # Opening it a second time changes nothing.
     again = SQLiteStore(path)

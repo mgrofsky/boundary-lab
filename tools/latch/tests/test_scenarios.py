@@ -55,6 +55,17 @@ def test_scenario_details():
     assert found["expired_approval"].expected[-1] == "APPROVAL_EXPIRED"
 
 
+def test_refund_and_message_steps_show_a_summary():
+    found = by_name()
+    assert found["duplicate_refund"].steps[0].summary == "Refund $20.00 to account A1"
+    assert found["message_with_approval"].steps[0].summary == (
+        "Send a 39 character message to help@northwind.example"
+    )
+    assert found["allowed_lookup"].steps[0].summary == ""
+    text = render_text(run_all())
+    assert "summary: Refund $20.00 to account A1" in text
+
+
 def test_actors_are_labeled_sample_identities():
     for scenario in run_all():
         for step in scenario.steps:

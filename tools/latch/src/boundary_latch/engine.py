@@ -26,6 +26,8 @@ from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
 from .store import OperationExists, SQLiteStore
 
+SUMMARY_LIMIT = 300
+
 RESERVE_CODES = {
     "denied": Code.DENIED_BY_APPROVER,
     "approval_missing": Code.APPROVAL_REQUIRED,
@@ -112,6 +114,9 @@ class Latch:
         code = self._check_access(ctx, spec, tp, args, paths)
         if code is not None:
             return self._deny_prepare(ctx, tool, operation_id, code, now)
+        summary = self._summary(spec, args)
+        if summary is None:
+            return self._deny_prepare(ctx, tool, operation_id, Code.DESCRIBE_FAILED, now)
 
         now = self.clock()
         if now >= started_at + limits.run_lifetime_seconds:
@@ -128,6 +133,7 @@ class Latch:
                 return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CONFLICT, now)
             needs_approval = bool(existing["needs_approval"])
             paths = stored
+            summary = existing["summary"]
         code = Code.NEEDS_APPROVAL if needs_approval else Code.ALLOWED
         if existing is None:
             try:
@@ -146,14 +152,16 @@ class Latch:
                         "created_at": now,
                         "updated_at": now,
                         "copied": json.dumps(sorted(paths)),
+                        "summary": summary,
                     }
                 )
             except OperationExists:
                 return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CONFLICT, now)
 
-        self._audit("prepare", code, ctx, tool, operation_id, now)
+        self._audit("prepare", code, ctx, tool, operation_id, now, summary=summary,
+                    copied=json.dumps(sorted(paths)))
         return self._build_prepared(ctx, spec, operation_id, needs_approval, request_hash,
-                                    canonical, code, paths)
+                                    canonical, code, paths, summary)
 
     def approve(self, prepared: PreparedAction, approver: UserContext) -> Decision:
         return self._decide(prepared, approver, approve=True)
@@ -276,6 +284,7 @@ class Latch:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             copied=frozenset(json.loads(row["copied"])),
+            summary=row["summary"],
         )
 
     def _gate(
@@ -431,6 +440,20 @@ class Latch:
         return None
 
     @staticmethod
+    def _summary(spec: ToolSpec, args: BaseModel) -> str | None:
+        """One line from the tool's describe function, or None when it fails."""
+        if spec.describe is None:
+            return ""
+        try:
+            text = spec.describe(args)
+        except Exception:  # noqa: BLE001 any describe error blocks the call
+            return None
+        if not isinstance(text, str):
+            return None
+        text = "".join(" " if not ch.isprintable() else ch for ch in text)
+        return " ".join(text.split())[:SUMMARY_LIMIT]
+
+    @staticmethod
     def _copied_input(copied: Any) -> frozenset[str]:
         """Read the paths from an iterable of strings or an object with a .copied attribute."""
         if hasattr(copied, "copied"):
@@ -494,6 +517,7 @@ class Latch:
         canonical: str,
         code: Code,
         copied: frozenset[str],
+        summary: str,
     ) -> PreparedAction:
         prepared = PreparedAction.model_construct(
             operation_id=operation_id,
@@ -507,6 +531,7 @@ class Latch:
             code=code,
             explanation=explain(code),
             copied=copied,
+            summary=summary,
         )
         prepared._args_json = canonical
         return prepared
@@ -528,6 +553,8 @@ class Latch:
         operation_id: str,
         now: float,
         outcome: str | None = None,
+        summary: str | None = None,
+        copied: str | None = None,
     ) -> None:
         self.store.audit(
             event,
@@ -539,4 +566,6 @@ class Latch:
             tool=tool,
             outcome=outcome,
             now=now,
+            summary=summary,
+            copied=copied,
         )
