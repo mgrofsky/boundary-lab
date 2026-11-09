@@ -205,6 +205,24 @@ def cmd_readme(args) -> int:
     return 0
 
 
+def cmd_gate(args) -> int:
+    from redline import thresholds
+
+    path = Path(args.summary)
+    if not path.is_file():
+        raise SystemExit(f"redline: no summary at {path}, run redline report first")
+    lines = thresholds.check(
+        json.loads(path.read_text()),
+        min_recall=args.min_recall,
+        max_false_alarm=args.max_false_alarm,
+        min_kappa=args.min_kappa,
+        attack=args.attack,
+    )
+    for line in lines:
+        print(line)
+    return 1 if lines else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="redline",
@@ -326,6 +344,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--readme", default="redline/README.md", help="README file containing the results markers"
     )
     readme.set_defaults(func=cmd_readme)
+
+    gate = sub.add_parser("gate", help="exit 1 when the summary breaks a limit, for CI")
+    gate.add_argument("--summary", default="results/summary.json", help="the summary to check")
+    gate.add_argument(
+        "--min-recall", type=float, help="lowest share of rule breaks caught that passes"
+    )
+    gate.add_argument(
+        "--max-false-alarm",
+        type=float,
+        help="highest share of good answers marked fail that passes",
+    )
+    gate.add_argument(
+        "--min-kappa", type=float, help="lowest agreement with the hand labels that passes"
+    )
+    gate.add_argument(
+        "--attack",
+        action="store_true",
+        help="check the attack run's numbers instead of the holdout's",
+    )
+    gate.set_defaults(func=cmd_gate)
     return parser
 
 

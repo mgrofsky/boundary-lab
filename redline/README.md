@@ -130,6 +130,20 @@ Add `--router kmeans --k 12` to both `redline run` commands to try that routing 
 
 To use your own rules and examples, start with [writing rules](../docs/writing-rules.md). See [how it works](../docs/how-it-works.md) for the code flow and [the attack prompts](../docs/attacks.md) for testing ideas.
 
+## CI
+
+`redline gate` reads a summary and fails the build when a number crosses a limit you set. Run it after `redline run` and `redline report`:
+
+```sh
+redline run --data data/holdout.jsonl --judge replay --out results/ci
+redline run --data data/runs/attack_responses.jsonl --judge replay --out results/ci && redline report --holdout results/ci/holdout_outputs.jsonl --attack results/ci/attack_responses_outputs.jsonl --out results/ci
+redline gate --summary results/ci/summary.json --min-recall 0.8 --max-false-alarm 0.1 --min-kappa 0.7
+```
+
+It prints one line for each limit that's broken and exits 1. When every limit holds, it prints nothing and exits 0. Only the limits you pass are checked.
+
+`--min-recall` is the share of rule breaks caught. `--max-false-alarm` is the share of good answers marked fail. `--min-kappa` is agreement with the hand labels. These read the holdout numbers. Add `--attack` to check the attack run's numbers instead.
+
 ## Run it with promptfoo
 
 Redline's 80 attack prompts also run under [promptfoo](https://www.promptfoo.dev), alongside its string and rubric checks. That integration uses center matching with the shortcut off. See [running the attacks through promptfoo](../docs/promptfoo.md).
