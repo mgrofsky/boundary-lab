@@ -1,8 +1,8 @@
 # Release
 
-Latch's package name on PyPI is `boundary-latch`. The first public release, 0.1.0, was uploaded manually.
+Latch's package name on PyPI is `boundary-latch`. Releases 0.1.0, 0.1.1 and 0.2.0 were uploaded by hand with twine and an API token, to TestPyPI first and then PyPI.
 
-The repository also has a release workflow in `.github/workflows/release-latch.yml`. It is configured to use Trusted Publishing, which lets GitHub publish without a stored PyPI token. The workflow starts when a tag beginning with `latch-v` is pushed. This page describes that configured path; the first upload did not verify that it works from start to finish.
+The repository also has a release workflow in `.github/workflows/release-latch.yml`. It is configured to use Trusted Publishing, which lets GitHub publish without a stored PyPI token. The workflow starts when a tag beginning with `latch-v` is pushed. This page describes that configured path; the uploads so far did not use it, so it is unverified from start to finish.
 
 ## What the workflow does
 
