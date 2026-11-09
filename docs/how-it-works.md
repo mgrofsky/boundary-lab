@@ -66,7 +66,9 @@ The judge is a second model that grades one answer against one rule. It gets the
 
 The judge is asked for JSON with a pass or fail verdict, severity, reason code, and a short explanation. Invalid JSON, a reply that is not an object, or an unknown verdict becomes `review`. An unknown reason code becomes `OTHER`, and an invalid severity becomes empty without changing an otherwise valid verdict.
 
-If a live judge call fails, the answer gets `review`. Valid live grades can be saved in a cache file. Each grade is looked up using a hash, a fingerprint of the exact grading prompt. Replay reads those saved grades. If one is missing, replay stops with an error. A new routing choice may need grades that aren't in the cache.
+A live judge gets one more sentence at the end of its prompt. It asks the judge to copy a random check value, called a nonce, into its JSON under the key `nonce`. Each call gets a new value. A reply without that exact value gets `review` with the code `JUDGE_NONCE`, and it is not saved. This catches a reply that came from somewhere other than this request, such as text the answer tricked the judge into repeating. Replay never checks the nonce, since saved grades were already checked when they were made.
+
+If a live judge call fails, the answer gets `review`. Valid live grades can be saved in a cache file. Each grade is looked up using a hash, a fingerprint of the exact grading prompt without the nonce sentence. That keeps grades saved before the nonce check usable. Replay reads those saved grades. If one is missing, replay stops with an error. A new routing choice may need grades that aren't in the cache.
 
 ## Step 4: record
 

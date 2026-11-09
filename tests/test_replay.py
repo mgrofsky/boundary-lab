@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -6,6 +7,18 @@ from redline.judge import ChatEndpointJudge, ReplayJudge, build_prompt, prompt_k
 
 EXAMPLES = {"good": [], "bad": []}
 RAW = json.dumps({"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "x"})
+
+
+def echo(raw):
+    """A live judge transport that answers raw with the prompt's check value added."""
+
+    def send(payload):
+        nonce = re.search(r'"nonce" with the value "(\w+)"', payload["messages"][0]["content"])
+        return raw.replace('{"verdict"', f'{{"nonce": "{nonce.group(1)}", "verdict"', 1)
+
+    return send
+
+
 ARGS = (
     "how do I pay",
     "You can pay online or by phone.",
@@ -17,14 +30,14 @@ ARGS = (
 def test_replay_returns_cached_answer(tmp_path, pay_rule):
     cache = tmp_path / "cache.jsonl"
     raw = json.dumps({"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "x"})
-    live = ChatEndpointJudge("http://unused", "m", "k", transport=lambda p: raw, cache_path=cache)
+    live = ChatEndpointJudge("http://unused", "m", "k", transport=echo(raw), cache_path=cache)
     expected = live.grade(pay_rule, EXAMPLES, *ARGS)
     assert ReplayJudge(cache).grade(pay_rule, EXAMPLES, *ARGS) == expected
 
 
 def test_cache_line_has_model_and_rule_id(tmp_path, pay_rule):
     cache = tmp_path / "cache.jsonl"
-    live = ChatEndpointJudge("http://unused", "m", "k", transport=lambda p: RAW, cache_path=cache)
+    live = ChatEndpointJudge("http://unused", "m", "k", transport=echo(RAW), cache_path=cache)
     live.grade(pay_rule, EXAMPLES, *ARGS)
     entry = json.loads(cache.read_text().splitlines()[0])
     assert sorted(entry) == ["answer", "key", "model", "rule_id"]
