@@ -146,7 +146,6 @@ def cmd_attack(args) -> int:
 
 def cmd_report(args) -> int:
     from redline import report
-    from redline.embed import DEFAULT_MODEL
 
     files = {
         "train": args.train,
@@ -171,7 +170,7 @@ def cmd_report(args) -> int:
         data["attack_outputs"],
         data["attack_labels"],
         data["attacks"],
-        DEFAULT_MODEL,
+        report.embedding_name(run_meta),
         counts,
         args.cache,
         run_meta,
