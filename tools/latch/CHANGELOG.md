@@ -6,9 +6,9 @@
 
 Each change below lists the one line fix.
 
-- The 0.2.0 policy key that blocked marked arguments is now `copied_arguments`. Fix: rename that key in your policy file to `copied_arguments`.
-- The 0.2.0 reason code for marked arguments is now `COPIED_ARGUMENTS`. Fix: compare against `Code.COPIED_ARGUMENTS`.
-- `UserContext` no longer holds the marked field paths. Fix: drop that field and pass the paths to `prepare(..., copied=paths)`.
+- The policy key `tainted_arguments` is now `copied_arguments`. Fix: rename that key in your policy file.
+- The reason code `TAINTED_ARGUMENTS` is now `COPIED_ARGUMENTS`. Fix: compare against `Code.COPIED_ARGUMENTS`.
+- `UserContext.tainted_fields` is gone. Fix: drop that field and pass the paths to `prepare(..., copied=paths)`. The old identifiers appear in this file only, so a search for them finds the fix.
 - Preparing a denied operation again used to return a `PreparedAction` that could never run. It now returns a `Decision` with the new code `OPERATION_CLOSED`. Fix: give the new request a new operation ID.
 - `OperationStatus` has new required fields, so code that builds one by hand must set them. Fix: add `needs_approval`, `user_id` and `run_id` where you build it.
 
