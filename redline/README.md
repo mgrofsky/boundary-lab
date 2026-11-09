@@ -134,9 +134,11 @@ These commands keep new results separate from the saved run. Label new attack re
 
 Live mode also reuses saved grades. Use a fresh cache file when changing the judge model. Redline looks up grades using the grading prompt, and that lookup doesn't include the model name. New valid grades are saved for later replay.
 
+Each live judge prompt ends with a random check value the judge must copy into its JSON. A reply without it gets `review` with the code `JUDGE_NONCE` and is not saved. A judge model that drops the key sends every answer to review, so check a few replies when trying a new model.
+
 Add `--router kmeans --k 12` to both `redline run` commands to try that routing option. The [routing guide](../docs/routing.md) shows how to make reports with the right files and compare runs.
 
-To use your own rules and examples, start with [writing rules](../docs/writing-rules.md). See [how it works](../docs/how-it-works.md) for the code flow and [the attack prompts](../docs/attacks.md) for testing ideas.
+To use your own rules and examples, start with [writing rules](../docs/writing-rules.md). A rules file can name its own user types under `user_types`, and `redline run` refuses a record whose type isn't listed. See [how it works](../docs/how-it-works.md) for the code flow and [the attack prompts](../docs/attacks.md) for testing ideas.
 
 ## CI
 
