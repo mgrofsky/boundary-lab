@@ -56,9 +56,9 @@ A long conversation can outlive the process that started it. `tracker.to_dict()`
 
 Dye compares each argument value with the marked text in three ways.
 
-The text match lowercases both sides, collapses spaces, and looks for the value as a whole term, so `2` matches "tier 2" and not "22", and `ORD-553` does not match "ORD-5531". Email addresses spelled out in words are matched too: "j dot doe at example dot com" matches `j.doe@example.com`.
+The text match removes zero width characters, lowercases both sides, collapses spaces, and looks for the value as a whole term, so `2` matches "tier 2" and not "22", and `ORD-553` does not match "ORD-5531". Email addresses spelled out in words are matched too: "j dot doe at example dot com" matches `j.doe@example.com`.
 
-The digits match applies to values made only of digits, with spaces, dots, commas or dashes between them. It compares the digits with each whole number in the text, so `42000` matches "$420.00" and `1107` does not match "2026-11-07".
+The digits match applies to values made only of digits, with spaces, dots, commas or dashes between them. It compares the digits with each whole number in the text, so `42000` matches "$420.00" and `1107` does not match "2026-11-07". Digits spelled out as words count too, so `420` matches "four two zero".
 
 The token match looks inside composite values. When the whole value does not match, Dye splits it on spaces and punctuation such as `: / , = ? &` and tests each piece. A piece is tested when it has at least four characters and holds a digit or an @. Dashes and dots do not split, so `i-0abc1234` and `10.0.0.0` stay whole. An instance id copied into an ARN, a network copied into a CIDR, or an email inside a URL is reported with the matcher `token` and the piece as the value.
 

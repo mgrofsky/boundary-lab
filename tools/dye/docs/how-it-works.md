@@ -2,7 +2,9 @@
 
 Part of [Dye](../README.md).
 
-A `Tracker` holds the text you marked for one conversation. Each `mark(label, text)` call stores the text three ways: lowercased with runs of whitespace collapsed to one space, the same text with spelled out "dot" and "at" turned into "." and "@", and the set of whole numbers in it. A whole number is a digit run after the spaces, dots, commas and dashes between digits are removed. "$420.00" becomes "42000". "4471 2201" becomes "44712201".
+A `Tracker` holds the text you marked for one conversation. Each `mark(label, text)` call stores the text three ways: lowercased with runs of whitespace collapsed to one space, the same text with spelled out "dot" and "at" turned into "." and "@", and the set of whole numbers in it. A whole number is a digit run after the spaces, dots, commas and dashes between digits are removed. "$420.00" becomes "42000". "4471 2201" becomes "44712201". Runs of two or more digit words, such as "four two zero" or "four-four-seven-one", are read as digits first, so "four two zero" becomes "420". A single digit word stays text.
+
+Unicode format characters, such as zero width spaces and joiners, are removed from the text and from argument values before anything else. Text with a zero width space hidden inside a number still matches.
 
 `mark_data(label, data)` walks a dict or list and marks each scalar as its own source with the same label and a path such as `body` or `comments[0].text`. It skips `None`, booleans and empty strings. A finding carries the matching source's path in `source_path`, which is empty for text marked with `mark`.
 

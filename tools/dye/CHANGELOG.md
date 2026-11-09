@@ -14,3 +14,5 @@
 - `Tracker(ignore=...)`, `Tracker.ignore(*patterns)` and `COMMON_IGNORE` skip values that are never evidence, such as cloud regions and ISO dates.
 - `Tracker(max_sources=...)` drops the oldest source past a limit, and `Tracker.forget(source)` drops one source.
 - `Tracker.to_dict()` and `Tracker.from_dict(data)` save and restore a tracker, with a `"schema": 1` key.
+- Zero width spaces, joiners and other Unicode format characters are removed before matching.
+- Runs of two or more digit words, such as "four two zero", are read as digits by the digits matcher.

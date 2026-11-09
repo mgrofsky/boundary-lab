@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -14,6 +15,15 @@ _SPELLED_DOT = re.compile(r"\s*[(\[]?\bdot\b[)\]]?\s*")
 _SPELLED_AT = re.compile(r"\s*[(\[]?\bat\b[)\]]?\s*")
 _SEPARATORS = re.compile(r"[\s,=:;/?&()\[\]{}<>\"'`]+")
 MIN_TOKEN = 4
+_WORD_DIGITS = {
+    word: str(digit)
+    for digit, word in enumerate(
+        ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+    )
+}
+_DIGIT_WORD = "(?:" + "|".join(_WORD_DIGITS) + ")"
+_DIGIT_WORDS = re.compile(rf"\b{_DIGIT_WORD}(?:[\s-]+{_DIGIT_WORD})+\b", re.IGNORECASE)
+_ONE_DIGIT_WORD = re.compile(rf"\b{_DIGIT_WORD}\b", re.IGNORECASE)
 
 COMMON_IGNORE: tuple[str, ...] = (
     r"[a-z]{2}-[a-z]+-\d",
@@ -22,9 +32,18 @@ COMMON_IGNORE: tuple[str, ...] = (
 """Opt in patterns for values that are never evidence: cloud regions such as us-east-2 and ISO dates."""
 
 
+def strip_format(text: str) -> str:
+    """Remove Unicode format characters, such as zero width spaces and joiners."""
+    return "".join(c for c in text if unicodedata.category(c) != "Cf")
+
+
 def normalize(text: str) -> str:
-    """Lowercase the text and collapse runs of whitespace to one space."""
-    return _SPACES.sub(" ", text.strip()).lower()
+    """Remove format characters, collapse runs of whitespace to one space and lowercase."""
+    return _SPACES.sub(" ", strip_format(text).strip()).lower()
+
+
+def _words_to_digits(match: re.Match[str]) -> str:
+    return "".join(_WORD_DIGITS[w.lower()] for w in _ONE_DIGIT_WORD.findall(match.group()))
 
 
 def spelled_out(text: str) -> str:
@@ -35,8 +54,10 @@ def spelled_out(text: str) -> str:
 def digit_runs(text: str) -> frozenset[str]:
     """Whole numbers in the text, with spaces, dots, commas and dashes between digits removed.
 
-    "$420.00" gives {"42000"} and "4471 2201" gives {"44712201"}.
+    "$420.00" gives {"42000"} and "4471 2201" gives {"44712201"}. Runs of two or more digit
+    words separated by spaces or dashes count as digits, so "four two zero" gives {"420"}.
     """
+    text = _DIGIT_WORDS.sub(_words_to_digits, strip_format(text))
     return frozenset(_DIGIT_RUN.findall(_JOINERS.sub("", text)))
 
 
