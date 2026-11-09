@@ -8,7 +8,7 @@ def test_text_match_reports_path_value_and_source():
     tracker.mark("ticket 4471", "refund account 88214471 now")
     report = tracker.check({"account_id": "88214471", "reason": "duplicate charge"})
     assert report.findings == (Finding("account_id", "88214471", "ticket 4471", "text"),)
-    assert report.tainted == frozenset({"account_id"})
+    assert report.copied == frozenset({"account_id"})
     assert report.clean is False
 
 
@@ -22,7 +22,7 @@ def test_digits_match_crosses_separators():
 def test_short_values_match_as_whole_words():
     tracker = Tracker()
     tracker.mark("ticket", "set my plan to tier 2")
-    assert tracker.check({"tier": 2}).tainted == frozenset({"tier"})
+    assert tracker.check({"tier": 2}).copied == frozenset({"tier"})
     assert tracker.check({"tier": 22}).clean is True
 
 
@@ -44,14 +44,14 @@ def test_trusted_values_are_never_reported():
     tracker.mark("ticket", "my account NW-100482 bill went up")
     tracker.trust("NW-100482")
     assert tracker.check({"account_id": "NW-100482"}).clean is True
-    assert tracker.check({"note": "bill went up"}).tainted == frozenset({"note"})
+    assert tracker.check({"note": "bill went up"}).copied == frozenset({"note"})
 
 
 def test_nested_paths():
     tracker = Tracker()
     tracker.mark("page", "Contact: ops@example.com, SKU HX-2200")
     report = tracker.check({"recipient": {"email": "ops@example.com"}, "items": [{"sku": "HX-2200"}]})
-    assert report.tainted == frozenset({"recipient.email", "items[0].sku"})
+    assert report.copied == frozenset({"recipient.email", "items[0].sku"})
 
 
 def test_no_sources_means_clean():
@@ -72,7 +72,7 @@ def test_first_matching_source_wins_and_to_dict_shape():
     tracker.mark("b", "code 9981")
     report = tracker.check({"code": "9981"})
     assert report.to_dict() == {
-        "tainted": ["code"],
+        "copied": ["code"],
         "findings": [{"path": "code", "value": "9981", "source": "a", "matcher": "text"}],
     }
 

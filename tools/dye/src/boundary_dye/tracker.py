@@ -62,7 +62,7 @@ class Report:
     findings: tuple[Finding, ...] = ()
 
     @property
-    def tainted(self) -> frozenset[str]:
+    def copied(self) -> frozenset[str]:
         return frozenset(finding.path for finding in self.findings)
 
     @property
@@ -71,7 +71,7 @@ class Report:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "tainted": sorted(self.tainted),
+            "copied": sorted(self.copied),
             "findings": [asdict(finding) for finding in self.findings],
         }
 

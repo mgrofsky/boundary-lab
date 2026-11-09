@@ -21,7 +21,7 @@ Five scenarios run against Northwind, a made up utility. They cover a ticket tha
 
     boundary-dye check --source ticket=ticket.txt --trust NW-100482 --args '{"account_id": "88214471", "amount_minor": 42000}'
 
-The report lists each tainted argument, the value, the source label, and the matcher that found it. The command exits 1 when anything is tainted and 0 when nothing is. Repeat `--source` for more files and `--trust` for more values.
+The report lists each copied argument, the value, the source label, and the matcher that found it. A copied argument is one whose value appears in text the model read. The command exits 1 when anything was copied and 0 when nothing was. Repeat `--source` for more files and `--trust` for more values.
 
 ## Use it in your app
 
@@ -37,7 +37,7 @@ The report lists each tainted argument, the value, the source label, and the mat
         for finding in report.findings:
             print(finding.path, finding.value, finding.source, finding.matcher)
 
-Make one `Tracker` per conversation. Mark text as it arrives, and trust the values your app already knows, such as the signed in account, so they are never reported even when the customer repeats them. `report.tainted` is the set of argument paths, such as `account_id` or `items[0].sku`. `report.to_dict()` gives JSON ready output.
+Make one `Tracker` per conversation. Mark text as it arrives, and trust the values your app already knows, such as the signed in account, so they are never reported even when the customer repeats them. `report.copied` is the set of copied argument paths, such as `account_id` or `items[0].sku`. `report.to_dict()` gives JSON ready output.
 
 ## How matching works
 
@@ -51,7 +51,7 @@ Values the app trusted, `None`, booleans and empty strings are skipped. See [how
 
 ## Use it with Latch
 
-Latch checks tool calls before they run. Pass Dye's result in the `UserContext` and set `tainted_arguments = "deny"` for the tools that should never act on copied values. See [using Dye with Latch](https://github.com/mgrofsky/boundary-lab/blob/main/tools/dye/docs/with-latch.md).
+Latch checks tool calls before they run. Pass Dye's report to `prepare` and set `copied_arguments = "deny"` for the tools that should never act on copied values. See [using Dye with Latch](https://github.com/mgrofsky/boundary-lab/blob/main/tools/dye/docs/with-latch.md).
 
 See [Release](https://github.com/mgrofsky/boundary-lab/blob/main/tools/dye/docs/release.md) for how a version gets published.
 

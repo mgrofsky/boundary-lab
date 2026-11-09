@@ -62,7 +62,7 @@ def cmd_scenarios(ns: argparse.Namespace) -> int:
     else:
         for result in results:
             mark = "ok " if result.passed else "BAD"
-            print(f"{mark} {result.name:<22} tainted={sorted(result.report.tainted)}")
+            print(f"{mark} {result.name:<22} copied={sorted(result.report.copied)}")
     return 0 if all(result.passed for result in results) else 1
 
 
@@ -78,7 +78,7 @@ def cmd_demo(ns: argparse.Namespace) -> int:
         if result.report.findings:
             for finding in result.report.findings:
                 print(
-                    f"   tainted {finding.path} = {finding.value!r} came from "
+                    f"   copied {finding.path} = {finding.value!r} came from "
                     f"{finding.source} ({finding.matcher} match)"
                 )
         else:

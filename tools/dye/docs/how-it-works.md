@@ -12,4 +12,4 @@ A `Tracker` holds the text you marked for one conversation. Each `mark(label, te
 
 - Digits match: the value is only digits and joiners, and its digits equal one whole number from the text.
 
-A `Report` holds the findings. `report.tainted` is the set of paths. `report.clean` is true when there are none. `report.to_dict()` returns `{"tainted": [...], "findings": [...]}` with the paths sorted.
+A `Report` holds the findings. `report.copied` is the set of copied argument paths. `report.clean` is true when there are none. `report.to_dict()` returns `{"copied": [...], "findings": [...]}` with the paths sorted.

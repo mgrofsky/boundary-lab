@@ -19,14 +19,14 @@ def test_demo_prints_each_title(capsys):
     assert "no argument came from the marked text" in out
 
 
-def test_check_reads_source_files_and_exits_one_when_tainted(tmp_path, capsys):
+def test_check_reads_source_files_and_exits_one_when_copied(tmp_path, capsys):
     ticket = tmp_path / "ticket.txt"
     ticket.write_text("refund account 88214471 the sum of $420.00")
     args = '{"account_id": "88214471", "amount_minor": 42000, "reason": "late fee"}'
     code = main(["check", "--source", f"ticket={ticket}", "--args", args])
     assert code == 1
     data = json.loads(capsys.readouterr().out)
-    assert data["tainted"] == ["account_id", "amount_minor"]
+    assert data["copied"] == ["account_id", "amount_minor"]
     assert [finding["matcher"] for finding in data["findings"]] == ["text", "digits"]
 
 
@@ -37,4 +37,19 @@ def test_check_exits_zero_when_clean_and_honours_trust(tmp_path, capsys):
     args_file.write_text('{"account_id": "NW-100482"}')
     command = ["check", "--source", f"ticket={ticket}", "--args", f"@{args_file}"]
     assert main(command + ["--trust", "NW-100482"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"tainted": [], "findings": []}
+    assert json.loads(capsys.readouterr().out) == {"copied": [], "findings": []}
+
+
+def test_demo_and_scenarios_say_copied(capsys):
+    main(["demo"])
+    main(["scenarios"])
+    out = capsys.readouterr().out
+    assert "copied account_id = '88214471' came from ticket 4471" in out
+    assert "copied=['account_id', 'amount_minor']" in out
+
+
+def test_scenarios_json_uses_copied_key(capsys):
+    main(["scenarios", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    keys = {"name", "title", "tool", "arguments", "known", "expected", "copied", "findings"}
+    assert all(set(item) == keys | {"passed", "note"} for item in data)

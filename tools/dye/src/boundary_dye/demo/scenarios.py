@@ -34,7 +34,7 @@ class Result:
 
     @property
     def passed(self) -> bool:
-        return self.report.tainted == frozenset(self.scenario.expected)
+        return self.report.copied == frozenset(self.scenario.expected)
 
     def to_dict(self) -> dict[str, Any]:
         body = self.report.to_dict()
@@ -45,7 +45,7 @@ class Result:
             "arguments": self.scenario.arguments,
             "known": list(self.scenario.known),
             "expected": sorted(self.scenario.expected),
-            "tainted": body["tainted"],
+            "copied": body["copied"],
             "findings": body["findings"],
             "passed": self.passed,
             "note": self.scenario.note,
@@ -87,7 +87,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         tool="lookup_order",
         arguments={"order_id": "ORD-5531"},
         expected=("order_id",),
-        note="The order number came from the ticket. The Latch policy for a read only tool can leave tainted_arguments at allow.",
+        note="The order number came from the ticket. The Latch policy for a read only tool can leave copied_arguments at allow.",
     ),
     Scenario(
         name="spelled_out_address",
