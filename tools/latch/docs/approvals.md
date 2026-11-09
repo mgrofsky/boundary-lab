@@ -8,6 +8,8 @@ An approval covers one exact request. Latch records a fingerprint, called a requ
 
 Latch checks that the request still matches before approving or running it. If you load a changed policy or change a tool's version, old pending actions return `OPERATION_CONFLICT`. Check what happened to the original action before creating a replacement.
 
+Upgrading from 0.2.0 to 0.3.0 changes the policy fingerprint, even for a policy file you did not edit, because 0.3.0 adds policy keys. Pending actions from 0.2.0 then return `OPERATION_CONFLICT`. Finish them before upgrading, or prepare them again under a new operation ID.
+
 The original 0.1.0 release used an older request hash. When upgrading from that release to code with the new hash, old pending actions are rejected. Keep the database and use `operation_status` to look up earlier work. Do not delete the records that prevent repeat calls to make an old action run again.
 
 The `changed_after_approval` scenario shows what happens when arguments change. Sam asks for a $60.00 refund and Jordan approves it. Then Sam asks for $70.00 under the same operation ID. Latch returns `OPERATION_CONFLICT`, and the original $60.00 request still runs once.

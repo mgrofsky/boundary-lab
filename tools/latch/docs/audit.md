@@ -1,6 +1,6 @@
 # The audit
 
-Latch writes one audit row for every decision from `prepare`, `approve`, `deny`, `cancel`, and `execute`. The rows live in the `audit` table of the SQLite database. They never hold the tool's arguments, its return value, or the handler's error text.
+Latch writes one audit row for every decision from `prepare`, `approve`, `deny`, `cancel`, and `execute`. The rows live in the `audit` table of the SQLite database. They never hold the tool's raw arguments, its return value, or the handler's error text. The summary from `describe` is built from the arguments, so it holds whatever your `describe` function puts in it.
 
 ## Read it from the command line
 
@@ -46,8 +46,8 @@ The dict from `on_event` and each line of `--json` hold the same fields.
 | duration_ms | integer or null | For an `execute` that ran the handler: how long it took |
 | at | number | When the row was written, in seconds since 1970 (UTC) |
 | reference | string or null | The approval reference, on `approve`, `deny`, and `execute` rows |
-| summary | string or null | The one line summary from `describe`, on `prepare` rows |
-| copied | list of strings or null | The copied argument paths, on `prepare` rows |
+| summary | string or null | The one line summary from `describe`, on `prepare` rows that saved an operation |
+| copied | list of strings or null | The copied argument paths, on `prepare` rows that saved an operation |
 
 The summary comes from your tool's `describe` function. Leave secrets and message text out of it, because it is saved here.
 

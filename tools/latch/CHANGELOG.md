@@ -12,6 +12,7 @@ Each change below lists the one line fix.
 - Preparing a denied operation again used to return a `PreparedAction` that could never run. It now returns a `Decision` with the new code `OPERATION_CLOSED`. Fix: give the new request a new operation ID.
 - `OperationStatus` has new required fields, so code that builds one by hand must set them. Fix: add `needs_approval`, `user_id` and `run_id` where you build it.
 
+- The policy fingerprint now includes the new policy keys, so it changes for every policy file, even one you did not edit. An operation prepared or approved under 0.2.0 that has not run returns `OPERATION_CONFLICT` on 0.3.0. Fix: finish pending work before upgrading, or prepare it again under a new operation ID.
 - `max_actions_per_run` now counts the operations that run, checked at `execute`, instead of the requests made at `prepare`. Fix: set `max_proposals_per_run` to your old value to keep a limit at `prepare`.
 
 ### Added
