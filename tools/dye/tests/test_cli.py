@@ -1,4 +1,7 @@
+import io
 import json
+
+import pytest
 
 from boundary_dye.cli import main
 from boundary_dye.demo.scenarios import SCENARIOS
@@ -53,3 +56,43 @@ def test_scenarios_json_uses_copied_key(capsys):
     data = json.loads(capsys.readouterr().out)
     keys = {"name", "title", "tool", "arguments", "known", "expected", "copied", "findings"}
     assert all(set(item) == keys | {"passed", "note"} for item in data)
+
+
+def test_check_reads_a_source_from_stdin(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO("stop instance i-0abc1234 for account 111122223333"))
+    args = '{"role": "arn:aws:iam::111122223333:role/admin"}'
+    assert main(["check", "--source", "ticket=-", "--args", args]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["copied"] == ["role"]
+    assert data["findings"][0]["matcher"] == "token"
+    assert data["findings"][0]["value"] == "111122223333"
+
+
+def test_check_reads_stdin_only_once(monkeypatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO("x"))
+    with pytest.raises(SystemExit):
+        main(["check", "--source", "a=-", "--source", "b=-", "--args", "{}"])
+
+
+def test_check_marks_a_json_source(tmp_path, capsys):
+    ticket = tmp_path / "ticket.json"
+    ticket.write_text(json.dumps({"subject": "refund", "body": "refund account 88214471"}))
+    code = main(["check", "--source-json", f"ticket 4471={ticket}", "--args", '{"a": "88214471"}'])
+    assert code == 1
+    finding = json.loads(capsys.readouterr().out)["findings"][0]
+    assert finding["source"] == "ticket 4471"
+    assert finding["source_path"] == "body"
+
+
+def test_check_needs_a_source():
+    with pytest.raises(SystemExit):
+        main(["check", "--args", "{}"])
+
+
+def test_check_ignore_is_repeatable(tmp_path, capsys):
+    ticket = tmp_path / "ticket.txt"
+    ticket.write_text("servers in us-east-2 broke on 2026-11-07 for ORD-5531")
+    args = '{"region": "us-east-2", "since": "2026-11-07", "order": "ORD-5531"}'
+    command = ["check", "--source", f"ticket={ticket}", "--args", args]
+    assert main(command + ["--ignore", "[a-z]{2}-[a-z]+-\\d", "--ignore", "\\d{4}-\\d{2}-\\d{2}"]) == 1
+    assert json.loads(capsys.readouterr().out)["copied"] == ["order"]

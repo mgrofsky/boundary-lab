@@ -21,7 +21,13 @@ Five scenarios run against Northwind, a made up utility. They cover a ticket tha
 
     boundary-dye check --source ticket=ticket.txt --trust NW-100482 --args '{"account_id": "88214471", "amount_minor": 42000}'
 
-The report lists each copied argument, the value, the source label, and the matcher that found it. A copied argument is one whose value appears in text the model read. The command exits 1 when anything was copied and 0 when nothing was. Repeat `--source` for more files and `--trust` for more values.
+Pass `-` as the path to read the text from stdin. Here the account id inside the role ARN is reported with the matcher `token`.
+
+    echo "please use account 111122223333" | boundary-dye check --source ticket=- --args '{"role": "arn:aws:iam::111122223333:role/admin"}'
+
+`--source-json ticket=ticket.json` marks a JSON file value by value, so each finding names the field it came from. `--ignore PATTERN` skips values that match a regular expression, such as a region name.
+
+The report lists each copied argument, the value, the source label, and the matcher that found it. A copied argument is one whose value appears in text the model read. The command exits 1 when anything was copied and 0 when nothing was. Repeat `--source`, `--source-json`, `--trust` and `--ignore` as needed.
 
 ## Use it in your app
 

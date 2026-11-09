@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
     scenarios.add_argument("--json", action="store_true", help="Print JSON instead of lines")
     check = sub.add_parser("check", help="Check arguments against one or more text files")
     check.add_argument(
-        "--source", action="append", required=True, metavar="LABEL=PATH",
-        help="A file of untrusted text; repeat for more files",
+        "--source", action="append", default=[], metavar="LABEL=PATH",
+        help="A file of untrusted text, or - for stdin; repeat for more files",
+    )
+    check.add_argument(
+        "--source-json", action="append", default=[], metavar="LABEL=PATH",
+        help="A JSON file of untrusted data, marked value by value; repeat for more files",
     )
     check.add_argument(
         "--args", required=True, help="The proposed arguments as JSON, or @path to a JSON file"
@@ -30,6 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--trust", action="append", default=[], metavar="VALUE",
         help="A value the app supplied itself; repeat for more",
+    )
+    check.add_argument(
+        "--ignore", action="append", default=[], metavar="PATTERN",
+        help="A regular expression for values that are never evidence; repeat for more",
     )
     return parser
 
@@ -42,13 +51,30 @@ def _load_args(spec: str) -> dict[str, Any]:
     return data
 
 
+def _split_source(option: str, item: str) -> tuple[str, str]:
+    label, sep, path = item.partition("=")
+    if not sep or not label or not path:
+        raise SystemExit(f"{option} needs LABEL=PATH, got {item!r}")
+    return label, path
+
+
 def cmd_check(ns: argparse.Namespace) -> int:
-    tracker = Tracker()
+    if not ns.source and not ns.source_json:
+        raise SystemExit("check needs at least one --source or --source-json")
+    tracker = Tracker(ignore=ns.ignore)
+    read_stdin = False
     for item in ns.source:
-        label, sep, path = item.partition("=")
-        if not sep or not label or not path:
-            raise SystemExit(f"--source needs LABEL=PATH, got {item!r}")
-        tracker.mark(label, Path(path).read_text())
+        label, path = _split_source("--source", item)
+        if path == "-":
+            if read_stdin:
+                raise SystemExit("only one --source can read stdin")
+            read_stdin = True
+            tracker.mark(label, sys.stdin.read())
+        else:
+            tracker.mark(label, Path(path).read_text())
+    for item in ns.source_json:
+        label, path = _split_source("--source-json", item)
+        tracker.mark_data(label, json.loads(Path(path).read_text()))
     tracker.trust(*ns.trust)
     report = tracker.check(_load_args(ns.args))
     print(json.dumps(report.to_dict(), indent=2))

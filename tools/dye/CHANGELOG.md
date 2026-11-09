@@ -16,3 +16,4 @@
 - `Tracker.to_dict()` and `Tracker.from_dict(data)` save and restore a tracker, with a `"schema": 1` key.
 - Zero width spaces, joiners and other Unicode format characters are removed before matching.
 - Runs of two or more digit words, such as "four two zero", are read as digits by the digits matcher.
+- `boundary-dye check` reads a source from stdin with `--source label=-`, marks a JSON file with `--source-json label=file.json`, and takes `--ignore PATTERN` as often as needed.
