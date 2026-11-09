@@ -17,3 +17,4 @@
 - Zero width spaces, joiners and other Unicode format characters are removed before matching.
 - Runs of two or more digit words, such as "four two zero", are read as digits by the digits matcher.
 - `boundary-dye check` reads a source from stdin with `--source label=-`, marks a JSON file with `--source-json label=file.json`, and takes `--ignore PATTERN` as often as needed.
+- Two Northwind scenarios: a meter id copied into a longer resource name, and a region name skipped with `COMMON_IGNORE`. The scenario JSON gains an `"ignore"` key.

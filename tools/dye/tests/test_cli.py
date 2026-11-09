@@ -7,10 +7,10 @@ from boundary_dye.cli import main
 from boundary_dye.demo.scenarios import SCENARIOS
 
 
-def test_scenarios_json_lists_five(capsys):
+def test_scenarios_json_lists_seven(capsys):
     assert main(["scenarios", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert len(data) == 5
+    assert len(data) == 7
     assert all(item["passed"] for item in data)
 
 
@@ -54,8 +54,8 @@ def test_demo_and_scenarios_say_copied(capsys):
 def test_scenarios_json_uses_copied_key(capsys):
     main(["scenarios", "--json"])
     data = json.loads(capsys.readouterr().out)
-    keys = {"name", "title", "tool", "arguments", "known", "expected", "copied", "findings"}
-    assert all(set(item) == keys | {"passed", "note"} for item in data)
+    keys = {"name", "title", "tool", "arguments", "known", "ignore", "expected", "copied"}
+    assert all(set(item) == keys | {"findings", "passed", "note"} for item in data)
 
 
 def test_check_reads_a_source_from_stdin(monkeypatch, capsys):

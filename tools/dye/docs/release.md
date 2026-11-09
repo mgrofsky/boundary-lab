@@ -31,8 +31,8 @@ To check whether PyPI has a public project page, use `curl -s -o /dev/null -w "%
 1. Change `version` in `tools/dye/pyproject.toml` and `__version__` in `src/boundary_dye/__init__.py`. Merge the change through a pull request.
 2. Tag the merge commit and push the tag.
 
-        git tag dye-v0.1.0
-        git push origin dye-v0.1.0
+        git tag dye-v0.2.0
+        git push origin dye-v0.2.0
 
 3. Approve the `testpypi` job, check the uploaded package on TestPyPI, then approve the `pypi` job. Confirm the uploaded version on PyPI after that job finishes.
 
@@ -45,6 +45,6 @@ To check whether PyPI has a public project page, use `curl -s -o /dev/null -w "%
     /tmp/dye_clean/bin/pip install dist/*.whl
     /tmp/dye_clean/bin/boundary-dye scenarios --json
 
-The clean environment should install Dye with no other packages. The `scenarios` command should print five results, all true.
+The clean environment should install Dye with no other packages. The `scenarios` command should print seven results, all true.
 
 A published version cannot be replaced. If one is wrong, publish the next version number.

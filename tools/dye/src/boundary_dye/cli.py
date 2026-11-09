@@ -100,6 +100,8 @@ def cmd_demo(ns: argparse.Namespace) -> int:
             print(f"   {label}: {text}")
         if scenario.known:
             print(f"   app knows {', '.join(scenario.known)}")
+        if scenario.ignore:
+            print(f"   app ignores values matching {', '.join(scenario.ignore)}")
         print(f"   model proposes {scenario.tool}({json.dumps(scenario.arguments)})")
         if result.report.findings:
             for finding in result.report.findings:

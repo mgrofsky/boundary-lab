@@ -13,7 +13,7 @@ Dye needs no model, no network, and no packages beyond Python 3.11.
     pip install boundary-dye
     boundary-dye demo
 
-Five scenarios run against Northwind, a made up utility. They cover a ticket that tells the agent to refund an account it names, a signed in account the app trusts, a quoted order number, an email address spelled out in words, and a one digit plan tier.
+Seven scenarios run against Northwind, a made up utility. They cover a ticket that tells the agent to refund an account it names, a signed in account the app trusts, a quoted order number, an email address spelled out in words, and a one digit plan tier. Two more cover a meter id copied into a longer resource name and a region name that is not evidence.
 
 `boundary-dye scenarios --json` prints the same results as JSON.
 
