@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -14,6 +14,12 @@ _SPELLED_DOT = re.compile(r"\s*[(\[]?\bdot\b[)\]]?\s*")
 _SPELLED_AT = re.compile(r"\s*[(\[]?\bat\b[)\]]?\s*")
 _SEPARATORS = re.compile(r"[\s,=:;/?&()\[\]{}<>\"'`]+")
 MIN_TOKEN = 4
+
+COMMON_IGNORE: tuple[str, ...] = (
+    r"[a-z]{2}-[a-z]+-\d",
+    r"\d{4}-\d{2}-\d{2}",
+)
+"""Opt in patterns for values that are never evidence: cloud regions such as us-east-2 and ISO dates."""
 
 
 def normalize(text: str) -> str:
@@ -112,10 +118,13 @@ def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
 class Tracker:
     """Holds the untrusted text for one run and checks proposed arguments against it."""
 
-    def __init__(self) -> None:
+    def __init__(self, ignore: Iterable[str] = ()) -> None:
         self._sources: list[Source] = []
         self._index: list[tuple[Source, str, str, frozenset[str]]] = []
         self._trusted: set[str] = set()
+        self._ignore: list[str] = []
+        self._ignore_compiled: list[re.Pattern[str]] = []
+        self.ignore(*ignore)
 
     @property
     def sources(self) -> tuple[Source, ...]:
@@ -135,6 +144,22 @@ class Tracker:
         """Record values the app supplied itself, such as the signed in account. They are never reported."""
         self._trusted.update(normalize(str(value)) for value in values)
 
+    def ignore(self, *patterns: str) -> None:
+        """Skip values and tokens that match one of these regular expressions in full.
+
+        Each pattern is matched against the normalised form, which is lowercase with single spaces.
+        """
+        for pattern in patterns:
+            compiled = re.compile(pattern)
+            self._ignore.append(pattern)
+            self._ignore_compiled.append(compiled)
+
+    def _skipped(self, text: str) -> bool:
+        """True for an empty, trusted or ignored normalised value."""
+        if not text or text in self._trusted:
+            return True
+        return any(pattern.fullmatch(text) for pattern in self._ignore_compiled)
+
     def check(self, arguments: dict[str, Any]) -> Report:
         """Report every argument value that appears in the marked text.
 
@@ -147,7 +172,7 @@ class Tracker:
                 continue
             raw = str(value)
             text = normalize(raw)
-            if not text or text in self._trusted:
+            if self._skipped(text):
                 continue
             found = self._match(text)
             if found is not None:
@@ -155,7 +180,7 @@ class Tracker:
                 continue
             for token in tokens(raw):
                 plain = normalize(token)
-                if not plain or plain in self._trusted:
+                if self._skipped(plain):
                     continue
                 found = self._match(plain)
                 if found is not None:

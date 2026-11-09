@@ -136,3 +136,33 @@ def test_one_finding_per_path_first_token_wins():
     tracker.mark("ticket", "move a1b2 and c3d4")
     report = tracker.check({"spec": "a1b2,c3d4"})
     assert report.findings == (Finding("spec", "a1b2", "ticket", "token"),)
+
+
+def test_common_ignore_skips_regions_and_dates():
+    from boundary_dye import COMMON_IGNORE
+
+    tracker = Tracker(ignore=COMMON_IGNORE)
+    tracker.mark("ticket", "our servers in us-east-2 broke on 2026-11-07")
+    args = {"region": "us-east-2", "since": "2026-11-07", "arn": "arn:aws:s3:us-east-2:4471:b"}
+    assert tracker.check(args).clean is True
+    plain = Tracker()
+    plain.mark("ticket", "our servers in us-east-2 broke on 2026-11-07")
+    assert plain.check(args).copied == frozenset({"region", "since", "arn"})
+
+
+def test_common_ignore_shapes():
+    from boundary_dye import COMMON_IGNORE
+
+    assert len(COMMON_IGNORE) == 2
+    tracker = Tracker(ignore=COMMON_IGNORE)
+    tracker.mark("ticket", "eu-west-1 ap-southeast-12 2026-1-07 us-east")
+    report = tracker.check({"a": "eu-west-1", "b": "ap-southeast-12", "c": "2026-1-07"})
+    assert report.copied == frozenset({"b", "c"})
+
+
+def test_ignore_method_matches_in_full_against_normalised_value():
+    tracker = Tracker()
+    tracker.mark("ticket", "order ORD-5531 and ORD-5531X")
+    tracker.ignore(r"ord-\d+")
+    assert tracker.check({"order_id": "ORD-5531"}).clean is True
+    assert tracker.check({"order_id": "ORD-5531X"}).copied == frozenset({"order_id"})

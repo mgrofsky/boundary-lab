@@ -6,13 +6,15 @@ A `Tracker` holds the text you marked for one conversation. Each `mark(label, te
 
 `trust(*values)` records values the app supplied itself, such as the signed in account. A trusted value is never reported.
 
-`check(arguments)` walks the arguments, including nested dicts and lists, and gives each scalar a path such as `account_id`, `recipient.email` or `items[0].sku`. It skips `None`, booleans, empty strings and trusted values. Each remaining value is lowercased and compared with every source in the order the sources were marked. The first source that matches wins and the value is reported once.
+`Tracker(ignore=...)` and `ignore(*patterns)` record regular expressions. A value or token whose normalised form matches one of them in full is skipped and never reported. `COMMON_IGNORE` is an opt in tuple with patterns for cloud regions and ISO dates.
+
+`check(arguments)` walks the arguments, including nested dicts and lists, and gives each scalar a path such as `account_id`, `recipient.email` or `items[0].sku`. It skips `None`, booleans, empty strings, trusted values and ignored values. Each remaining value is lowercased and compared with every source in the order the sources were marked. The first source that matches wins and the value is reported once.
 
 - Text match: the value appears in the plain or the spelled out text as a whole term, with no letter or digit touching either end.
 
 - Digits match: the value is only digits and joiners, and its digits equal one whole number from the text.
 
-- Token match: tried only when the whole value does not match. The value is split on runs of whitespace and these characters: `, = : ; / ? & ( ) [ ] { } < >`, both quote marks and the backtick. Dashes and dots do not split. Each piece that has at least four characters and holds a digit or an @ is tested with the text and digits matches. Pieces equal to the whole value and trusted pieces are skipped. The first piece that matches is reported with the matcher `token`, and the finding's value is that piece.
+- Token match: tried only when the whole value does not match. The value is split on runs of whitespace and these characters: `, = : ; / ? & ( ) [ ] { } < >`, both quote marks and the backtick. Dashes and dots do not split. Each piece that has at least four characters and holds a digit or an @ is tested with the text and digits matches. Pieces equal to the whole value, trusted pieces and ignored pieces are skipped. The first piece that matches is reported with the matcher `token`, and the finding's value is that piece.
 
 Each path gets at most one finding.
 

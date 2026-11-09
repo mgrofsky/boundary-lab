@@ -49,6 +49,19 @@ The digits match applies to values made only of digits, with spaces, dots, comma
 
 The token match looks inside composite values. When the whole value does not match, Dye splits it on spaces and punctuation such as `: / , = ? &` and tests each piece. A piece is tested when it has at least four characters and holds a digit or an @. Dashes and dots do not split, so `i-0abc1234` and `10.0.0.0` stay whole. An instance id copied into an ARN, a network copied into a CIDR, or an email inside a URL is reported with the matcher `token` and the piece as the value.
 
+## Words that are never evidence
+
+Some values show up in a ticket and in a tool call because they are common, not because the model copied them. A ticket that says "our servers in us-east-2 are down" and a call that names `us-east-2` share a value, but the region was going to be in the call anyway. There are only a few dozen regions, and the app or the model would pick the same one without reading the ticket. Reporting it adds noise and hides the findings that matter. Dates are the same.
+
+Pass regular expressions to skip such values. Each pattern must match the whole normalised value or token, which is lowercase.
+
+    from boundary_dye import COMMON_IGNORE, Tracker
+
+    tracker = Tracker(ignore=COMMON_IGNORE)
+    tracker.ignore(r"ord-\d+")
+
+`COMMON_IGNORE` holds two patterns: cloud regions shaped like `us-east-2` and ISO dates shaped like `2026-11-07`. It is opt in, so a plain `Tracker()` still reports them.
+
 Values the app trusted, `None`, booleans and empty strings are skipped. See [how it works](https://github.com/mgrofsky/boundary-lab/blob/main/tools/dye/docs/how-it-works.md).
 
 ## Use it with Latch
