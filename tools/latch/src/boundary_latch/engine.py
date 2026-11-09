@@ -5,6 +5,7 @@ import concurrent.futures
 import hashlib
 import inspect
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from .errors import ConfigError, StorageError, ToolFailed
+from .events import to_event
 from .models import (
     CallInfo,
     Decision,
@@ -25,6 +27,8 @@ from .models import (
 from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
 from .store import CLOSED, OperationExists, SQLiteStore, run_deadline
+
+logger = logging.getLogger("boundary_latch")
 
 SUMMARY_LIMIT = 300
 
@@ -50,9 +54,15 @@ class Latch:
     """Checks tool calls against a policy before they run."""
 
     def __init__(
-        self, policy: Policy, store: SQLiteStore, clock: Callable[[], float] = time.time
+        self,
+        policy: Policy,
+        store: SQLiteStore,
+        clock: Callable[[], float] = time.time,
+        on_event: Callable[[dict[str, Any]], Any] | None = None,
     ):
+        """on_event, if set, is called with each audit row as a dict after it is written."""
         self.policy, self.store, self.clock = policy, store, clock
+        self.on_event = on_event
         self._tools: dict[str, ToolSpec] = {}
         self._pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="latch"
@@ -60,9 +70,13 @@ class Latch:
 
     @classmethod
     def from_toml(
-        cls, path: str | Path, store: SQLiteStore, clock: Callable[[], float] = time.time
+        cls,
+        path: str | Path,
+        store: SQLiteStore,
+        clock: Callable[[], float] = time.time,
+        on_event: Callable[[dict[str, Any]], Any] | None = None,
     ) -> Latch:
-        return cls(load_policy(path), store, clock)
+        return cls(load_policy(path), store, clock, on_event)
 
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._tools:
@@ -200,7 +214,7 @@ class Latch:
         now = self.clock()
 
         def answer(code: Code, explanation: str | None = None) -> Decision:
-            self.store.audit(
+            self._write_audit(
                 "cancel",
                 str(code),
                 prepared.org_id,
@@ -268,7 +282,7 @@ class Latch:
         event = "approve" if approve else "deny"
 
         def answer(code: Code, explanation: str | None = None) -> Decision:
-            self.store.audit(
+            self._write_audit(
                 event,
                 str(code),
                 prepared.org_id,
@@ -523,7 +537,7 @@ class Latch:
         try:
             reference = self._reference(prepared.org_id, prepared.operation_id)
             self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
-            self.store.audit(
+            self._write_audit(
                 "execute",
                 str(code),
                 prepared.org_id,
@@ -675,6 +689,16 @@ class Latch:
             allowed=False, code=code, explanation=explain(code), operation_id=operation_id
         )
 
+    def _write_audit(self, *args: Any, **kwargs: Any) -> None:
+        row = self.store.audit(*args, **kwargs)
+        if self.on_event is None:
+            return
+        # A listener error is logged and never changes the decision.
+        try:
+            self.on_event(to_event(row))
+        except Exception:
+            logger.warning("on_event failed for audit row %s", row.get("id"), exc_info=True)
+
     def _audit(
         self,
         event: str,
@@ -688,7 +712,7 @@ class Latch:
         copied: str | None = None,
         reference: str | None = None,
     ) -> None:
-        self.store.audit(
+        self._write_audit(
             event,
             str(code),
             ctx.org_id,

@@ -490,18 +490,20 @@ class SQLiteStore:
         summary: str | None = None,
         copied: str | None = None,
         reference: str | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
+        """Write one audit row and return it as a dict."""
         with self._lock:
             try:
-                self._conn.execute(
+                row = self._conn.execute(
                     "INSERT INTO audit (at, org_id, run_id, operation_id, user_id, tool, event,"
                     " code, outcome, duration_ms, summary, copied, reference)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
                     (now, org_id, run_id, operation_id, user_id, tool, event, code, outcome,
                      duration_ms, summary, copied, reference),
-                )
+                ).fetchone()
             except sqlite3.Error as exc:
                 raise StorageError(f"audit failed: {exc}") from exc
+            return dict(row)
 
     def audit_rows(self, org_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -512,3 +514,33 @@ class SQLiteStore:
             except sqlite3.Error as exc:
                 raise StorageError(f"audit_rows failed: {exc}") from exc
             return [dict(row) for row in rows]
+
+
+def read_audit(
+    path: str | Path, org_id: str | None = None, after_id: int = 0, last: int | None = None
+) -> list[dict[str, Any]]:
+    """Read audit rows from a database file without changing it, oldest first.
+
+    after_id skips rows up to that id. last keeps only the newest rows.
+    """
+    try:
+        conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise StorageError(f"could not open {path}: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    query = "SELECT * FROM audit WHERE id > ?"
+    params: list[Any] = [after_id]
+    if org_id is not None:
+        query += " AND org_id = ?"
+        params.append(org_id)
+    query += " ORDER BY id DESC" if last is not None else " ORDER BY id"
+    if last is not None:
+        query += " LIMIT ?"
+        params.append(last)
+    try:
+        rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+    except sqlite3.Error as exc:
+        raise StorageError(f"could not read the audit table: {exc}") from exc
+    finally:
+        conn.close()
+    return rows[::-1] if last is not None else rows

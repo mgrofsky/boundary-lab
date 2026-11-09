@@ -1,5 +1,6 @@
 import sqlite3
 
+from boundary_latch import cli
 from boundary_latch.store import SQLiteStore
 
 # The tables as Latch 0.2.0 created them.
@@ -61,3 +62,16 @@ def test_a_0_2_database_gets_the_new_columns(tmp_path):
     again = SQLiteStore(path)
     assert again.get_operation("o", "op1")["copied"] == "[]"
     again.close()
+
+
+def test_the_audit_command_reads_a_0_2_database_without_changing_it(tmp_path, capsys):
+    path = tmp_path / "old.sqlite"
+    make_old_database(path)
+    assert cli.main(["audit", str(path), "--json"]) == 0
+    out = capsys.readouterr().out
+    assert '"code": "ALLOWED"' in out
+    assert '"summary": null' in out
+    conn = sqlite3.connect(path)
+    names = {row[1] for row in conn.execute("PRAGMA table_info(audit)")}
+    conn.close()
+    assert "summary" not in names
