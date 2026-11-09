@@ -37,6 +37,11 @@ def create_ticket(args: dict[str, Any], info: CallInfo) -> dict[str, Any]:
     return ticket
 
 
+def describe_ticket(args: TicketArgs) -> str:
+    # The approver and the audit see this line, so it leaves out the ticket body.
+    return f"Open a ticket titled {args.title!r}"
+
+
 def build(store: SQLiteStore | None = None) -> Latch:
     latch = Latch(load_policy(POLICY), store or SQLiteStore("app.sqlite"))
     latch.register(
@@ -46,6 +51,7 @@ def build(store: SQLiteStore | None = None) -> Latch:
             args_model=TicketArgs,
             handler=create_ticket,
             description="Open a support ticket.",
+            describe=describe_ticket,
         )
     )
     return latch
@@ -66,6 +72,7 @@ def main() -> None:
         print(f"{prepared.code}: {prepared.explanation}")
         return
     result = latch.execute(prepared, ctx)
+    print(f"{prepared.summary}")
     print(f"{result.code}: {result.value}")
 
 

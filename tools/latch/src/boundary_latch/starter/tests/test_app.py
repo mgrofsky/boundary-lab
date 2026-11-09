@@ -14,6 +14,7 @@ def test_create_ticket_is_allowed():
     ctx = user({"tickets:create"})
     prepared = latch.prepare(ctx, "create_ticket", {"title": "Help"}, operation_id="op1")
     assert prepared.code == Code.ALLOWED
+    assert prepared.summary == "Open a ticket titled 'Help'"
     result = latch.execute(prepared, ctx)
     assert result.code == Code.EXECUTED
     assert result.value["title"] == "Help"

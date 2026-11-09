@@ -11,7 +11,7 @@ with your own.
     .venv/bin/python app.py
     .venv/bin/pytest -q
 
-`app.py` prints `EXECUTED` and the new ticket. The tests print `2 passed`.
+`app.py` prints the request's one line summary, then `EXECUTED` and the new ticket. The tests print `2 passed`.
 
 ## What is in here
 
@@ -54,6 +54,24 @@ For a tool that should wait for a person, set `approve_permission` and an
 approval mode of `always` or `over_amount`. The approver must be another user
 in the same organization who has that permission. An approval covers one exact
 request, expires, and works once.
+
+## Copied values
+
+If your app knows which arguments the model copied from text it read, such as
+an email or a web page, pass their paths to `prepare`:
+
+    latch.prepare(ctx, "create_ticket", arguments, operation_id=op, copied={"title"})
+
+Set `copied_arguments` in `policy.toml` to `deny` to block such calls. Set it
+to `approve`, along with an `approve_permission`, to make them wait for a person. Dye, another Boundary Lab project,
+finds copied values.
+
+## Summaries and the audit
+
+`describe_ticket` turns the arguments into one line that the approver reads.
+Latch saves it with the request and in the audit. Read the audit with:
+
+    boundary-latch audit app.sqlite
 
 ## Operation ids
 

@@ -30,8 +30,9 @@ A SQLite error becomes a `StorageError`. A failure before the tool starts raises
 1. Write a pydantic model that defines the accepted arguments. It must set `extra="forbid"` to reject extra fields, or `register` raises `ConfigError`.
 2. Write the handler, the function that does the work. It takes `(args, info)`. Raise `ToolFailed` only when you know nothing happened.
 3. Add an `access_hook` if the call uses a record that belongs to one user. This function checks access, takes `(ctx, args)`, and returns `True` or `False`.
-4. Register a `ToolSpec`.
-5. Add a `[tools.<name>]` table to the policy with at least `require_permission`.
+4. Add a `describe` function if the call may wait for approval. It takes the checked arguments and returns one line for the approver. Leave out secrets and message text, because the line is saved in the audit.
+5. Register a `ToolSpec`.
+6. Add a `[tools.<name>]` table to the policy with at least `require_permission`.
 
 Here is a refund tool.
 
@@ -46,6 +47,7 @@ Here is a refund tool.
     latch.register(ToolSpec(
         name="issue_refund", version="1", args_model=RefundArgs, handler=refund,
         access_hook=lambda ctx, args: backend.can_see(ctx.user_id, args["account_id"]),
+        describe=lambda args: f"Refund {args.amount_minor} cents to {args.account_id}",
     ))
 
 Pass `info.operation_id` to the system your handler calls, and have that system refuse a repeated id too. This adds a duplicate check where the change actually happens. See [limits](limits.md).
@@ -54,15 +56,23 @@ Pass `info.operation_id` to the system your handler calls, and have that system 
 
 ## Prepare and execute
 
-    prepared = latch.prepare(ctx, "issue_refund", args, operation_id=action_id)
+    prepared = latch.prepare(ctx, "issue_refund", args, operation_id=action_id, copied=report)
+
+`copied` is optional. Pass the argument paths whose values the model copied from text it read, such as `{"account_id"}`, or a Dye report, which has a `.copied` attribute. The tool's `copied_arguments` policy decides what happens. See [policy](policy.md).
 
 Give each requested action its own operation ID, and keep that id with the action. Repeating the same request with the same id in the same run does not run the handler again. Changing the request or moving it to another run gives `OPERATION_CONFLICT`.
 
-If `prepare` returns a `Decision`, the call was blocked and `decision.code` says why. Otherwise, it returns a `PreparedAction`. If `needs_approval` is true, wait for an authorized person to approve it before calling `execute`.
+If `prepare` returns a `Decision`, the call was blocked and `decision.code` says why. Otherwise, it returns a `PreparedAction`. If `needs_approval` is true, wait for an authorized person to approve it before calling `execute`. Show approvers `latch.pending(org_id)`, and record what they decided with `approve` or `deny` and a `reference`. See [approvals](approvals.md).
 
     result = latch.execute(prepared, ctx)
 
 For an async handler, use `await latch.aexecute(prepared, ctx)`. `execute` rejects async handlers.
+
+Check `result.recorded`. When it is `False`, Latch could not save the outcome after the handler ran, and `result.error` says why. Keep the operation ID and check the real system before deciding anything.
+
+## Watch the decisions
+
+Pass `on_event` to `Latch` to send every audit row to your logs as it is written, or read the table with `boundary-latch audit`. See [the audit](audit.md).
 
 ## What you should see
 
