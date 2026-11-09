@@ -1,8 +1,8 @@
 # Release
 
-Dye's package name on PyPI is `boundary-dye`. Nothing has been published yet.
+Dye's package name on PyPI is `boundary-dye`. The first public release, 0.1.0, was uploaded by hand with twine and an API token, to TestPyPI first and then PyPI.
 
-The repository has a release workflow in `.github/workflows/release-dye.yml`. It uses Trusted Publishing, which lets GitHub publish without a stored PyPI token. The workflow starts when a tag beginning with `dye-v` is pushed.
+The repository also has a release workflow in `.github/workflows/release-dye.yml`. It is configured to use Trusted Publishing, which lets GitHub publish without a stored PyPI token. The workflow starts when a tag beginning with `dye-v` is pushed. This page describes that configured path; the uploads so far did not use it.
 
 ## What the workflow does
 
