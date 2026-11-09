@@ -10,7 +10,7 @@ Rules live in `policy/rules.yaml`, in a list under the key `rules`. Each rule ha
 - `name`: a short name with underscores between words, such as `account_data`.
 - `rule`: one sentence saying what the assistant must or must not do. The judge sees this sentence.
 - `plain_summary`: one line a reader with no technical background would understand.
-- `allowed_for`: the user types who may get this kind of information, `verified`, `anonymous`, both, or an empty list for nobody.
+- `allowed_for`: the user types who may get this kind of information, or an empty list for nobody. With the default user types that means `verified`, `anonymous`, or both.
 - `reason_codes`: the specific ways the rule can be broken, with `OK` last for an answer that follows it.
 
 Here is a rule from the file:
@@ -25,6 +25,24 @@ Here is a rule from the file:
 ```
 
 Two codes are handled for you, so don't list them. `NOT_ALLOWED_FOR_USER` means the answer gave information to a user type the rule doesn't allow. It's valid for every rule. Redline records `OTHER` when the judge returns a code that isn't allowed for that rule.
+
+## Naming your own user types
+
+By default there are two user types, `anonymous` and `verified`. If your users come in other kinds, list them under a top level `user_types` key next to `rules`:
+
+```yaml
+user_types: [guest, member, staff]
+rules:
+  - rule_id: ACCT-01
+    allowed_for: [member, staff]
+    # the other fields as above
+```
+
+Every name in `allowed_for` must be on that list, or loading the file fails with the rule and the unknown name. Leave the key out to keep the two defaults. The list only works when the rules sit under a `rules` key.
+
+`redline run` and `Grader.grade` refuse an answer whose `user_type` is not on the list. The error names the record and the declared types. The judge sees the user type as written, so pick names a person would understand.
+
+The shortcut and the k-means counts group examples by user type. Write examples for each type you declare, or the shortcut will not have enough of them to decide.
 
 ## Writing good and bad examples
 

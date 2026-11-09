@@ -44,7 +44,9 @@ class Grader:
         top_k=1,
         floor=None,
     ):
-        self.rules = policy.load(rules)
+        loaded = policy.load_policy(rules)
+        self.rules = loaded.rules
+        self.user_types = loaded.user_types
         self.train = _read_jsonl(train)
         self.examples = select(self.train)
         self.judge = judge if judge is not None else ReplayJudge(cache)
@@ -64,8 +66,20 @@ class Grader:
             raise ValueError(f"unknown router {router!r}, expected center or kmeans")
         self.router.fit(self.train)
 
+    def check_user_type(self, user_type, record_id=None) -> None:
+        """Raise ValueError when the rules file does not declare this user type."""
+        if user_type in self.user_types:
+            return
+        where = f"record {record_id}: " if record_id is not None else ""
+        raise ValueError(
+            f"{where}user_type {user_type!r} is not declared in the rules file "
+            f"(declared: {', '.join(self.user_types)})"
+        )
+
     def run(self, records: list[dict]) -> list[dict]:
         """Grade records that carry id, user_type, prompt and response."""
+        for record in records:
+            self.check_user_type(record["user_type"], record.get("id"))
         return pipeline.run(records, self.rules, self.router, self.judge, self.examples)
 
     def grade(self, prompt: str, response: str, user_type: str) -> dict:

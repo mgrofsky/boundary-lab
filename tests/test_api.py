@@ -109,3 +109,24 @@ def test_the_run_command_grades_through_the_grader(
     assert len(built) == 1
     direct = built[0].grade(record["prompt"], record["response"], record["user_type"])
     assert written == {"id": "h-1", **direct}
+
+
+def test_grade_rejects_an_undeclared_user_type(grader):
+    with pytest.raises(ValueError, match="user_type 'guest' is not declared in the rules file"):
+        grader.grade("what is my balance", "Your balance is $12.00.", "guest")
+
+
+def test_the_run_command_rejects_an_undeclared_user_type(
+    rules_data, write_rules, train_file, tmp_path
+):
+    record = {"id": "h-9", "user_type": "guest", "prompt": "hi", "response": "Hello."}
+    data = tmp_path / "holdout.jsonl"
+    data.write_text(json.dumps(record) + "\n")
+    args = ["run", "--data", str(data), "--judge", "replay", "--out", str(tmp_path / "out")]
+    args += ["--rules", str(write_rules(rules_data)), "--train", str(train_file)]
+    with pytest.raises(SystemExit) as stop:
+        cli.main(args)
+    message = str(stop.value)
+    assert "h-9" in message
+    assert "user_type 'guest' is not declared in the rules file" in message
+    assert "anonymous, verified" in message

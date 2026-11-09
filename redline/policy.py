@@ -5,7 +5,8 @@ from pathlib import Path
 
 import yaml
 
-USER_TYPES = {"anonymous", "verified"}
+# The user types a rules file gets when it doesn't declare its own.
+USER_TYPES = ("anonymous", "verified")
 FIELDS = ("rule_id", "name", "rule", "plain_summary", "allowed_for", "reason_codes")
 
 
@@ -21,14 +22,39 @@ class Rule:
     reason_codes: list[str]
 
 
-def load(path) -> dict[str, Rule]:
-    """Read a rules file and return the rules keyed by rule_id.
+@dataclass
+class Policy:
+    """A loaded rules file: the rules keyed by rule_id, and the user types it declares."""
+
+    rules: dict[str, Rule]
+    user_types: list[str]
+
+
+def _user_types(path, data) -> list[str]:
+    """Read the optional user_types list. Without one, use anonymous and verified."""
+    if not (isinstance(data, dict) and "user_types" in data):
+        return list(USER_TYPES)
+    declared = data["user_types"]
+    if not isinstance(declared, list) or not declared:
+        raise ValueError(f"{path}: user_types must be a list with at least one name")
+    if not all(isinstance(u, str) and u.strip() for u in declared):
+        raise ValueError(f"{path}: every entry in user_types must be a name")
+    if len(set(declared)) != len(declared):
+        raise ValueError(f"{path}: user_types lists a name more than once")
+    return list(declared)
+
+
+def load_policy(path) -> Policy:
+    """Read a rules file and return its rules and user types.
 
     The file holds a list of rules, either at the top level or under a "rules" key.
+    With a "rules" key, an optional "user_types" list names the user types.
+    Without it, the user types are anonymous and verified.
     A missing field, a repeated rule_id or an unknown user type raises ValueError.
     A file that is not a list of mappings raises TypeError.
     """
     data = yaml.safe_load(Path(path).read_text())
+    user_types = _user_types(path, data)
     if isinstance(data, dict) and "rules" in data:
         data = data["rules"]
     if not isinstance(data, list):
@@ -47,7 +73,7 @@ def load(path) -> dict[str, Rule]:
         if rule_id in rules:
             raise ValueError(f"{rule_id}: duplicate rule_id")
         allowed_for = list(item["allowed_for"] or [])
-        unknown = [u for u in allowed_for if u not in USER_TYPES]
+        unknown = [u for u in allowed_for if u not in user_types]
         if unknown:
             raise ValueError(f"{rule_id}: unknown user type in allowed_for: {', '.join(unknown)}")
         rules[rule_id] = Rule(
@@ -58,4 +84,9 @@ def load(path) -> dict[str, Rule]:
             allowed_for=allowed_for,
             reason_codes=list(item["reason_codes"] or []),
         )
-    return rules
+    return Policy(rules, user_types)
+
+
+def load(path) -> dict[str, Rule]:
+    """Read a rules file and return the rules keyed by rule_id. See load_policy."""
+    return load_policy(path).rules

@@ -85,6 +85,11 @@ def cmd_run(args) -> int:
         cache=args.cache,
     )
     router = grader.router
+    for record in records:
+        try:
+            grader.check_user_type(record["user_type"], record.get("id"))
+        except ValueError as exc:
+            raise SystemExit(f"redline: {exc}") from None
     (out_dir / "judge_examples.json").write_text(json.dumps(grader.examples, indent=2) + "\n")
 
     # Start timing after router setup and model loading, so this measures grading only.
