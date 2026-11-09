@@ -22,4 +22,5 @@ Each change below lists the one line fix.
 - `pending(org_id, run_id=None)` lists the operations waiting for approval.
 - `cancel(prepared, by)` stops an operation before it runs, with the code `CANCELLED`.
 - `max_proposals_per_run` limits how many requests a run can make at `prepare`.
+- `ExecutionResult` gains `error`, `recorded`, and `reference`. A storage error after the handler ran no longer raises; the result has `recorded` set to `False`.
 - `run_lifetime_seconds = 0` means a run has no time limit, and `run_idle_seconds` expires a run after a quiet period.

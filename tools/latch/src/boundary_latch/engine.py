@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from .errors import ConfigError, ToolFailed
+from .errors import ConfigError, StorageError, ToolFailed
 from .models import (
     CallInfo,
     Decision,
@@ -29,6 +29,7 @@ from .store import CLOSED, OperationExists, SQLiteStore, run_deadline
 SUMMARY_LIMIT = 300
 
 REFERENCE_LIMIT = 128
+ERROR_LIMIT = 200
 
 RESERVE_CODES = {
     "approval_missing": Code.APPROVAL_REQUIRED,
@@ -37,6 +38,12 @@ RESERVE_CODES = {
     "run_limit": Code.RUN_LIMIT,
     "hash_mismatch": Code.OPERATION_CONFLICT,
 }
+
+
+def error_text(exc: BaseException) -> str:
+    """The error's type name, a colon, a space, and the first line of its message."""
+    lines = str(exc).splitlines()
+    return f"{type(exc).__name__}: {lines[0] if lines else ''}"[:ERROR_LIMIT]
 
 
 class Latch:
@@ -333,13 +340,13 @@ class Latch:
         future = self._pool.submit(spec.handler, args, info)
         try:
             value = future.result(timeout=spec.timeout_seconds)
-        except ToolFailed:
-            return self._finish(prepared, "failed", Code.FAILED, t0)
-        except TimeoutError:
+        except ToolFailed as exc:
+            return self._finish(prepared, "failed", Code.FAILED, t0, error=exc)
+        except TimeoutError as exc:
             # The thread keeps running on its own; the outcome is unknown.
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
-        except Exception:  # noqa: BLE001 any other handler error is uncertain
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
+        except Exception as exc:  # noqa: BLE001 any other handler error is uncertain
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
         return self._finish(prepared, "succeeded", Code.EXECUTED, t0, value)
 
     async def aexecute(self, prepared: PreparedAction, ctx: UserContext) -> ExecutionResult:
@@ -355,12 +362,12 @@ class Latch:
             call = loop.run_in_executor(self._pool, spec.handler, args, info)
         try:
             value = await asyncio.wait_for(call, spec.timeout_seconds)
-        except ToolFailed:
-            return self._finish(prepared, "failed", Code.FAILED, t0)
-        except TimeoutError:
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
-        except Exception:  # noqa: BLE001 any other handler error is uncertain
-            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0)
+        except ToolFailed as exc:
+            return self._finish(prepared, "failed", Code.FAILED, t0, error=exc)
+        except TimeoutError as exc:
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
+        except Exception as exc:  # noqa: BLE001 any other handler error is uncertain
+            return self._finish(prepared, "uncertain", Code.UNCERTAIN, t0, error=exc)
         return self._finish(prepared, "succeeded", Code.EXECUTED, t0, value)
 
     def operation_status(self, org_id: str, operation_id: str) -> OperationStatus | None:
@@ -504,25 +511,33 @@ class Latch:
         return spec, tp, checked
 
     def _finish(
-        self, prepared: PreparedAction, outcome: str, code: Code, t0: float, value: Any = None
+        self, prepared: PreparedAction, outcome: str, code: Code, t0: float, value: Any = None,
+        error: BaseException | None = None,
     ) -> ExecutionResult:
+        """Save the outcome. The handler already ran, so a storage error is reported, not raised."""
         duration_ms = int((time.perf_counter() - t0) * 1000)
         now = self.clock()
-        reference = self._reference(prepared.org_id, prepared.operation_id)
-        self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
-        self.store.audit(
-            "execute",
-            str(code),
-            prepared.org_id,
-            run_id=prepared.run_id,
-            operation_id=prepared.operation_id,
-            user_id=prepared.user_id,
-            tool=prepared.tool,
-            outcome=outcome,
-            duration_ms=duration_ms,
-            now=now,
-            reference=reference,
-        )
+        recorded = True
+        message = None if error is None else error_text(error)
+        reference = None
+        try:
+            reference = self._reference(prepared.org_id, prepared.operation_id)
+            self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
+            self.store.audit(
+                "execute",
+                str(code),
+                prepared.org_id,
+                run_id=prepared.run_id,
+                operation_id=prepared.operation_id,
+                user_id=prepared.user_id,
+                tool=prepared.tool,
+                outcome=outcome,
+                duration_ms=duration_ms,
+                now=now,
+                reference=reference,
+            )
+        except StorageError as exc:
+            recorded, message = False, error_text(exc)
         return ExecutionResult(
             operation_id=prepared.operation_id,
             outcome=outcome,
@@ -531,6 +546,8 @@ class Latch:
             value=value,
             duration_ms=duration_ms,
             reference=reference,
+            error=message,
+            recorded=recorded,
         )
 
     def _check_access(

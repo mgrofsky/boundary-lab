@@ -38,7 +38,13 @@ A handler can finish in three ways.
 
 Latch cannot tell whether an uncertain call changed anything, so it records the outcome and refuses to run that operation ID again. In the `timeout_after_refund` scenario, the refund goes through before the handler exceeds its time limit. A second call to `execute` returns the recorded `UNCERTAIN` outcome. The refund count stays at 1.
 
-Recording the outcome can also fail after the handler has run. That raises `StorageError`, and the change may already have happened. Latch records the attempt before calling the handler, which blocks a second attempt while that database record remains. Keep the operation ID and check the system the handler called before deciding what to do next.
+When the handler raises, `ExecutionResult.error` holds the error's type name and the first line of its message, cut at 200 characters. It is set for `ToolFailed`, for the time limit, and for any other error. It is not saved in the audit table.
+
+## When the outcome is not recorded
+
+Recording the outcome can fail after the handler has run. Latch does not raise then. `execute` returns the outcome the handler produced with `recorded` set to `False`, and `error` describes the storage error. The change may already have happened.
+
+`recorded` false means your app must keep the operation ID and check the real system before deciding anything. Do not treat the result as final, and do not run the request again under a new operation ID until you know what happened. Latch records the attempt before calling the handler, which blocks a second attempt while that database record remains.
 
 ## Before trying again
 

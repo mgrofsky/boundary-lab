@@ -213,8 +213,10 @@ def test_post_dispatch_storage_failure_keeps_the_reservation(clock, monkeypatch)
 
     with monkeypatch.context() as patch:
         patch.setattr(engine.store, "finish", unavailable)
-        with pytest.raises(StorageError):
-            engine.execute(action, payer())
+        result = engine.execute(action, payer())
+    assert result.outcome == "succeeded"
+    assert result.recorded is False
+    assert result.error == "StorageError: simulated result write failure"
     assert len(calls) == 1
     assert engine.operation_status("northwind", action.operation_id).state == "reserved"
     replay = engine.execute(action, payer())

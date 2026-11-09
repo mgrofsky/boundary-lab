@@ -93,6 +93,10 @@ class ExecutionResult(Strict):
     replayed: bool = False
     duration_ms: int = 0
     reference: str | None = None
+    # The handler or storage error as "Type: first line", cut at 200 characters.
+    error: str | None = None
+    # False when Latch could not save the outcome. Check the real system before acting.
+    recorded: bool = True
 
 
 class OperationStatus(Strict):

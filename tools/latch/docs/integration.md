@@ -23,7 +23,7 @@ Latch keeps requested actions, approvals, and decision history in a SQLite datab
 
 Use a file path your app keeps between restarts. If you lose the file, Latch can no longer catch repeated operation IDs from that database. Use `":memory:"` only in tests.
 
-A SQLite error becomes a `StorageError`. A failure before the tool starts blocks the call. A failure while recording the outcome can happen after the tool has changed something. Keep the original operation ID, check both the system the tool called and Latch's stored status, and do not retry automatically. See [uncertain outcomes](limits.md).
+A SQLite error becomes a `StorageError`. A failure before the tool starts raises it and blocks the call. A failure while recording the outcome does not raise, because the tool may already have changed something. The result has `recorded` set to `False`. Keep the original operation ID, check both the system the tool called and Latch's stored status, and do not retry automatically. See [uncertain outcomes](limits.md).
 
 ## Add a tool
 
