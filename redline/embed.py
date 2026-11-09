@@ -13,6 +13,8 @@ def text(prompt: str, response: str) -> str:
 class Embedder:
     """Load the model when encode is first called, then reuse it."""
 
+    name = "minilm"
+
     def __init__(self, model_name: str = DEFAULT_MODEL):
         self.model_name = model_name
         self._model = None
@@ -26,3 +28,43 @@ class Embedder:
             self._model = SentenceTransformer(self.model_name)
         vectors = self._model.encode(list(texts), normalize_embeddings=True)
         return np.asarray(vectors, dtype=np.float32)
+
+
+class TfidfEmbedder:
+    """Score words by how often they appear, with no model to download.
+
+    It must be fit on the training texts before encode. It needs nothing beyond
+    scikit-learn and starts at once, but it only matches shared words, so it routes
+    worse than the default model.
+    """
+
+    name = "tfidf"
+
+    def __init__(self):
+        self._vectorizer = None
+
+    def fit(self, texts: list[str]) -> "TfidfEmbedder":
+        """Learn the words and their weights from the training texts."""
+        # Imported here so the default embedder never pays for it.
+        from sklearn.feature_extraction.text import TfidfVectorizer
+
+        self._vectorizer = TfidfVectorizer().fit(list(texts))
+        return self
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        """Return one row per text, each scaled to length 1. A text with no known word is all 0."""
+        if self._vectorizer is None:
+            raise RuntimeError("fit the tfidf embedder on the training texts before encode")
+        vectors = self._vectorizer.transform(list(texts)).toarray().astype(np.float32)
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        return np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
+
+
+EMBEDDERS = {"minilm": Embedder, "tfidf": TfidfEmbedder}
+
+
+def make(name: str):
+    """Return a new embedder by name: minilm, the default model, or tfidf."""
+    if name not in EMBEDDERS:
+        raise ValueError(f"unknown embedder {name!r}, expected one of {', '.join(EMBEDDERS)}")
+    return EMBEDDERS[name]()

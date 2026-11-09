@@ -83,6 +83,7 @@ def cmd_run(args) -> int:
         short_circuit=short_circuit,
         seed=args.seed,
         cache=args.cache,
+        embedder=args.embedder,
         top_k=args.top_k,
         floor=args.floor,
     )
@@ -105,6 +106,7 @@ def cmd_run(args) -> int:
     meta = {
         "data": Path(args.data).as_posix(),
         "router": router.name,
+        "embedder": grader.embedder_name,
         "k": args.k if args.router == "kmeans" else None,
         "short_circuit": args.short_circuit,
         "purity": args.purity,
@@ -275,6 +277,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="center shortcut: required gap between good and bad match scores (default: 0.10)",
     )
     run.add_argument("--seed", type=int, default=0, help="random seed for repeatable k-means runs")
+    run.add_argument(
+        "--embedder",
+        choices=["minilm", "tfidf"],
+        default="minilm",
+        help="minilm, the default model, or tfidf, which needs no download but routes worse",
+    )
     run.add_argument(
         "--top-k",
         type=int,

@@ -3,8 +3,7 @@
 import json
 from pathlib import Path
 
-from redline import pipeline, policy
-from redline.embed import Embedder
+from redline import embed, pipeline, policy
 from redline.judge import ReplayJudge, select
 from redline.router import KMeansRouter, Router, ShortCircuit
 
@@ -14,12 +13,10 @@ def _read_jsonl(path) -> list[dict]:
 
 
 def _embedder(choice):
-    """Return an embedder for a name, or the object itself when it already has encode."""
+    """Return an embedder for a name, or the object itself when one is passed in."""
     if not isinstance(choice, str):
         return choice
-    if choice == "minilm":
-        return Embedder()
-    raise ValueError(f"unknown embedder {choice!r}, expected minilm")
+    return embed.make(choice)
 
 
 class Grader:
@@ -27,7 +24,8 @@ class Grader:
 
     judge is a judge object from redline.judge. None means the replay judge, which reads
     saved answers from cache. short_circuit is False, True for the default settings, or a
-    ShortCircuit with your own settings. top_k above 1 judges up to that many of the closest
+    ShortCircuit with your own settings. embedder is "minilm", the default model, "tfidf",
+    which needs no download but routes worse, or your own object with encode. top_k above 1 judges up to that many of the closest
     rules and keeps the worst outcome. floor skips extra rules less similar than it.
     """
 
@@ -59,6 +57,9 @@ class Grader:
             short_circuit = ShortCircuit()
         self.short_circuit = short_circuit or None
         self.embedder = _embedder(embedder)
+        self.embedder_name = getattr(self.embedder, "name", type(self.embedder).__name__)
+        if hasattr(self.embedder, "fit"):
+            self.embedder.fit([embed.text(r["prompt"], r["response"]) for r in self.train])
         if router == "kmeans":
             self.router = KMeansRouter(
                 self.embedder, k=k, seed=seed, short_circuit=self.short_circuit

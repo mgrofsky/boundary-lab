@@ -63,6 +63,8 @@ Both options can use `--short-circuit`. That lets the router pass or fail some a
 
 Add `--top-k 3` to check each answer against the three closest rules and keep the worst outcome. Each answer that reaches the judge then costs up to three judge calls instead of one. `--floor` skips extra rules with a low match score. The saved cache only covers one rule per answer, so this needs a live judge.
 
+`--embedder tfidf` swaps the model that turns text into numbers for simple word counts from scikit-learn. It needs no model download and starts at once, but it routes worse because it only matches shared words. The saved results use the default, `minilm`. The run's `_meta.json` records which one was used.
+
 The [routing guide](../docs/routing.md) walks through the settings, saved comparisons, and commands to compare your own runs.
 
 ## What happened

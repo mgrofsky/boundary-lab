@@ -30,3 +30,8 @@ def test_run_accepts_top_k_and_floor():
     assert (args.top_k, args.floor) == (3, 0.4)
     args = build_parser().parse_args(RUN)
     assert (args.top_k, args.floor) == (1, None)
+
+
+def test_run_accepts_an_embedder():
+    assert build_parser().parse_args(RUN).embedder == "minilm"
+    assert build_parser().parse_args(RUN + ["--embedder", "tfidf"]).embedder == "tfidf"
