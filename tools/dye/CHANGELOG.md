@@ -10,3 +10,7 @@
 ### New
 
 - `Tracker.mark_data(label, data)` marks each scalar in a dict or list with its path. `Source.path` and `Finding.source_path` record where a value sat.
+- The token matcher finds a value copied into a longer composite value, such as an id inside an ARN. It reports the matcher `token`.
+- `Tracker(ignore=...)`, `Tracker.ignore(*patterns)` and `COMMON_IGNORE` skip values that are never evidence, such as cloud regions and ISO dates.
+- `Tracker(max_sources=...)` drops the oldest source past a limit, and `Tracker.forget(source)` drops one source.
+- `Tracker.to_dict()` and `Tracker.from_dict(data)` save and restore a tracker, with a `"schema": 1` key.

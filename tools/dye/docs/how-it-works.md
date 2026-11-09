@@ -10,6 +10,8 @@ A `Tracker` holds the text you marked for one conversation. Each `mark(label, te
 
 `Tracker(ignore=...)` and `ignore(*patterns)` record regular expressions. A value or token whose normalised form matches one of them in full is skipped and never reported. `COMMON_IGNORE` is an opt in tuple with patterns for cloud regions and ISO dates.
 
+`Tracker(max_sources=n)` holds at most n sources. When a new mark would go past n, the oldest source and its stored forms are dropped. `forget(source)` drops one source. `to_dict()` returns `{"schema": 1, "sources": [...], "trusted": [...], "ignore": [...], "max_sources": n}`, where each source has its label, text and path. `Tracker.from_dict(data)` rebuilds the tracker by marking each source again, so the stored forms are never saved. An app can store the dict beside the conversation and restore it after a restart.
+
 `check(arguments)` walks the arguments, including nested dicts and lists, and gives each scalar a path such as `account_id`, `recipient.email` or `items[0].sku`. It skips `None`, booleans, empty strings, trusted values and ignored values. Each remaining value is lowercased and compared with every source in the order the sources were marked. The first source that matches wins and the value is reported once.
 
 - Text match: the value appears in the plain or the spelled out text as a whole term, with no letter or digit touching either end.

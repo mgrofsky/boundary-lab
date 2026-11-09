@@ -43,6 +43,15 @@ When the untrusted input is structured, such as a ticket fetched as JSON, mark i
 
     tracker.mark_data("ticket 4471", {"subject": subject, "body": body})
 
+## Keep a tracker across restarts
+
+A long conversation can outlive the process that started it. `tracker.to_dict()` returns the marked sources, the trusted values, the ignore patterns and the source limit as JSON ready data. Store it beside the conversation and rebuild the tracker with `Tracker.from_dict(data)` after a restart.
+
+    saved = json.dumps(tracker.to_dict())
+    tracker = Tracker.from_dict(json.loads(saved))
+
+`Tracker(max_sources=200)` keeps memory bounded. When a new mark would go past the limit, the oldest source is dropped. `tracker.forget(source)` drops one source, such as a ticket the customer withdrew.
+
 ## How matching works
 
 Dye compares each argument value with the marked text in three ways.

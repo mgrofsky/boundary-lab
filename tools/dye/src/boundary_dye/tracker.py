@@ -120,7 +120,12 @@ def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
 class Tracker:
     """Holds the untrusted text for one run and checks proposed arguments against it."""
 
-    def __init__(self, ignore: Iterable[str] = ()) -> None:
+    SCHEMA = 1
+
+    def __init__(self, ignore: Iterable[str] = (), max_sources: int | None = None) -> None:
+        if max_sources is not None and max_sources < 1:
+            raise ValueError("max_sources must be at least 1")
+        self.max_sources = max_sources
         self._sources: list[Source] = []
         self._index: list[tuple[Source, str, str, frozenset[str]]] = []
         self._trusted: set[str] = set()
@@ -143,7 +148,18 @@ class Tracker:
         plain = normalize(text)
         self._sources.append(source)
         self._index.append((source, plain, spelled_out(plain), digit_runs(text)))
+        if self.max_sources is not None and len(self._sources) > self.max_sources:
+            del self._sources[0]
+            del self._index[0]
         return source
+
+    def forget(self, source: Source) -> None:
+        """Remove one marked source. A source that is not held is ignored."""
+        for position, held in enumerate(self._sources):
+            if held == source:
+                del self._sources[position]
+                del self._index[position]
+                return
 
     def mark_data(self, label: str, data: Any) -> list[Source]:
         """Mark every scalar inside a dict or list as text, each with its own path.
@@ -160,6 +176,27 @@ class Tracker:
     def trust(self, *values: Any) -> None:
         """Record values the app supplied itself, such as the signed in account. They are never reported."""
         self._trusted.update(normalize(str(value)) for value in values)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Everything needed to rebuild this tracker, as JSON ready data."""
+        return {
+            "schema": self.SCHEMA,
+            "sources": [asdict(source) for source in self._sources],
+            "trusted": sorted(self._trusted),
+            "ignore": list(self._ignore),
+            "max_sources": self.max_sources,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Tracker:
+        """Rebuild a tracker saved with to_dict(), for example after the app restarts."""
+        if data.get("schema") != cls.SCHEMA:
+            raise ValueError(f"unknown tracker schema {data.get('schema')!r}")
+        tracker = cls(ignore=data.get("ignore", ()), max_sources=data.get("max_sources"))
+        for item in data.get("sources", ()):
+            tracker.mark(item["label"], item["text"], item.get("path", ""))
+        tracker.trust(*data.get("trusted", ()))
+        return tracker
 
     def ignore(self, *patterns: str) -> None:
         """Skip values and tokens that match one of these regular expressions in full.

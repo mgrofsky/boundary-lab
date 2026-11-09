@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from boundary_dye.tracker import Finding, Tracker
@@ -199,3 +201,57 @@ def test_mark_data_skips_none_bools_and_empty_and_keeps_numbers():
 def test_plain_mark_has_empty_source_path():
     tracker = Tracker()
     assert tracker.mark("t", "x").path == ""
+
+
+def test_max_sources_drops_the_oldest():
+    tracker = Tracker(max_sources=2)
+    tracker.mark("a", "code 1111")
+    tracker.mark("b", "code 2222")
+    tracker.mark("c", "code 3333")
+    assert [s.label for s in tracker.sources] == ["b", "c"]
+    assert tracker.check({"x": "1111"}).clean is True
+    assert tracker.check({"x": "3333"}).copied == frozenset({"x"})
+
+
+def test_max_sources_must_be_positive():
+    with pytest.raises(ValueError):
+        Tracker(max_sources=0)
+
+
+def test_forget_removes_one_source():
+    tracker = Tracker()
+    first = tracker.mark("a", "code 1111")
+    tracker.mark("b", "code 2222")
+    tracker.forget(first)
+    assert [s.label for s in tracker.sources] == ["b"]
+    assert tracker.check({"x": "1111"}).clean is True
+    tracker.forget(first)
+    assert [s.label for s in tracker.sources] == ["b"]
+
+
+def test_to_dict_and_from_dict_round_trip():
+    tracker = Tracker(ignore=[r"ord-\d+"], max_sources=5)
+    tracker.mark("ticket", "refund 88214471 for ORD-5531")
+    tracker.mark_data("form", {"body": "send to ops@example.com"})
+    tracker.trust("NW-2", "NW-1")
+    data = tracker.to_dict()
+    assert data == {
+        "schema": 1,
+        "sources": [
+            {"label": "ticket", "text": "refund 88214471 for ORD-5531", "path": ""},
+            {"label": "form", "text": "send to ops@example.com", "path": "body"},
+        ],
+        "trusted": ["nw-1", "nw-2"],
+        "ignore": [r"ord-\d+"],
+        "max_sources": 5,
+    }
+    restored = Tracker.from_dict(json.loads(json.dumps(data)))
+    assert restored.to_dict() == data
+    args = {"account_id": "88214471", "order": "ORD-5531", "to": "ops@example.com", "me": "NW-1"}
+    assert restored.check(args) == tracker.check(args)
+    assert restored.check(args).copied == frozenset({"account_id", "to"})
+
+
+def test_from_dict_rejects_unknown_schema():
+    with pytest.raises(ValueError):
+        Tracker.from_dict({"schema": 2, "sources": []})
