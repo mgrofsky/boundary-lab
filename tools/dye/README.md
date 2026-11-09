@@ -53,4 +53,6 @@ Values the app trusted, `None`, booleans and empty strings are skipped. See [how
 
 Latch checks tool calls before they run. Pass Dye's result in the `UserContext` and set `tainted_arguments = "deny"` for the tools that should never act on copied values. See [using Dye with Latch](https://github.com/mgrofsky/boundary-lab/blob/main/tools/dye/docs/with-latch.md).
 
+See [Release](https://github.com/mgrofsky/boundary-lab/blob/main/tools/dye/docs/release.md) for how a version gets published.
+
 Dye is licensed under AGPL-3.0-only. See [LICENSE](https://github.com/mgrofsky/boundary-lab/blob/main/tools/dye/LICENSE).
