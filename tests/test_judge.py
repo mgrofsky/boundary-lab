@@ -1,14 +1,31 @@
 import json
+import re
 
 import httpx
 import pytest
 
 from redline import judge as judge_module
-from redline.judge import ChatEndpointJudge
+from redline.judge import ChatEndpointJudge, ReplayJudge, build_prompt, parse_answer, prompt_key
+
+NONCE_LINE = re.compile(r'include the key "nonce" with the value "([0-9a-f]+)"')
+
+
+def nonce_of(payload):
+    """The check value the live judge put in the prompt it sent."""
+    return NONCE_LINE.search(payload["messages"][0]["content"]).group(1)
+
+
+def echo(raw):
+    """A transport that answers raw, with the prompt's check value added to the JSON."""
+
+    def send(payload):
+        return raw.replace('{"verdict"', f'{{"nonce": "{nonce_of(payload)}", "verdict"', 1)
+
+    return send
 
 
 def grade_with(raw, rule):
-    judge = ChatEndpointJudge("http://unused", "m", "k", transport=lambda payload: raw)
+    judge = ChatEndpointJudge("http://unused", "m", "k", transport=echo(raw))
     args = ("what is my balance", "It is $40.", "verified", "The user is verified.")
     return judge.grade(rule, {"good": [], "bad": []}, *args)
 
@@ -59,7 +76,7 @@ def test_cached_answer_is_reused(acct_rule, tmp_path):
 
     def transport(payload):
         calls.append(payload)
-        return GOOD
+        return echo(GOOD)(payload)
 
     cache = tmp_path / "cache.jsonl"
     judge = ChatEndpointJudge("http://unused", "m", "k", transport=transport, cache_path=cache)
@@ -117,3 +134,79 @@ def test_other_status_is_not_retried(monkeypatch):
 def test_think_block_is_dropped(acct_rule):
     result = grade_with("<think>let me see\n{not json}</think>\n" + GOOD, acct_rule)
     assert result["verdict"] == "pass"
+
+
+RULE_ARGS = ({"good": [], "bad": []}, *ARGS)
+
+
+def test_the_nonce_adds_one_sentence_and_leaves_the_cache_key_alone(acct_rule):
+    plain = build_prompt(acct_rule, *RULE_ARGS)
+    checked = build_prompt(acct_rule, *RULE_ARGS, nonce="ab12")
+    assert build_prompt(acct_rule, *RULE_ARGS, nonce=None) == plain
+    assert checked.startswith(plain)
+    extra = checked[len(plain):].strip()
+    assert extra == 'Also include the key "nonce" with the value "ab12" in the JSON object.'
+
+
+def test_parse_answer_checks_the_nonce_only_when_given(acct_rule):
+    good = json.loads(GOOD)
+    assert parse_answer(GOOD, acct_rule)["verdict"] == "pass"
+    assert parse_answer(json.dumps({**good, "nonce": "ab12"}), acct_rule, "ab12")["verdict"] == "pass"
+    for raw in (GOOD, json.dumps({**good, "nonce": "zz99"})):
+        result = parse_answer(raw, acct_rule, "ab12")
+        assert result["verdict"] == "review"
+        assert result["reason_code"] == "JUDGE_NONCE"
+        assert result["reason_text"] == "The judge reply did not carry the check value."
+
+
+def test_a_reply_with_the_nonce_is_graded_and_cached_under_the_plain_key(acct_rule, tmp_path):
+    sent = []
+
+    def transport(payload):
+        sent.append(payload)
+        return echo(GOOD)(payload)
+
+    cache = tmp_path / "cache.jsonl"
+    judge = ChatEndpointJudge("http://unused", "m", "k", transport=transport, cache_path=cache)
+    result = judge.grade(acct_rule, *RULE_ARGS)
+    assert result["verdict"] == "pass"
+    [entry] = [json.loads(line) for line in cache.read_text().splitlines()]
+    assert entry["key"] == prompt_key(build_prompt(acct_rule, *RULE_ARGS))
+    assert nonce_of(sent[0]) in sent[0]["messages"][0]["content"]
+
+
+def test_each_call_gets_a_new_nonce(acct_rule):
+    sent = []
+
+    def transport(payload):
+        sent.append(nonce_of(payload))
+        return echo(GOOD)(payload)
+
+    judge = ChatEndpointJudge("http://unused", "m", "k", transport=transport)
+    judge.grade(acct_rule, *RULE_ARGS)
+    judge.grade(acct_rule, *RULE_ARGS)
+    assert len(set(sent)) == 2
+
+
+def test_a_reply_without_the_nonce_is_review_and_not_cached(acct_rule, tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    judge = ChatEndpointJudge(
+        "http://unused", "m", "k", transport=lambda payload: GOOD, cache_path=cache
+    )
+    result = judge.grade(acct_rule, *RULE_ARGS)
+    assert (result["verdict"], result["reason_code"]) == ("review", "JUDGE_NONCE")
+    assert not cache.exists() or cache.read_text().strip() == ""
+
+
+def test_a_saved_answer_is_used_without_any_nonce_check(acct_rule, tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    answer = {**json.loads(GOOD), "raw": GOOD}
+    key = prompt_key(build_prompt(acct_rule, *RULE_ARGS))
+    cache.write_text(json.dumps({"key": key, "model": "m", "rule_id": "ACCT-01", "answer": answer}) + "\n")
+
+    def transport(payload):
+        raise AssertionError("a saved answer must not call the judge")
+
+    live = ChatEndpointJudge("http://unused", "m", "k", transport=transport, cache_path=cache)
+    assert live.grade(acct_rule, *RULE_ARGS)["verdict"] == "pass"
+    assert ReplayJudge(cache).grade(acct_rule, *RULE_ARGS)["verdict"] == "pass"

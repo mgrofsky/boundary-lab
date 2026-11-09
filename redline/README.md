@@ -29,6 +29,23 @@ Replay uses saved judge answers from `data/judge_cache.jsonl`, so you don't need
 
 The 56 holdout examples are answers kept back for checking the tool. Each has a `good` or `bad` label written by hand, so you can compare Redline's decisions with those labels.
 
+## Use it in your code
+
+`Grader` runs the same steps as `redline run`, one answer at a time. Run this from the repository root:
+
+```python
+from redline import Grader
+
+grader = Grader()  # saved rules, examples and judge answers, center matching
+prompt = "how much is autopay going to take out next week"
+response = "Autopay will draw $103.85 on Tuesday, which covers this month's bill in full."
+print(grader.grade(prompt, response, "verified")["outcome"])  # pass
+```
+
+`grade` returns the same fields as a line in `holdout_outputs.jsonl`, without the `id`. Building the `Grader` loads the rules, picks judge examples and sets up the router, so build it once and reuse it.
+
+By default it uses the replay judge, which only knows the saved answers. To grade new answers, pass `judge=ChatEndpointJudge(base_url, model, api_key, cache_path="my_cache.jsonl")` from `redline.judge`. The other options match the `redline run` flags: `rules`, `train`, `router`, `k`, `short_circuit`, `seed`, `cache`, `embedder`, `top_k`, `floor` and `missing_grade`.
+
 ## Pick how answers find a rule
 
 There are two options:
@@ -43,6 +60,16 @@ redline run --data data/holdout.jsonl --judge replay --router kmeans --k 12 --ou
 ```
 
 Both options can use `--short-circuit`. That lets the router pass or fail some answers using the labeled examples, without asking the judge. It's off by default. Fewer judge decisions can mean more mistakes, so check both.
+
+Add `--top-k 3` to check each answer against the three closest rules and keep the worst outcome. Each answer that reaches the judge then costs up to three judge calls instead of one. `--floor` skips extra rules with a low match score. The saved cache only covers one rule per answer, so this needs a live judge or `--missing-grade review`.
+
+`--embedder tfidf` swaps the model that turns text into numbers for simple word counts from scikit-learn. It needs no model download and starts at once, but it routes worse because it only matches shared words. The saved results use the default, `minilm`. The run's `_meta.json` records which one was used, and `redline report` names it in the summary and report.
+
+A different router or embedder can send an answer to a rule the saved cache never graded it under. Replay stops when that happens, which is the default `--missing-grade stop`. With `--missing-grade review`, that answer gets `review` with the code `NO_SAVED_GRADE`, and the run keeps going. `_meta.json` counts the answers whose final outcome had no grade under `no_saved_grade_records`. It counts every lookup that found none under `no_saved_grade_lookups`, which is higher when `--top-k` checks several rules. For example:
+
+```sh
+redline run --data data/holdout.jsonl --judge replay --embedder tfidf --missing-grade review --out results/local/tfidf
+```
 
 The [routing guide](../docs/routing.md) walks through the settings, saved comparisons, and commands to compare your own runs.
 
@@ -107,9 +134,25 @@ These commands keep new results separate from the saved run. Label new attack re
 
 Live mode also reuses saved grades. Use a fresh cache file when changing the judge model. Redline looks up grades using the grading prompt, and that lookup doesn't include the model name. New valid grades are saved for later replay.
 
+Each live judge prompt ends with a random check value the judge must copy into its JSON. A reply without it gets `review` with the code `JUDGE_NONCE` and is not saved. A judge model that drops the key sends every answer to review, so check a few replies when trying a new model.
+
 Add `--router kmeans --k 12` to both `redline run` commands to try that routing option. The [routing guide](../docs/routing.md) shows how to make reports with the right files and compare runs.
 
-To use your own rules and examples, start with [writing rules](../docs/writing-rules.md). See [how it works](../docs/how-it-works.md) for the code flow and [the attack prompts](../docs/attacks.md) for testing ideas.
+To use your own rules and examples, start with [writing rules](../docs/writing-rules.md). A rules file can name its own user types under `user_types`, and `redline run` refuses a record whose type isn't listed. See [how it works](../docs/how-it-works.md) for the code flow and [the attack prompts](../docs/attacks.md) for testing ideas.
+
+## CI
+
+`redline gate` reads a summary and fails the build when a number crosses a limit you set. Run it after `redline run` and `redline report`:
+
+```sh
+redline run --data data/holdout.jsonl --judge replay --out results/ci
+redline run --data data/runs/attack_responses.jsonl --judge replay --out results/ci && redline report --holdout results/ci/holdout_outputs.jsonl --attack results/ci/attack_responses_outputs.jsonl --out results/ci
+redline gate --summary results/ci/summary.json --min-recall 0.8 --max-false-alarm 0.1 --min-kappa 0.7
+```
+
+It prints one line for each limit that's broken and exits 1. When every limit holds, it prints nothing and exits 0. Only the limits you pass are checked.
+
+`--min-recall` is the share of rule breaks caught. `--max-false-alarm` is the share of good answers marked fail. `--min-kappa` is agreement with the hand labels. These read the holdout numbers. Add `--attack` to check the attack run's numbers instead.
 
 ## Run it with promptfoo
 
@@ -117,7 +160,7 @@ Redline's 80 attack prompts also run under [promptfoo](https://www.promptfoo.dev
 
 ## Where it falls short
 
-Both routers can mix up rules that use similar words, like account data and identity checks. Each response gets checked against one rule, so a violation of another rule can slip through. An off-topic match passes without asking the judge.
+Both routers can mix up rules that use similar words, like account data and identity checks. By default each response gets checked against one rule, so a violation of another rule can slip through. `--top-k` checks more rules for more judge calls. An off-topic match passes without asking the judge.
 
 The shortcut can also make the wrong call. Examples that look similar can need different decisions. Look at the missed violations, false alarms, and individual answers before choosing settings for your own work.
 

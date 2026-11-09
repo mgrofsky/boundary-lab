@@ -42,6 +42,19 @@ def _threshold(best: np.ndarray) -> float:
     return float(best[n - math.ceil(0.95 * n)])
 
 
+def _ranked(scores: np.ndarray, rule_ids: list[str], threshold: float) -> list[RouteResult]:
+    """Every rule once, best score first. A rule on several cells keeps its best cell."""
+    out, seen = [], set()
+    for cell in np.argsort(-scores, kind="stable"):
+        rule_id = rule_ids[int(cell)]
+        if rule_id in seen:
+            continue
+        seen.add(rule_id)
+        similarity = float(scores[cell])
+        out.append(RouteResult(rule_id, similarity, similarity < threshold, int(cell)))
+    return out
+
+
 class Router:
     """Send each answer to the closest rule center.
 
@@ -128,6 +141,11 @@ class Router:
     def route(self, prompt: str, response: str, user_type: str | None = None) -> RouteResult:
         """Turn a prompt and its answer into numbers, then find the closest center."""
         return self.route_vector(self.embedder.encode([text(prompt, response)])[0], user_type)
+
+    def rank(self, prompt: str, response: str, user_type: str | None = None) -> list[RouteResult]:
+        """Return every rule ordered by how close the answer is to it, closest first."""
+        vec = _unit(np.asarray(self.embedder.encode([text(prompt, response)])[0], np.float32))
+        return _ranked(self.centers @ vec, self.rule_ids, self.threshold)
 
 
 class KMeansRouter:
@@ -240,3 +258,8 @@ class KMeansRouter:
     def route(self, prompt: str, response: str, user_type: str | None = None) -> RouteResult:
         """Turn a prompt and its answer into numbers, then find the closest cluster."""
         return self.route_vector(self.embedder.encode([text(prompt, response)])[0], user_type)
+
+    def rank(self, prompt: str, response: str, user_type: str | None = None) -> list[RouteResult]:
+        """Return every rule once, ordered by its closest cluster, closest first."""
+        vec = _unit(np.asarray(self.embedder.encode([text(prompt, response)])[0], np.float32))
+        return _ranked(self.centers @ vec, self.rule_ids, self.threshold)

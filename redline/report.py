@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from redline import metrics
+from redline.embed import DEFAULT_MODEL
 
 START = "<!-- results:start -->"
 END = "<!-- results:end -->"
@@ -36,6 +37,21 @@ def _attack_routing(attack_outputs, attack_prompts) -> dict:
     target = {p["id"]: p["target_rule_id"] for p in attack_prompts}
     misrouted = sum(1 for o in attack_outputs if o["routed_rule"] != target[o["id"]])
     return {"total": len(attack_outputs), "misrouted": misrouted}
+
+
+def _embedder_label(meta: dict | None) -> str:
+    # Runs saved before the --embedder option have no "embedder" key and used the model.
+    name = (meta or {}).get("embedder") or "minilm"
+    return DEFAULT_MODEL if name == "minilm" else name
+
+
+def embedding_name(run_meta: dict | None) -> str:
+    """Name what turned text into numbers for these runs, read from their meta files."""
+    metas = {k: v for k, v in (run_meta or {}).items() if v}
+    labels = {k: _embedder_label(v) for k, v in metas.items()}
+    if len(set(labels.values())) <= 1:
+        return next(iter(labels.values()), DEFAULT_MODEL)
+    return ", ".join(f"{label} for {name}" for name, label in labels.items())
 
 
 def build_summary(

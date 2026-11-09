@@ -57,41 +57,48 @@ def _in_chunks(records, fn, label):
 
 
 def cmd_run(args) -> int:
-    from redline import pipeline, policy
-    from redline.embed import Embedder
-    from redline.judge import ChatEndpointJudge, ReplayJudge, select
-    from redline.router import KMeansRouter, Router, ShortCircuit
+    from redline import api, pipeline
+    from redline.judge import ChatEndpointJudge
+    from redline.router import ShortCircuit
 
-    rules = policy.load(args.rules)
-    train = read_jsonl(args.train)
     records = read_jsonl(args.data)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    examples = select(train)
-    (out_dir / "judge_examples.json").write_text(json.dumps(examples, indent=2) + "\n")
-
+    judge = None
     if args.judge == "live":
         load_env_file()
         base_url, model, api_key = _env("REDLINE_JUDGE")
         judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache)
-    else:
-        judge = ReplayJudge(args.cache)
 
-    short_circuit = None
+    short_circuit = False
     if args.short_circuit:
         short_circuit = ShortCircuit(args.purity, args.min_members, args.margin)
-    if args.router == "kmeans":
-        router = KMeansRouter(Embedder(), k=args.k, seed=args.seed, short_circuit=short_circuit)
-    else:
-        router = Router(Embedder(), short_circuit=short_circuit)
-    router.fit(train)
+    grader = api.Grader(
+        rules=args.rules,
+        train=args.train,
+        judge=judge,
+        router=args.router,
+        k=args.k,
+        short_circuit=short_circuit,
+        seed=args.seed,
+        cache=args.cache,
+        embedder=args.embedder,
+        top_k=args.top_k,
+        floor=args.floor,
+        missing_grade=args.missing_grade,
+    )
+    router = grader.router
+    for record in records:
+        try:
+            grader.check_user_type(record["user_type"], record.get("id"))
+        except ValueError as exc:
+            raise SystemExit(f"redline: {exc}") from None
+    (out_dir / "judge_examples.json").write_text(json.dumps(grader.examples, indent=2) + "\n")
 
     # Start timing after router setup and model loading, so this measures grading only.
     start = time.perf_counter()
-    outputs = _in_chunks(
-        records, lambda batch: pipeline.run(batch, rules, router, judge, examples), "graded"
-    )
+    outputs = _in_chunks(records, grader.run, "graded")
     seconds = time.perf_counter() - start
 
     stem = Path(args.data).stem
@@ -100,14 +107,21 @@ def cmd_run(args) -> int:
     meta = {
         "data": Path(args.data).as_posix(),
         "router": router.name,
+        "embedder": grader.embedder_name,
         "k": args.k if args.router == "kmeans" else None,
         "short_circuit": args.short_circuit,
         "purity": args.purity,
         "min_members": args.min_members,
         "margin": args.margin,
         "records": len(outputs),
-        "judge_calls": sum(1 for o in outputs if o["decided_by"] == "judge"),
+        "top_k": args.top_k,
+        "floor": args.floor,
+        "judge_calls": pipeline.judge_calls(outputs),
         "short_circuits": sum(1 for o in outputs if o["short_circuit"]),
+        "missing_grade": args.missing_grade,
+        # Records whose kept outcome had no saved grade, and every lookup that had none.
+        "no_saved_grade_records": sum(1 for o in outputs if o["reason_code"] == "NO_SAVED_GRADE"),
+        "no_saved_grade_lookups": getattr(grader.judge, "missing_lookups", 0),
         "seconds": round(seconds, 2),
     }
     meta_path = out_dir / f"{stem}_meta.json"
@@ -134,7 +148,6 @@ def cmd_attack(args) -> int:
 
 def cmd_report(args) -> int:
     from redline import report
-    from redline.embed import DEFAULT_MODEL
 
     files = {
         "train": args.train,
@@ -159,7 +172,7 @@ def cmd_report(args) -> int:
         data["attack_outputs"],
         data["attack_labels"],
         data["attacks"],
-        DEFAULT_MODEL,
+        report.embedding_name(run_meta),
         counts,
         args.cache,
         run_meta,
@@ -196,6 +209,24 @@ def cmd_readme(args) -> int:
     report.update_readme(args.readme, summary)
     print(f"updated {args.readme}", file=sys.stderr)
     return 0
+
+
+def cmd_gate(args) -> int:
+    from redline import thresholds
+
+    path = Path(args.summary)
+    if not path.is_file():
+        raise SystemExit(f"redline: no summary at {path}, run redline report first")
+    lines = thresholds.check(
+        json.loads(path.read_text()),
+        min_recall=args.min_recall,
+        max_false_alarm=args.max_false_alarm,
+        min_kappa=args.min_kappa,
+        attack=args.attack,
+    )
+    for line in lines:
+        print(line)
+    return 1 if lines else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -250,6 +281,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="center shortcut: required gap between good and bad match scores (default: 0.10)",
     )
     run.add_argument("--seed", type=int, default=0, help="random seed for repeatable k-means runs")
+    run.add_argument(
+        "--embedder",
+        choices=["minilm", "tfidf"],
+        default="minilm",
+        help="minilm, the default model, or tfidf, which needs no download but routes worse",
+    )
+    run.add_argument(
+        "--missing-grade",
+        choices=["stop", "review"],
+        default="stop",
+        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
+    )
+    run.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
+    )
+    run.add_argument(
+        "--floor",
+        type=float,
+        default=None,
+        help="with --top-k, skip extra rules whose match score is below this (default: none)",
+    )
     run.set_defaults(func=cmd_run)
 
     attack = sub.add_parser("attack", help="send attack prompts to the model under test")
@@ -307,6 +362,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--readme", default="redline/README.md", help="README file containing the results markers"
     )
     readme.set_defaults(func=cmd_readme)
+
+    gate = sub.add_parser("gate", help="exit 1 when the summary breaks a limit, for CI")
+    gate.add_argument("--summary", default="results/summary.json", help="the summary to check")
+    gate.add_argument(
+        "--min-recall", type=float, help="lowest share of rule breaks caught that passes"
+    )
+    gate.add_argument(
+        "--max-false-alarm",
+        type=float,
+        help="highest share of good answers marked fail that passes",
+    )
+    gate.add_argument(
+        "--min-kappa", type=float, help="lowest agreement with the hand labels that passes"
+    )
+    gate.add_argument(
+        "--attack",
+        action="store_true",
+        help="check the attack run's numbers instead of the holdout's",
+    )
+    gate.set_defaults(func=cmd_gate)
     return parser
 
 

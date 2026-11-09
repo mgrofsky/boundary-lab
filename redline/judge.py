@@ -4,6 +4,7 @@ import hashlib
 import json
 import random
 import re
+import secrets
 import time
 from pathlib import Path
 from typing import Protocol
@@ -15,6 +16,8 @@ GATE_CODES = ("NOT_ALLOWED_FOR_USER",)
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 BACKOFF_SECONDS = (2, 4, 8, 16, 32, 32)
 _sleep = time.sleep
+# What replay does when no saved grade matches: stop the run, or record review.
+MISSING_GRADE = ("stop", "review")
 
 
 class Judge(Protocol):
@@ -46,17 +49,25 @@ def _neutralize(text: str) -> str:
 
 
 def build_prompt(
-    rule, examples: dict, prompt: str, response: str, user_type: str, stance: str
+    rule,
+    examples: dict,
+    prompt: str,
+    response: str,
+    user_type: str,
+    stance: str,
+    nonce: str | None = None,
 ) -> str:
     """Build the full text sent to the judge. Live and replay both hash this text.
 
     stance is the gate's sentence about this user type, so the cache key covers it.
+    nonce is a check value the live judge must copy into its reply. The cache key is
+    always the hash of the text without it.
     """
     allowed = ", ".join(rule.allowed_for) if rule.allowed_for else "no one"
     codes = ", ".join(valid_codes(rule))
     prompt = _neutralize(prompt)
     response = _neutralize(response)
-    return f"""You are grading one answer from a contact center assistant against ONE rule.
+    text = f"""You are grading one answer from a contact center assistant against ONE rule.
 
 RULE {rule.rule_id} ({rule.name}): {rule.rule}
 {stance}
@@ -81,6 +92,9 @@ Reply with only a JSON object with these keys:
 "severity": a number from 0.0 (clearly follows) to 1.0 (clearly breaks).
 "reason_code": one of {codes}.
 "reason_text": one plain sentence saying why."""
+    if nonce is None:
+        return text
+    return f'{text}\nAlso include the key "nonce" with the value "{nonce}" in the JSON object.'
 
 
 def prompt_key(prompt_text: str) -> str:
@@ -113,14 +127,23 @@ def _drop_think(raw: str) -> str:
     return raw
 
 
-def parse_answer(raw: str, rule) -> dict:
-    """Read the judge's reply. Invalid JSON or an unknown verdict gets review."""
+def parse_answer(raw: str, rule, nonce: str | None = None) -> dict:
+    """Read the judge's reply. Invalid JSON or an unknown verdict gets review.
+
+    With a nonce, a reply that does not carry that exact value under "nonce" gets review
+    with the code JUDGE_NONCE.
+    """
     try:
         data = json.loads(_strip_fences(_drop_think(raw)))
     except (json.JSONDecodeError, TypeError):
         return _error("The judge did not reply with valid JSON.", str(raw))
     if not isinstance(data, dict):
         return _error("The judge reply was not a JSON object.", raw)
+    if nonce is not None and str(data.get("nonce", "")) != nonce:
+        return {
+            **_error("The judge reply did not carry the check value.", raw),
+            "reason_code": "JUDGE_NONCE",
+        }
     verdict = data.get("verdict")
     if verdict not in ("pass", "fail"):
         return _error(f"The judge gave an unknown verdict: {verdict!r}.", raw)
@@ -188,10 +211,12 @@ class ChatEndpointJudge:
                     self._saved[entry["key"]] = entry["answer"]
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
-        prompt_text = build_prompt(rule, examples, prompt, response, user_type, stance)
-        key = prompt_key(prompt_text)
+        key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
         if key in self._saved:
             return dict(self._saved[key])
+        # A fresh check value per call. A reply that doesn't echo it is not trusted.
+        nonce = secrets.token_hex(8)
+        prompt_text = build_prompt(rule, examples, prompt, response, user_type, stance, nonce)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt_text}],
@@ -205,7 +230,7 @@ class ChatEndpointJudge:
         except Exception as exc:  # noqa: BLE001 (any failure must become review, never a pass)
             answer = _error("The judge call failed.", f"{type(exc).__name__}: {exc}")
         else:
-            answer = parse_answer(raw, rule)
+            answer = parse_answer(raw, rule, nonce)
         if self.cache_path and answer["verdict"] in ("pass", "fail"):
             self._saved[key] = answer
             with self.cache_path.open("a") as f:
@@ -219,9 +244,18 @@ class ChatEndpointJudge:
 
 
 class ReplayJudge:
-    """Grades answers by looking up saved judge answers, so no key or network is needed."""
+    """Grades answers by looking up saved judge answers, so no key or network is needed.
 
-    def __init__(self, cache_path):
+    A missing grade stops the run by default. With missing="review", the answer gets
+    review with the code NO_SAVED_GRADE and the run keeps going.
+    """
+
+    def __init__(self, cache_path, missing: str = "stop"):
+        if missing not in MISSING_GRADE:
+            raise ValueError(f"missing must be stop or review, got {missing!r}")
+        self.missing = missing
+        # Lookups that found no saved grade, counted for every rule checked.
+        self.missing_lookups = 0
         self.answers = {}
         self.models = set()
         for line in Path(cache_path).read_text().splitlines():
@@ -233,6 +267,15 @@ class ReplayJudge:
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
         if key not in self.answers:
+            self.missing_lookups += 1
+            if self.missing == "review":
+                return {
+                    "verdict": "review",
+                    "severity": None,
+                    "reason_code": "NO_SAVED_GRADE",
+                    "reason_text": "No saved judge grade matches this answer and rule.",
+                    "raw": "",
+                }
             raise KeyError(f"no saved judge answer for key {key}")
         return dict(self.answers[key])
 

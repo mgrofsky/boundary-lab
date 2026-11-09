@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -6,6 +7,18 @@ from redline.judge import ChatEndpointJudge, ReplayJudge, build_prompt, prompt_k
 
 EXAMPLES = {"good": [], "bad": []}
 RAW = json.dumps({"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "x"})
+
+
+def echo(raw):
+    """A live judge transport that answers raw with the prompt's check value added."""
+
+    def send(payload):
+        nonce = re.search(r'"nonce" with the value "(\w+)"', payload["messages"][0]["content"])
+        return raw.replace('{"verdict"', f'{{"nonce": "{nonce.group(1)}", "verdict"', 1)
+
+    return send
+
+
 ARGS = (
     "how do I pay",
     "You can pay online or by phone.",
@@ -17,14 +30,14 @@ ARGS = (
 def test_replay_returns_cached_answer(tmp_path, pay_rule):
     cache = tmp_path / "cache.jsonl"
     raw = json.dumps({"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "x"})
-    live = ChatEndpointJudge("http://unused", "m", "k", transport=lambda p: raw, cache_path=cache)
+    live = ChatEndpointJudge("http://unused", "m", "k", transport=echo(raw), cache_path=cache)
     expected = live.grade(pay_rule, EXAMPLES, *ARGS)
     assert ReplayJudge(cache).grade(pay_rule, EXAMPLES, *ARGS) == expected
 
 
 def test_cache_line_has_model_and_rule_id(tmp_path, pay_rule):
     cache = tmp_path / "cache.jsonl"
-    live = ChatEndpointJudge("http://unused", "m", "k", transport=lambda p: RAW, cache_path=cache)
+    live = ChatEndpointJudge("http://unused", "m", "k", transport=echo(RAW), cache_path=cache)
     live.grade(pay_rule, EXAMPLES, *ARGS)
     entry = json.loads(cache.read_text().splitlines()[0])
     assert sorted(entry) == ["answer", "key", "model", "rule_id"]
@@ -53,3 +66,30 @@ def test_missing_key_raises_with_key(tmp_path, pay_rule):
     key = prompt_key(build_prompt(pay_rule, EXAMPLES, *ARGS))
     with pytest.raises(KeyError, match=key):
         ReplayJudge(cache).grade(pay_rule, EXAMPLES, *ARGS)
+
+
+def test_replay_can_turn_a_missing_grade_into_review(tmp_path, pay_rule):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    result = ReplayJudge(cache, missing="review").grade(pay_rule, EXAMPLES, *ARGS)
+    assert result["verdict"] == "review"
+    assert result["reason_code"] == "NO_SAVED_GRADE"
+    assert result["severity"] is None
+    assert result["reason_text"] == "No saved judge grade matches this answer and rule."
+
+
+def test_replay_missing_must_be_stop_or_review(tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    with pytest.raises(ValueError, match="stop or review"):
+        ReplayJudge(cache, missing="skip")
+
+
+def test_replay_counts_every_lookup_with_no_saved_grade(tmp_path, pay_rule):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    judge = ReplayJudge(cache, missing="review")
+    assert judge.missing_lookups == 0
+    judge.grade(pay_rule, EXAMPLES, *ARGS)
+    judge.grade(pay_rule, EXAMPLES, *ARGS)
+    assert judge.missing_lookups == 2
