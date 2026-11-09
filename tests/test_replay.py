@@ -66,3 +66,20 @@ def test_missing_key_raises_with_key(tmp_path, pay_rule):
     key = prompt_key(build_prompt(pay_rule, EXAMPLES, *ARGS))
     with pytest.raises(KeyError, match=key):
         ReplayJudge(cache).grade(pay_rule, EXAMPLES, *ARGS)
+
+
+def test_replay_can_turn_a_missing_grade_into_review(tmp_path, pay_rule):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    result = ReplayJudge(cache, missing="review").grade(pay_rule, EXAMPLES, *ARGS)
+    assert result["verdict"] == "review"
+    assert result["reason_code"] == "NO_SAVED_GRADE"
+    assert result["severity"] is None
+    assert result["reason_text"] == "No saved judge grade matches this answer and rule."
+
+
+def test_replay_missing_must_be_stop_or_review(tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    with pytest.raises(ValueError, match="stop or review"):
+        ReplayJudge(cache, missing="skip")

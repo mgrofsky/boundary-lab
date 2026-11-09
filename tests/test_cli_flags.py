@@ -35,3 +35,8 @@ def test_run_accepts_top_k_and_floor():
 def test_run_accepts_an_embedder():
     assert build_parser().parse_args(RUN).embedder == "minilm"
     assert build_parser().parse_args(RUN + ["--embedder", "tfidf"]).embedder == "tfidf"
+
+
+def test_run_accepts_missing_grade():
+    assert build_parser().parse_args(RUN).missing_grade == "stop"
+    assert build_parser().parse_args(RUN + ["--missing-grade", "review"]).missing_grade == "review"

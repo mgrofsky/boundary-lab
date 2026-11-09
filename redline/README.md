@@ -44,7 +44,7 @@ print(grader.grade(prompt, response, "verified")["outcome"])  # pass
 
 `grade` returns the same fields as a line in `holdout_outputs.jsonl`, without the `id`. Building the `Grader` loads the rules, picks judge examples and sets up the router, so build it once and reuse it.
 
-By default it uses the replay judge, which only knows the saved answers. To grade new answers, pass `judge=ChatEndpointJudge(base_url, model, api_key, cache_path="my_cache.jsonl")` from `redline.judge`. The other options match the `redline run` flags: `rules`, `train`, `router`, `k`, `short_circuit`, `seed` and `cache`.
+By default it uses the replay judge, which only knows the saved answers. To grade new answers, pass `judge=ChatEndpointJudge(base_url, model, api_key, cache_path="my_cache.jsonl")` from `redline.judge`. The other options match the `redline run` flags: `rules`, `train`, `router`, `k`, `short_circuit`, `seed`, `cache`, `embedder`, `top_k`, `floor` and `missing_grade`.
 
 ## Pick how answers find a rule
 
@@ -64,6 +64,12 @@ Both options can use `--short-circuit`. That lets the router pass or fail some a
 Add `--top-k 3` to check each answer against the three closest rules and keep the worst outcome. Each answer that reaches the judge then costs up to three judge calls instead of one. `--floor` skips extra rules with a low match score. The saved cache only covers one rule per answer, so this needs a live judge.
 
 `--embedder tfidf` swaps the model that turns text into numbers for simple word counts from scikit-learn. It needs no model download and starts at once, but it routes worse because it only matches shared words. The saved results use the default, `minilm`. The run's `_meta.json` records which one was used.
+
+A different router or embedder can send an answer to a rule the saved cache never graded it under. Replay stops when that happens, which is the default `--missing-grade stop`. With `--missing-grade review`, that answer gets `review` with the code `NO_SAVED_GRADE`, and the run keeps going. `_meta.json` counts those answers under `no_saved_grade`. For example:
+
+```sh
+redline run --data data/holdout.jsonl --judge replay --embedder tfidf --missing-grade review --out results/local/tfidf
+```
 
 The [routing guide](../docs/routing.md) walks through the settings, saved comparisons, and commands to compare your own runs.
 

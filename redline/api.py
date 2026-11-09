@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from redline import embed, pipeline, policy
-from redline.judge import ReplayJudge, select
+from redline.judge import MISSING_GRADE, ReplayJudge, select
 from redline.router import KMeansRouter, Router, ShortCircuit
 
 
@@ -27,6 +27,8 @@ class Grader:
     ShortCircuit with your own settings. embedder is "minilm", the default model, "tfidf",
     which needs no download but routes worse, or your own object with encode. top_k above 1 judges up to that many of the closest
     rules and keeps the worst outcome. floor skips extra rules less similar than it.
+    missing_grade says what the replay judge does with no saved grade: "stop" raises
+    KeyError, "review" records review with the code NO_SAVED_GRADE.
     """
 
     def __init__(
@@ -42,13 +44,16 @@ class Grader:
         embedder="minilm",
         top_k=1,
         floor=None,
+        missing_grade="stop",
     ):
         loaded = policy.load_policy(rules)
         self.rules = loaded.rules
         self.user_types = loaded.user_types
         self.train = _read_jsonl(train)
         self.examples = select(self.train)
-        self.judge = judge if judge is not None else ReplayJudge(cache)
+        if missing_grade not in MISSING_GRADE:
+            raise ValueError(f"missing_grade must be stop or review, got {missing_grade!r}")
+        self.judge = judge if judge is not None else ReplayJudge(cache, missing=missing_grade)
         if top_k < 1:
             raise ValueError(f"top_k must be at least 1, got {top_k}")
         self.top_k = top_k

@@ -86,6 +86,7 @@ def cmd_run(args) -> int:
         embedder=args.embedder,
         top_k=args.top_k,
         floor=args.floor,
+        missing_grade=args.missing_grade,
     )
     router = grader.router
     for record in records:
@@ -117,6 +118,8 @@ def cmd_run(args) -> int:
         "floor": args.floor,
         "judge_calls": pipeline.judge_calls(outputs),
         "short_circuits": sum(1 for o in outputs if o["short_circuit"]),
+        "missing_grade": args.missing_grade,
+        "no_saved_grade": sum(1 for o in outputs if o["reason_code"] == "NO_SAVED_GRADE"),
         "seconds": round(seconds, 2),
     }
     meta_path = out_dir / f"{stem}_meta.json"
@@ -282,6 +285,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["minilm", "tfidf"],
         default="minilm",
         help="minilm, the default model, or tfidf, which needs no download but routes worse",
+    )
+    run.add_argument(
+        "--missing-grade",
+        choices=["stop", "review"],
+        default="stop",
+        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
     )
     run.add_argument(
         "--top-k",

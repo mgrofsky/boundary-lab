@@ -16,6 +16,8 @@ GATE_CODES = ("NOT_ALLOWED_FOR_USER",)
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 BACKOFF_SECONDS = (2, 4, 8, 16, 32, 32)
 _sleep = time.sleep
+# What replay does when no saved grade matches: stop the run, or record review.
+MISSING_GRADE = ("stop", "review")
 
 
 class Judge(Protocol):
@@ -242,9 +244,16 @@ class ChatEndpointJudge:
 
 
 class ReplayJudge:
-    """Grades answers by looking up saved judge answers, so no key or network is needed."""
+    """Grades answers by looking up saved judge answers, so no key or network is needed.
 
-    def __init__(self, cache_path):
+    A missing grade stops the run by default. With missing="review", the answer gets
+    review with the code NO_SAVED_GRADE and the run keeps going.
+    """
+
+    def __init__(self, cache_path, missing: str = "stop"):
+        if missing not in MISSING_GRADE:
+            raise ValueError(f"missing must be stop or review, got {missing!r}")
+        self.missing = missing
         self.answers = {}
         self.models = set()
         for line in Path(cache_path).read_text().splitlines():
@@ -256,6 +265,14 @@ class ReplayJudge:
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
         if key not in self.answers:
+            if self.missing == "review":
+                return {
+                    "verdict": "review",
+                    "severity": None,
+                    "reason_code": "NO_SAVED_GRADE",
+                    "reason_text": "No saved judge grade matches this answer and rule.",
+                    "raw": "",
+                }
             raise KeyError(f"no saved judge answer for key {key}")
         return dict(self.answers[key])
 
