@@ -18,7 +18,6 @@ class UserContext(Strict):
     org_id: str = Field(min_length=1, max_length=128)
     permissions: frozenset[str]
     run_id: str = Field(min_length=1, max_length=128)
-    tainted_fields: frozenset[str] = frozenset()
 
 
 class CallInfo(Strict):
@@ -74,6 +73,7 @@ class PreparedAction(BaseModel):
     request_hash: str
     code: Code
     explanation: str
+    copied: frozenset[str] = frozenset()
     _args_json: str = PrivateAttr()
 
     @property
@@ -98,3 +98,4 @@ class OperationStatus(Strict):
     tool: str
     created_at: float
     updated_at: float
+    copied: frozenset[str] = frozenset()

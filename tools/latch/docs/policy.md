@@ -38,17 +38,26 @@ Each tool you register needs a `[tools.<name>]` table.
 | recipient_field | string | none | The argument that holds the recipient |
 | allowed_recipients | list of strings | none | The only values allowed in that argument |
 | approval | table | mode never | When the call waits for approval |
-| tainted_arguments | "allow" or "deny" | allow | Block the call when the app marks an argument as copied from untrusted text |
+| copied_arguments | "allow", "deny" or "approve" | allow | What to do when an argument value was copied from text the model read |
 
-`recipient_field` and `allowed_recipients` go together. Set both or neither. A tool whose approval mode is not `never` must set `approve_permission`.
+`recipient_field` and `allowed_recipients` go together. Set both or neither. A tool whose approval mode is not `never`, or that sets `copied_arguments = "approve"`, must set `approve_permission`.
 
-## Tainted arguments
+## Copied arguments
 
-Your app can tell Latch which arguments were copied from text it does not trust, such as a ticket body or a web page, by setting `tainted_fields` on the `UserContext`. Dye, another Boundary Lab project, produces that set. With `tainted_arguments = "deny"`, Latch blocks the call with `TAINTED_ARGUMENTS` when any of those fields belongs to this tool. The default, `allow`, ignores the mark. Pass the same `UserContext` to `prepare` and `execute`, because Latch checks again before the tool runs.
+A copied value is an argument value the model copied from text it read, such as a ticket body or a web page. Your app tells Latch which arguments hold copied values by passing their paths to `prepare`. Dye, another Boundary Lab project, finds them.
+
+    prepared = latch.prepare(ctx, "issue_refund", args, operation_id=action_id, copied=report)
+
+`copied` takes paths like `"account_id"` or `"items[0].sku"`, or any object with a `.copied` attribute holding them. Latch keeps only the paths whose top level field belongs to this tool. The paths are saved with the operation, and `execute` checks them again.
+
+- `allow`: copied values change nothing. This is the default.
+- `deny`: any copied field blocks the call with `COPIED_ARGUMENTS`.
+- `approve`: any copied field makes the call wait for approval, even when the approval mode is `never`. This setting needs `approve_permission`.
 
     [tools.issue_refund]
     require_permission = "refunds:create"
-    tainted_arguments = "deny"
+    approve_permission = "refunds:approve"
+    copied_arguments = "approve"
 
 ## Approval modes
 

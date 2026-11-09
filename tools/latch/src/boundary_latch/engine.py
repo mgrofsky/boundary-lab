@@ -68,8 +68,21 @@ class Latch:
         return list(self._tools.values())
 
     def prepare(
-        self, ctx: UserContext, tool: str, arguments: dict[str, Any], operation_id: str
+        self,
+        ctx: UserContext,
+        tool: str,
+        arguments: dict[str, Any],
+        operation_id: str,
+        *,
+        copied: Any = (),
     ) -> Decision | PreparedAction:
+        """Check a tool call and save it, ready to run.
+
+        copied lists argument paths, such as "account_id" or "items[0].sku", whose
+        values were copied from text the model read. It also accepts any object with
+        a .copied attribute holding such paths, such as a Dye report.
+        """
+        requested = self._copied_input(copied)
         now = self.clock()
         limits = self.policy.limits
         started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
@@ -95,7 +108,8 @@ class Latch:
         except ValidationError:
             return self._deny_prepare(ctx, tool, operation_id, Code.INVALID_ARGUMENTS, now)
 
-        code = self._check_access(ctx, spec, tp, args)
+        paths = self._copied_fields(spec, requested)
+        code = self._check_access(ctx, spec, tp, args, paths)
         if code is not None:
             return self._deny_prepare(ctx, tool, operation_id, code, now)
 
@@ -103,14 +117,17 @@ class Latch:
         if now >= started_at + limits.run_lifetime_seconds:
             return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
 
-        needs_approval = self._needs_approval(tp, args)
+        needs_approval = self._needs_approval(tp, args, paths)
         canonical = json.dumps(args.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
         request_hash = self._request_hash(ctx, spec, canonical, operation_id)
 
         if existing is not None:
-            if existing["request_hash"] != request_hash:
+            stored = frozenset(json.loads(existing["copied"]))
+            # The approver must have seen every copied field, so a new one is a conflict.
+            if existing["request_hash"] != request_hash or not paths <= stored:
                 return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CONFLICT, now)
             needs_approval = bool(existing["needs_approval"])
+            paths = stored
         code = Code.NEEDS_APPROVAL if needs_approval else Code.ALLOWED
         if existing is None:
             try:
@@ -128,6 +145,7 @@ class Latch:
                         "code": str(code),
                         "created_at": now,
                         "updated_at": now,
+                        "copied": json.dumps(sorted(paths)),
                     }
                 )
             except OperationExists:
@@ -135,7 +153,7 @@ class Latch:
 
         self._audit("prepare", code, ctx, tool, operation_id, now)
         return self._build_prepared(ctx, spec, operation_id, needs_approval, request_hash,
-                                    canonical, code)
+                                    canonical, code, paths)
 
     def approve(self, prepared: PreparedAction, approver: UserContext) -> Decision:
         return self._decide(prepared, approver, approve=True)
@@ -257,6 +275,7 @@ class Latch:
             tool=row["tool"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            copied=frozenset(json.loads(row["copied"])),
         )
 
     def _gate(
@@ -282,11 +301,13 @@ class Latch:
         )
         if not same:
             return refuse(Code.IDENTITY_MISMATCH)
+        if self._copied_denied(prepared):
+            return refuse(Code.COPIED_ARGUMENTS)
         binding = self._validate_prepared(prepared)
         if isinstance(binding, Code):
             return refuse(binding)
         spec, tp, checked = binding
-        code = self._check_access(ctx, spec, tp, checked)
+        code = self._check_access(ctx, spec, tp, checked, prepared.copied)
         if code is not None:
             return refuse(code)
 
@@ -346,17 +367,18 @@ class Latch:
         canonical = json.dumps(checked.model_dump(mode="json"), sort_keys=True,
                                separators=(",", ":"))
         expected_hash = self._request_hash(prepared, spec, canonical, prepared.operation_id)
-        needs_approval = self._needs_approval(tp, checked)
+        needs_approval = self._needs_approval(tp, checked, prepared.copied)
         if (prepared.request_hash != expected_hash or prepared.tool_version != spec.version
                 or prepared.needs_approval != needs_approval):
             return Code.OPERATION_CONFLICT
         row = self.store.get_operation(prepared.org_id, prepared.operation_id)
         if row is None or (
             row["request_hash"], row["run_id"], row["user_id"], row["tool"],
-            row["tool_version"], bool(row["needs_approval"])
+            row["tool_version"], bool(row["needs_approval"]),
+            frozenset(json.loads(row["copied"])),
         ) != (
             expected_hash, prepared.run_id, prepared.user_id, spec.name,
-            spec.version, needs_approval
+            spec.version, needs_approval, prepared.copied,
         ):
             return Code.OPERATION_CONFLICT
         return spec, tp, checked
@@ -389,12 +411,13 @@ class Latch:
         )
 
     def _check_access(
-        self, ctx: UserContext, spec: ToolSpec, tp: ToolPolicy, args: BaseModel
+        self, ctx: UserContext, spec: ToolSpec, tp: ToolPolicy, args: BaseModel,
+        copied: frozenset[str],
     ) -> Code | None:
         if tp.require_permission not in ctx.permissions:
             return Code.MISSING_PERMISSION
-        if tp.tainted_arguments == "deny" and self._tainted(ctx, args):
-            return Code.TAINTED_ARGUMENTS
+        if tp.copied_arguments == "deny" and copied:
+            return Code.COPIED_ARGUMENTS
         recipients = tp.allowed_recipients or []
         if tp.recipient_field is not None and getattr(args, tp.recipient_field) not in recipients:
             return Code.RECIPIENT_NOT_ALLOWED
@@ -408,13 +431,34 @@ class Latch:
         return None
 
     @staticmethod
-    def _tainted(ctx: UserContext, args: BaseModel) -> bool:
-        """True when a tainted path names a top level field of this tool's arguments."""
-        fields = type(args).model_fields
-        return any(path.split(".")[0].split("[")[0] in fields for path in ctx.tainted_fields)
+    def _copied_input(copied: Any) -> frozenset[str]:
+        """Read the paths from an iterable of strings or an object with a .copied attribute."""
+        if hasattr(copied, "copied"):
+            copied = copied.copied
+        if isinstance(copied, str):
+            copied = (copied,)
+        paths = frozenset(copied)
+        if not all(isinstance(path, str) for path in paths):
+            raise TypeError("copied must hold argument paths as strings")
+        return paths
 
     @staticmethod
-    def _needs_approval(tp: ToolPolicy, args: BaseModel) -> bool:
+    def _copied_fields(spec: ToolSpec, paths: frozenset[str]) -> frozenset[str]:
+        """Keep the paths whose top level field names a field of this tool's arguments."""
+        fields = spec.args_model.model_fields
+        return frozenset(p for p in paths if p.split(".")[0].split("[")[0] in fields)
+
+    def _copied_denied(self, prepared: PreparedAction) -> bool:
+        spec = self._tools.get(prepared.tool)
+        tp = self.policy.tools.get(prepared.tool)
+        if spec is None or tp is None or tp.copied_arguments != "deny":
+            return False
+        return bool(self._copied_fields(spec, frozenset(prepared.copied)))
+
+    @staticmethod
+    def _needs_approval(tp: ToolPolicy, args: BaseModel, copied: frozenset[str]) -> bool:
+        if tp.copied_arguments == "approve" and copied:
+            return True
         if tp.approval.mode == "always":
             return True
         if tp.approval.mode == "over_amount":
@@ -449,6 +493,7 @@ class Latch:
         request_hash: str,
         canonical: str,
         code: Code,
+        copied: frozenset[str],
     ) -> PreparedAction:
         prepared = PreparedAction.model_construct(
             operation_id=operation_id,
@@ -461,6 +506,7 @@ class Latch:
             request_hash=request_hash,
             code=code,
             explanation=explain(code),
+            copied=copied,
         )
         prepared._args_json = canonical
         return prepared

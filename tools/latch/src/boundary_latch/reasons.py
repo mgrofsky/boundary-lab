@@ -13,7 +13,7 @@ class Code(StrEnum):
     RECIPIENT_NOT_ALLOWED = "RECIPIENT_NOT_ALLOWED"
     ACCESS_DENIED = "ACCESS_DENIED"
     ACCESS_HOOK_FAILED = "ACCESS_HOOK_FAILED"
-    TAINTED_ARGUMENTS = "TAINTED_ARGUMENTS"
+    COPIED_ARGUMENTS = "COPIED_ARGUMENTS"
     RUN_LIMIT = "RUN_LIMIT"
     RUN_EXPIRED = "RUN_EXPIRED"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
@@ -47,8 +47,9 @@ EXPLANATIONS: dict[Code, str] = {
     Code.RECIPIENT_NOT_ALLOWED: "That recipient is not on the allowed list for this tool.",
     Code.ACCESS_DENIED: "The app's access check says this user cannot use this record.",
     Code.ACCESS_HOOK_FAILED: "The app's access check failed with an error, so Latch blocks the call.",
-    Code.TAINTED_ARGUMENTS: (
-        "One or more argument values came from untrusted text, and this tool's policy blocks that."
+    Code.COPIED_ARGUMENTS: (
+        "One or more argument values were copied from text the model read, "
+        "and this tool's policy blocks that."
     ),
     Code.RUN_LIMIT: "This run has reached its tool request limit.",
     Code.RUN_EXPIRED: "This run has reached its time limit. Start a new run.",

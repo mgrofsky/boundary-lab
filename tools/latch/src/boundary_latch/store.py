@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS operations (
   request_hash TEXT NOT NULL, needs_approval INTEGER NOT NULL,
   state TEXT NOT NULL, code TEXT NOT NULL,
   created_at REAL NOT NULL, updated_at REAL NOT NULL,
+  copied TEXT NOT NULL DEFAULT '[]',
   PRIMARY KEY (org_id, operation_id));
 CREATE TABLE IF NOT EXISTS approvals (
   org_id TEXT NOT NULL, operation_id TEXT NOT NULL, approver_id TEXT NOT NULL,
@@ -43,7 +44,16 @@ OPERATION_COLUMNS = (
     "code",
     "created_at",
     "updated_at",
+    "copied",
 )
+
+# Values for the optional operation columns when a caller leaves them out.
+OPERATION_DEFAULTS: dict[str, Any] = {"copied": "[]"}
+
+# Columns added after 0.2.0. A database written by an older release gets them when opened.
+ADDED_COLUMNS = {
+    "operations": [("copied", "TEXT NOT NULL DEFAULT '[]'")],
+}
 
 RECORDED = ("reserved", "succeeded", "failed", "uncertain")
 
@@ -82,8 +92,16 @@ class SQLiteStore:
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            self._add_missing_columns()
         except sqlite3.Error as exc:
             raise StorageError(f"could not open the store: {exc}") from exc
+
+    def _add_missing_columns(self) -> None:
+        for table, columns in ADDED_COLUMNS.items():
+            have = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            for name, declaration in columns:
+                if name not in have:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
     def close(self) -> None:
         with self._lock:
@@ -139,7 +157,7 @@ class SQLiteStore:
             try:
                 self._conn.execute(
                     f"INSERT INTO operations ({columns}) VALUES ({marks})",
-                    tuple(row[name] for name in OPERATION_COLUMNS),
+                    tuple(row.get(name, OPERATION_DEFAULTS.get(name)) for name in OPERATION_COLUMNS),
                 )
             except sqlite3.IntegrityError as exc:
                 raise OperationExists(row["operation_id"]) from exc
