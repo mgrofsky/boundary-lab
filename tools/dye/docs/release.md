@@ -2,19 +2,19 @@
 
 Dye's package name on PyPI is `boundary-dye`. The first public release, 0.1.0, was uploaded by hand with twine and an API token, to TestPyPI first and then PyPI.
 
-The repository also has a release workflow in `.github/workflows/release-dye.yml`. It is configured to use Trusted Publishing, which lets GitHub publish without a stored PyPI token. The workflow starts when a tag beginning with `dye-v` is pushed. This page describes that configured path; the uploads so far did not use it.
+The repository also has a release workflow in `.github/workflows/release-dye.yml`. It uses Trusted Publishing, which lets GitHub publish without a stored PyPI token. The workflow starts when a tag beginning with `dye-v` is pushed. It ran from start to finish on the `dye-v0.1.0` tag after the hand upload, and both publish jobs succeeded. The publish steps skip files the index already has, so that run uploaded nothing new.
 
 ## What the workflow does
 
 1. Build the source archive, called an sdist, and the installable wheel in `tools/dye`. Run `twine check` and fail if the tag does not match the version in `pyproject.toml`. For example, tag `dye-v0.1.0` requires version `0.1.0`.
-2. Publish to TestPyPI using the GitHub `testpypi` environment.
+2. Publish to TestPyPI using the GitHub `testpypi` environment. Files that TestPyPI already has are skipped.
 3. After TestPyPI succeeds, publish to PyPI using the GitHub `pypi` environment.
 
 Each publish job requests the `id-token: write` permission to identify itself to the package service. The build job only needs read access to the repository. Approval before publishing depends on the reviewer rules set on the two GitHub environments.
 
 ## Check the publishing setup
 
-The repository owner needs to check these settings before relying on the workflow. Having the workflow file in the repository does not confirm the service settings.
+These settings are in place for the current repository and workflow names. Check them again if any of those names change. Having the workflow file in the repository does not confirm the service settings.
 
 1. On TestPyPI and PyPI, open the project's Publishing settings and add or verify the trusted publisher. Use a pending publisher if the project has not been created on that service.
    - Project: `boundary-dye`
