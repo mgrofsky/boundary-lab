@@ -52,7 +52,8 @@ class ToolPolicy(Strict):
 class Limits(Strict):
     max_actions_per_run: int = Field(default=20, ge=1, le=10000)
     max_proposals_per_run: int | None = Field(default=None, ge=1)
-    run_lifetime_seconds: int = Field(default=900, ge=1)
+    run_lifetime_seconds: int = Field(default=900, ge=0)
+    run_idle_seconds: int = Field(default=0, ge=0)
     approval_lifetime_seconds: int = Field(default=600, ge=1)
 
 

@@ -24,7 +24,7 @@ from .models import (
 )
 from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
-from .store import CLOSED, OperationExists, SQLiteStore
+from .store import CLOSED, OperationExists, SQLiteStore, run_deadline
 
 SUMMARY_LIMIT = 300
 
@@ -88,9 +88,10 @@ class Latch:
         requested = self._copied_input(copied)
         now = self.clock()
         limits = self.policy.limits
-        started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
-        if now >= started_at + limits.run_lifetime_seconds:
+        deadline = self._deadline(ctx, now)
+        if now >= deadline:
             return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
+        self.store.mark_touch(ctx.org_id, ctx.run_id, now)
 
         # Submitting the same operation ID again does not count against the proposal limit.
         existing = self.store.get_operation(ctx.org_id, operation_id)
@@ -121,7 +122,7 @@ class Latch:
             return self._deny_prepare(ctx, tool, operation_id, Code.DESCRIBE_FAILED, now)
 
         now = self.clock()
-        if now >= started_at + limits.run_lifetime_seconds:
+        if now >= deadline:
             return self._deny_prepare(ctx, tool, operation_id, Code.RUN_EXPIRED, now)
 
         needs_approval = self._needs_approval(tp, args, paths)
@@ -305,6 +306,7 @@ class Latch:
             limits.run_lifetime_seconds,
             limits.approval_lifetime_seconds,
             reference,
+            run_idle=limits.run_idle_seconds,
         )
         if result == "closed":
             return answer(self._row_code(prepared))
@@ -420,7 +422,7 @@ class Latch:
 
         now = self.clock()
         limits = self.policy.limits
-        started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
+        deadline = self._deadline(ctx, now)
         result = self.store.reserve(
             ctx.org_id,
             prepared.operation_id,
@@ -428,7 +430,7 @@ class Latch:
             prepared.request_hash,
             now,
             prepared.needs_approval,
-            started_at + limits.run_lifetime_seconds,
+            deadline,
             limits.max_actions_per_run,
             clock=self.clock,
         )
@@ -459,6 +461,14 @@ class Latch:
             tool_version=spec.version,
         )
         return spec, args, info
+
+    def _deadline(self, ctx: UserContext, now: float) -> float:
+        """Start the run if it is new and return when it expires."""
+        limits = self.policy.limits
+        started_at, _ = self.store.touch_run(ctx.org_id, ctx.run_id, now)
+        last_at = self.store.last_touch(ctx.org_id, ctx.run_id)
+        return run_deadline(started_at, last_at, limits.run_lifetime_seconds,
+                            limits.run_idle_seconds)
 
     def _validate_prepared(
         self, prepared: PreparedAction

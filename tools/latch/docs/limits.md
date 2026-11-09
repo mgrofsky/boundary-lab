@@ -11,7 +11,16 @@ Latch counts two things in a run.
 - `max_actions_per_run` counts what runs. It is checked at `execute`. Every operation in the run that Latch has reserved or finished counts, whether it succeeded, failed, or was uncertain. The count happens inside the same database transaction that reserves the operation, so two threads cannot both pass the limit.
 - `max_proposals_per_run` counts what the model asks for. It is checked at `prepare` and is off by default. Every new operation ID counts, even one that `prepare` blocks. Preparing a stored operation again does not count twice.
 
-Past the action limit, `execute` returns outcome `denied` with `RUN_LIMIT` and the handler does not run. Latch closes that operation with the `RUN_LIMIT` code and writes an audit row. Running it again returns `RUN_LIMIT`, and preparing it again returns `OPERATION_CLOSED`. Past the proposal limit, `prepare` returns `RUN_LIMIT`. In the `exhausted_limit` scenario, Sam runs 20 lookups, prepares a 21st, and gets `RUN_LIMIT` when it tries to run. When the run expires, Latch returns `RUN_EXPIRED`. A new conversation can start a new run, but that does not let an old pending action run again. Use `operation_status` to look up an earlier operation without submitting it again.
+Past the action limit, `execute` returns outcome `denied` with `RUN_LIMIT` and the handler does not run. Latch closes that operation with the `RUN_LIMIT` code and writes an audit row. Running it again returns `RUN_LIMIT`, and preparing it again returns `OPERATION_CLOSED`. Past the proposal limit, `prepare` returns `RUN_LIMIT`. In the `exhausted_limit` scenario, Sam runs 20 lookups, prepares a 21st, and gets `RUN_LIMIT` when it tries to run. When the run expires, Latch returns `RUN_EXPIRED`.
+
+## How long a run lasts
+
+Two settings decide when a run expires. Latch checks both at `prepare`, `approve`, and `execute`, and returns `RUN_EXPIRED` when either one has passed.
+
+- `run_lifetime_seconds` counts from the run's first call. The default is 900 seconds. Set it to 0 for no limit.
+- `run_idle_seconds` counts from the run's last activity. The run expires when that much time passes with no `prepare` or `execute` call. The default is 0, which turns it off. A call that gets `RUN_EXPIRED` does not count as activity, and neither does an approval.
+
+A conversation that can last for hours fits better with a lifetime of 0 and an idle time such as 1800. An approval still expires after `approval_lifetime_seconds`, or when the run reaches its lifetime if that comes first. A new conversation can start a new run, but that does not let an old pending action run again. Use `operation_status` to look up an earlier operation without submitting it again.
 
 ## What happens at the time limit
 

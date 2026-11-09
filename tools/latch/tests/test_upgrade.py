@@ -53,6 +53,9 @@ def test_a_0_2_database_gets_the_new_columns(tmp_path):
     assert {"copied", "summary"} <= columns(store, "operations")
     assert {"summary", "copied", "reference"} <= columns(store, "audit")
     assert "reference" in columns(store, "approvals")
+    assert "last_at" in columns(store, "runs")
+    # A run from 0.2.0 has no last touch, so its start time stands in.
+    assert store.last_touch("o", "r") == 10.0
     store.close()
     # Opening it a second time changes nothing.
     again = SQLiteStore(path)
