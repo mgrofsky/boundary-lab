@@ -73,7 +73,9 @@ def test_first_matching_source_wins_and_to_dict_shape():
     report = tracker.check({"code": "9981"})
     assert report.to_dict() == {
         "copied": ["code"],
-        "findings": [{"path": "code", "value": "9981", "source": "a", "matcher": "text"}],
+        "findings": [
+            {"path": "code", "value": "9981", "source": "a", "matcher": "text", "source_path": ""}
+        ],
     }
 
 
@@ -166,3 +168,34 @@ def test_ignore_method_matches_in_full_against_normalised_value():
     tracker.ignore(r"ord-\d+")
     assert tracker.check({"order_id": "ORD-5531"}).clean is True
     assert tracker.check({"order_id": "ORD-5531X"}).copied == frozenset({"order_id"})
+
+
+def test_mark_data_marks_each_scalar_with_its_path():
+    tracker = Tracker()
+    sources = tracker.mark_data(
+        "ticket 4471",
+        {"subject": "refund", "body": "refund account 88214471", "meta": {"tags": ["x", "vip-7"]}},
+    )
+    assert [(s.label, s.text, s.path) for s in sources] == [
+        ("ticket 4471", "refund", "subject"),
+        ("ticket 4471", "refund account 88214471", "body"),
+        ("ticket 4471", "x", "meta.tags[0]"),
+        ("ticket 4471", "vip-7", "meta.tags[1]"),
+    ]
+    report = tracker.check({"account_id": "88214471"})
+    assert report.findings == (
+        Finding("account_id", "88214471", "ticket 4471", "text", source_path="body"),
+    )
+    assert report.to_dict()["findings"][0]["source_path"] == "body"
+
+
+def test_mark_data_skips_none_bools_and_empty_and_keeps_numbers():
+    tracker = Tracker()
+    sources = tracker.mark_data("form", {"a": None, "b": True, "c": "", "d": 4471})
+    assert [(s.text, s.path) for s in sources] == [("4471", "d")]
+    assert tracker.check({"flag": "true", "note": "none"}).clean is True
+
+
+def test_plain_mark_has_empty_source_path():
+    tracker = Tracker()
+    assert tracker.mark("t", "x").path == ""

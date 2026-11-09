@@ -39,6 +39,10 @@ The report lists each copied argument, the value, the source label, and the matc
 
 Make one `Tracker` per conversation. Mark text as it arrives, and trust the values your app already knows, such as the signed in account, so they are never reported even when the customer repeats them. `report.copied` is the set of copied argument paths, such as `account_id` or `items[0].sku`. `report.to_dict()` gives JSON ready output.
 
+When the untrusted input is structured, such as a ticket fetched as JSON, mark it with `mark_data`. Each string or number inside it is marked with its path, and a finding names that path in `source_path`. A report can then say that `account_id` was copied from ticket 4471 at `body`.
+
+    tracker.mark_data("ticket 4471", {"subject": subject, "body": body})
+
 ## How matching works
 
 Dye compares each argument value with the marked text in three ways.

@@ -74,6 +74,7 @@ def contains_term(text: str, term: str) -> bool:
 class Source:
     label: str
     text: str
+    path: str = ""
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,7 @@ class Finding:
     value: str
     source: str
     matcher: str
+    source_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -130,15 +132,30 @@ class Tracker:
     def sources(self) -> tuple[Source, ...]:
         return tuple(self._sources)
 
-    def mark(self, label: str, text: str) -> Source:
-        """Record text that came from outside the app, such as a ticket body or a web page."""
+    def mark(self, label: str, text: str, path: str = "") -> Source:
+        """Record text that came from outside the app, such as a ticket body or a web page.
+
+        path says where in a larger record the text sat, such as body. It is optional.
+        """
         if not label:
             raise ValueError("label is required")
-        source = Source(label, text)
+        source = Source(label, text, path)
         plain = normalize(text)
         self._sources.append(source)
         self._index.append((source, plain, spelled_out(plain), digit_runs(text)))
         return source
+
+    def mark_data(self, label: str, data: Any) -> list[Source]:
+        """Mark every scalar inside a dict or list as text, each with its own path.
+
+        None, booleans and empty strings are skipped, as check() skips them.
+        """
+        marked = []
+        for path, value in leaves(data):
+            if value is None or isinstance(value, bool) or str(value) == "":
+                continue
+            marked.append(self.mark(label, str(value), path))
+        return marked
 
     def trust(self, *values: Any) -> None:
         """Record values the app supplied itself, such as the signed in account. They are never reported."""
@@ -176,7 +193,7 @@ class Tracker:
                 continue
             found = self._match(text)
             if found is not None:
-                findings.append(Finding(path, raw, found[0].label, found[1]))
+                findings.append(Finding(path, raw, found[0].label, found[1], found[0].path))
                 continue
             for token in tokens(raw):
                 plain = normalize(token)
@@ -184,7 +201,7 @@ class Tracker:
                     continue
                 found = self._match(plain)
                 if found is not None:
-                    findings.append(Finding(path, token, found[0].label, "token"))
+                    findings.append(Finding(path, token, found[0].label, "token", found[0].path))
                     break
         return Report(tuple(findings))
 

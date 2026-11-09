@@ -4,6 +4,8 @@ Part of [Dye](../README.md).
 
 A `Tracker` holds the text you marked for one conversation. Each `mark(label, text)` call stores the text three ways: lowercased with runs of whitespace collapsed to one space, the same text with spelled out "dot" and "at" turned into "." and "@", and the set of whole numbers in it. A whole number is a digit run after the spaces, dots, commas and dashes between digits are removed. "$420.00" becomes "42000". "4471 2201" becomes "44712201".
 
+`mark_data(label, data)` walks a dict or list and marks each scalar as its own source with the same label and a path such as `body` or `comments[0].text`. It skips `None`, booleans and empty strings. A finding carries the matching source's path in `source_path`, which is empty for text marked with `mark`.
+
 `trust(*values)` records values the app supplied itself, such as the signed in account. A trusted value is never reported.
 
 `Tracker(ignore=...)` and `ignore(*patterns)` record regular expressions. A value or token whose normalised form matches one of them in full is skipped and never reported. `COMMON_IGNORE` is an opt in tuple with patterns for cloud regions and ISO dates.
