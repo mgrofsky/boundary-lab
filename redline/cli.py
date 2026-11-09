@@ -57,41 +57,39 @@ def _in_chunks(records, fn, label):
 
 
 def cmd_run(args) -> int:
-    from redline import pipeline, policy
-    from redline.embed import Embedder
-    from redline.judge import ChatEndpointJudge, ReplayJudge, select
-    from redline.router import KMeansRouter, Router, ShortCircuit
+    from redline import api
+    from redline.judge import ChatEndpointJudge
+    from redline.router import ShortCircuit
 
-    rules = policy.load(args.rules)
-    train = read_jsonl(args.train)
     records = read_jsonl(args.data)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    examples = select(train)
-    (out_dir / "judge_examples.json").write_text(json.dumps(examples, indent=2) + "\n")
-
+    judge = None
     if args.judge == "live":
         load_env_file()
         base_url, model, api_key = _env("REDLINE_JUDGE")
         judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache)
-    else:
-        judge = ReplayJudge(args.cache)
 
-    short_circuit = None
+    short_circuit = False
     if args.short_circuit:
         short_circuit = ShortCircuit(args.purity, args.min_members, args.margin)
-    if args.router == "kmeans":
-        router = KMeansRouter(Embedder(), k=args.k, seed=args.seed, short_circuit=short_circuit)
-    else:
-        router = Router(Embedder(), short_circuit=short_circuit)
-    router.fit(train)
+    grader = api.Grader(
+        rules=args.rules,
+        train=args.train,
+        judge=judge,
+        router=args.router,
+        k=args.k,
+        short_circuit=short_circuit,
+        seed=args.seed,
+        cache=args.cache,
+    )
+    router = grader.router
+    (out_dir / "judge_examples.json").write_text(json.dumps(grader.examples, indent=2) + "\n")
 
     # Start timing after router setup and model loading, so this measures grading only.
     start = time.perf_counter()
-    outputs = _in_chunks(
-        records, lambda batch: pipeline.run(batch, rules, router, judge, examples), "graded"
-    )
+    outputs = _in_chunks(records, grader.run, "graded")
     seconds = time.perf_counter() - start
 
     stem = Path(args.data).stem

@@ -29,6 +29,23 @@ Replay uses saved judge answers from `data/judge_cache.jsonl`, so you don't need
 
 The 56 holdout examples are answers kept back for checking the tool. Each has a `good` or `bad` label written by hand, so you can compare Redline's decisions with those labels.
 
+## Use it in your code
+
+`Grader` runs the same steps as `redline run`, one answer at a time. Run this from the repository root:
+
+```python
+from redline import Grader
+
+grader = Grader()  # saved rules, examples and judge answers, center matching
+prompt = "how much is autopay going to take out next week"
+response = "Autopay will draw $103.85 on Tuesday, which covers this month's bill in full."
+print(grader.grade(prompt, response, "verified")["outcome"])  # pass
+```
+
+`grade` returns the same fields as a line in `holdout_outputs.jsonl`, without the `id`. Building the `Grader` loads the rules, picks judge examples and sets up the router, so build it once and reuse it.
+
+By default it uses the replay judge, which only knows the saved answers. To grade new answers, pass `judge=ChatEndpointJudge(base_url, model, api_key, cache_path="my_cache.jsonl")` from `redline.judge`. The other options match the `redline run` flags: `rules`, `train`, `router`, `k`, `short_circuit`, `seed` and `cache`.
+
 ## Pick how answers find a rule
 
 There are two options:
