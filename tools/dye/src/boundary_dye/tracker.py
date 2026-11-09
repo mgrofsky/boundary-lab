@@ -12,6 +12,8 @@ _JOINERS = re.compile(r"(?<=\d)[ .,-](?=\d)")
 _DIGIT_RUN = re.compile(r"\d+")
 _SPELLED_DOT = re.compile(r"\s*[(\[]?\bdot\b[)\]]?\s*")
 _SPELLED_AT = re.compile(r"\s*[(\[]?\bat\b[)\]]?\s*")
+_SEPARATORS = re.compile(r"[\s,=:;/?&()\[\]{}<>\"'`]+")
+MIN_TOKEN = 4
 
 
 def normalize(text: str) -> str:
@@ -36,6 +38,25 @@ def numeric_form(text: str) -> str | None:
     """The digits of a value made only of digits and joiners, else None."""
     joined = _JOINERS.sub("", text.strip())
     return joined if joined.isascii() and joined.isdigit() else None
+
+
+def tokens(text: str) -> list[str]:
+    """Pieces of a composite value worth checking on their own, such as the id inside an ARN.
+
+    The text is split on runs of whitespace and , = : ; / ? & ( ) [ ] { } < > quotes and
+    backticks. Dashes and dots do not split. A token is kept when it is at least four
+    characters long and holds a digit or an @. A token equal to the whole text is dropped.
+    """
+    if not _SEPARATORS.search(text):
+        return []
+    whole = text.strip()
+    return [
+        piece
+        for piece in _SEPARATORS.split(text)
+        if len(piece) >= MIN_TOKEN
+        and piece != whole
+        and ("@" in piece or any(c.isdigit() for c in piece))
+    ]
 
 
 def contains_term(text: str, term: str) -> bool:
@@ -115,20 +136,39 @@ class Tracker:
         self._trusted.update(normalize(str(value)) for value in values)
 
     def check(self, arguments: dict[str, Any]) -> Report:
-        """Report every argument value that appears in the marked text."""
+        """Report every argument value that appears in the marked text.
+
+        The whole value is tested first. When it does not match, each token inside it is
+        tested, and the first token that matches is reported with the matcher "token".
+        """
         findings: list[Finding] = []
         for path, value in leaves(arguments):
             if value is None or isinstance(value, bool):
                 continue
-            text = normalize(str(value))
+            raw = str(value)
+            text = normalize(raw)
             if not text or text in self._trusted:
                 continue
-            number = numeric_form(text)
-            for source, plain, spelled, runs in self._index:
-                if contains_term(plain, text) or contains_term(spelled, text):
-                    findings.append(Finding(path, str(value), source.label, "text"))
-                    break
-                if number is not None and number in runs:
-                    findings.append(Finding(path, str(value), source.label, "digits"))
+            found = self._match(text)
+            if found is not None:
+                findings.append(Finding(path, raw, found[0].label, found[1]))
+                continue
+            for token in tokens(raw):
+                plain = normalize(token)
+                if not plain or plain in self._trusted:
+                    continue
+                found = self._match(plain)
+                if found is not None:
+                    findings.append(Finding(path, token, found[0].label, "token"))
                     break
         return Report(tuple(findings))
+
+    def _match(self, text: str) -> tuple[Source, str] | None:
+        """The first source holding the normalised text, and the matcher that found it."""
+        number = numeric_form(text)
+        for source, plain, spelled, runs in self._index:
+            if contains_term(plain, text) or contains_term(spelled, text):
+                return source, "text"
+            if number is not None and number in runs:
+                return source, "digits"
+        return None

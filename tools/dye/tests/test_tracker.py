@@ -80,3 +80,59 @@ def test_first_matching_source_wins_and_to_dict_shape():
 def test_mark_requires_label():
     with pytest.raises(ValueError):
         Tracker().mark("", "anything")
+
+
+def test_token_inside_an_arn_is_found():
+    tracker = Tracker()
+    tracker.mark("ticket", "please stop instance i-0abc1234 today")
+    report = tracker.check({"resource": "arn:aws:ec2:us-east-2:111122223333:instance/i-0abc1234"})
+    assert report.findings == (Finding("resource", "i-0abc1234", "ticket", "token"),)
+
+
+def test_token_keeps_case_and_matches_email_in_url():
+    tracker = Tracker()
+    tracker.mark("page", "contact Ops@Example.com")
+    report = tracker.check({"url": "https://mail.example.com/send?to=Ops@Example.com&x=1"})
+    assert report.findings == (Finding("url", "Ops@Example.com", "page", "token"),)
+
+
+def test_token_digits_match():
+    tracker = Tracker()
+    tracker.mark("ticket", "open network 10.20.0.0 to the world")
+    report = tracker.check({"cidr": "10.20.0.0/16"})
+    assert report.findings == (Finding("cidr", "10.20.0.0", "ticket", "token"),)
+
+
+def test_whole_value_match_wins_over_token():
+    tracker = Tracker()
+    tracker.mark("ticket", "path is /srv/data/4471 now")
+    report = tracker.check({"path": "/srv/data/4471"})
+    assert report.findings == (Finding("path", "/srv/data/4471", "ticket", "text"),)
+
+
+def test_tokens_need_four_chars_and_a_digit_or_at():
+    tracker = Tracker()
+    tracker.mark("ticket", "use the main branch 42 and abc1")
+    assert tracker.check({"ref": "refs/heads/main"}).clean is True
+    assert tracker.check({"ref": "refs/42/x"}).clean is True
+    assert tracker.check({"ref": "refs/abc1/x"}).copied == frozenset({"ref"})
+
+
+def test_dashes_and_dots_do_not_split():
+    tracker = Tracker()
+    tracker.mark("ticket", "id 0abc9 please")
+    assert tracker.check({"resource": "arn:x:i-0abc9.extra"}).clean is True
+
+
+def test_trusted_tokens_are_skipped():
+    tracker = Tracker()
+    tracker.mark("ticket", "my account 111122223333 is broken")
+    tracker.trust("111122223333")
+    assert tracker.check({"role": "arn:aws:iam::111122223333:role/x"}).clean is True
+
+
+def test_one_finding_per_path_first_token_wins():
+    tracker = Tracker()
+    tracker.mark("ticket", "move a1b2 and c3d4")
+    report = tracker.check({"spec": "a1b2,c3d4"})
+    assert report.findings == (Finding("spec", "a1b2", "ticket", "token"),)

@@ -12,4 +12,8 @@ A `Tracker` holds the text you marked for one conversation. Each `mark(label, te
 
 - Digits match: the value is only digits and joiners, and its digits equal one whole number from the text.
 
+- Token match: tried only when the whole value does not match. The value is split on runs of whitespace and these characters: `, = : ; / ? & ( ) [ ] { } < >`, both quote marks and the backtick. Dashes and dots do not split. Each piece that has at least four characters and holds a digit or an @ is tested with the text and digits matches. Pieces equal to the whole value and trusted pieces are skipped. The first piece that matches is reported with the matcher `token`, and the finding's value is that piece.
+
+Each path gets at most one finding.
+
 A `Report` holds the findings. `report.copied` is the set of copied argument paths. `report.clean` is true when there are none. `report.to_dict()` returns `{"copied": [...], "findings": [...]}` with the paths sorted.
