@@ -340,6 +340,12 @@ class SQLiteStore:
             (org_id, run_id, *RECORDED),
         ).fetchone()[0]
         if used >= max_actions:
+            # Refused for good: the operation is closed with the RUN_LIMIT code.
+            self._conn.execute(
+                "UPDATE operations SET state = 'denied', code = 'RUN_LIMIT', updated_at = ?"
+                " WHERE org_id = ? AND operation_id = ?",
+                (now, org_id, operation_id),
+            )
             return "run_limit"
         if op["needs_approval"]:
             approval = self._conn.execute(

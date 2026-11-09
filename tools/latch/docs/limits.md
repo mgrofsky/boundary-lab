@@ -4,9 +4,14 @@
 
 The defaults are 20 actions per run, a run lifetime of 900 seconds and an approval lifetime of 600 seconds. Change them in the `[limits]` table of the policy.
 
-A run groups calls that share a `run_id` within one organization. A new operation ID counts toward the run's limit. Once Latch stores the operation, submitting it again in the same run does not count twice. An operation stays tied to its original run; moving it to another run gives `OPERATION_CONFLICT`.
+A run groups calls that share a `run_id` within one organization. An operation stays tied to its original run; moving it to another run gives `OPERATION_CONFLICT`.
 
-When you exceed the call limit, Latch returns `RUN_LIMIT`. When the run expires, it returns `RUN_EXPIRED`. A new conversation can start a new run, but that does not let an old pending action run again. Use `operation_status` to look up an earlier operation without submitting it again.
+Latch counts two things in a run.
+
+- `max_actions_per_run` counts what runs. It is checked at `execute`. Every operation in the run that Latch has reserved or finished counts, whether it succeeded, failed, or was uncertain. The count happens inside the same database transaction that reserves the operation, so two threads cannot both pass the limit.
+- `max_proposals_per_run` counts what the model asks for. It is checked at `prepare` and is off by default. Every new operation ID counts, even one that `prepare` blocks. Preparing a stored operation again does not count twice.
+
+Past the action limit, `execute` returns outcome `denied` with `RUN_LIMIT` and the handler does not run. Latch closes that operation with the `RUN_LIMIT` code and writes an audit row. Running it again returns `RUN_LIMIT`, and preparing it again returns `OPERATION_CLOSED`. Past the proposal limit, `prepare` returns `RUN_LIMIT`. In the `exhausted_limit` scenario, Sam runs 20 lookups, prepares a 21st, and gets `RUN_LIMIT` when it tries to run. When the run expires, Latch returns `RUN_EXPIRED`. A new conversation can start a new run, but that does not let an old pending action run again. Use `operation_status` to look up an earlier operation without submitting it again.
 
 ## What happens at the time limit
 

@@ -13,7 +13,8 @@ Latch makes a fingerprint of the loaded policy settings, called a digest. It inc
 
 | Key | Type | Default | Range |
 | --- | --- | --- | --- |
-| max_actions_per_run | integer | 20 | 1 to 10000 |
+| max_actions_per_run | integer | 20 | 1 to 10000, counted at `execute` |
+| max_proposals_per_run | integer | none | at least 1, counted at `prepare` |
 | run_lifetime_seconds | integer | 900 | at least 1 |
 | approval_lifetime_seconds | integer | 600 | at least 1 |
 

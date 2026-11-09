@@ -12,6 +12,8 @@ Each change below lists the one line fix.
 - Preparing a denied operation again used to return a `PreparedAction` that could never run. It now returns a `Decision` with the new code `OPERATION_CLOSED`. Fix: give the new request a new operation ID.
 - `OperationStatus` has new required fields, so code that builds one by hand must set them. Fix: add `needs_approval`, `user_id` and `run_id` where you build it.
 
+- `max_actions_per_run` now counts the operations that run, checked at `execute`, instead of the requests made at `prepare`. Fix: set `max_proposals_per_run` to your old value to keep a limit at `prepare`.
+
 ### Added
 
 - `copied_arguments = "approve"` makes a call with a copied value wait for approval.
@@ -19,3 +21,4 @@ Each change below lists the one line fix.
 - `approve` and `deny` take a `reference` that names the evidence for the decision.
 - `pending(org_id, run_id=None)` lists the operations waiting for approval.
 - `cancel(prepared, by)` stops an operation before it runs, with the code `CANCELLED`.
+- `max_proposals_per_run` limits how many requests a run can make at `prepare`.

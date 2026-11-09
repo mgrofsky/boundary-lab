@@ -14,7 +14,7 @@ TITLES = [
     "A message goes out after a supervisor approves",
     "The refund amount changes after approval, using the same operation ID",
     "The same refund is submitted twice",
-    "One run asks for more actions than the policy allows",
+    "One run tries to run more actions than the policy allows",
     "The refund goes through, but the reply is too slow",
     "An approval expires before the tool runs",
 ]

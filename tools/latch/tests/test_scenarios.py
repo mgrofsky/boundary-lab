@@ -48,7 +48,7 @@ def test_scenario_details():
     assert duplicate.expected == ["ALLOWED", "EXECUTED", "ALREADY_RECORDED"]
     assert duplicate.steps[1].state_change == "A1 balance 100.00 -> 80.00"
     assert duplicate.steps[2].state_change == "nothing"
-    assert found["exhausted_limit"].expected == ["ALLOWED", "RUN_LIMIT"]
+    assert found["exhausted_limit"].expected == ["EXECUTED", "ALLOWED", "RUN_LIMIT"]
     timeout = found["timeout_after_refund"]
     assert timeout.expected == ["ALLOWED", "UNCERTAIN", "UNCERTAIN"]
     assert "refunds recorded 1" in timeout.steps[-1].state_change
