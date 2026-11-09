@@ -60,7 +60,8 @@ def _split_source(option: str, item: str) -> tuple[str, str]:
 
 def cmd_check(ns: argparse.Namespace) -> int:
     if not ns.source and not ns.source_json:
-        raise SystemExit("check needs at least one --source or --source-json")
+        print("boundary-dye check: needs at least one --source or --source-json", file=sys.stderr)
+        raise SystemExit(2)
     tracker = Tracker(ignore=ns.ignore)
     read_stdin = False
     for item in ns.source:

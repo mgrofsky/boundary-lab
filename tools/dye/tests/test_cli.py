@@ -84,9 +84,11 @@ def test_check_marks_a_json_source(tmp_path, capsys):
     assert finding["source_path"] == "body"
 
 
-def test_check_needs_a_source():
-    with pytest.raises(SystemExit):
+def test_check_needs_a_source(capsys):
+    with pytest.raises(SystemExit) as exc:
         main(["check", "--args", "{}"])
+    assert exc.value.code == 2
+    assert "--source" in capsys.readouterr().err
 
 
 def test_check_ignore_is_repeatable(tmp_path, capsys):
