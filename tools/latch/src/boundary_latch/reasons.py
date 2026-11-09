@@ -23,6 +23,8 @@ class Code(StrEnum):
     APPROVER_NOT_ALLOWED = "APPROVER_NOT_ALLOWED"
     IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
     OPERATION_CONFLICT = "OPERATION_CONFLICT"
+    OPERATION_CLOSED = "OPERATION_CLOSED"
+    CANCELLED = "CANCELLED"
     ALREADY_RECORDED = "ALREADY_RECORDED"
     UNCERTAIN = "UNCERTAIN"
     EXECUTED = "EXECUTED"
@@ -70,6 +72,11 @@ EXPLANATIONS: dict[Code, str] = {
     Code.OPERATION_CONFLICT: (
         "The request, tool, policy, or saved record does not match this operation ID."
     ),
+    Code.OPERATION_CLOSED: (
+        "This operation was denied, cancelled or refused earlier, so it cannot be prepared "
+        "again. Use a new operation ID."
+    ),
+    Code.CANCELLED: "The request was cancelled before it ran, so it will not run.",
     Code.ALREADY_RECORDED: (
         "Latch already recorded an attempt for this operation and will not start it again."
     ),

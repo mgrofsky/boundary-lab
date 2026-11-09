@@ -92,6 +92,7 @@ class ExecutionResult(Strict):
     value: Any = None
     replayed: bool = False
     duration_ms: int = 0
+    reference: str | None = None
 
 
 class OperationStatus(Strict):
@@ -101,5 +102,9 @@ class OperationStatus(Strict):
     tool: str
     created_at: float
     updated_at: float
-    copied: frozenset[str] = frozenset()
+    needs_approval: bool
+    user_id: str
+    run_id: str
     summary: str = ""
+    copied: frozenset[str] = frozenset()
+    reference: str | None = None

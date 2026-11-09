@@ -22,6 +22,9 @@ def test_status_after_prepare_and_run(latch, clock, handlers):
         tool="lookup_account",
         created_at=1000.0,
         updated_at=1000.0,
+        needs_approval=False,
+        user_id="sam",
+        run_id="run1",
     )
     clock.now += 5
     latch.execute(prepared, make_ctx())

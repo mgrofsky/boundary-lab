@@ -24,12 +24,13 @@ from .models import (
 )
 from .policy import Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
-from .store import OperationExists, SQLiteStore
+from .store import CLOSED, OperationExists, SQLiteStore
 
 SUMMARY_LIMIT = 300
 
+REFERENCE_LIMIT = 128
+
 RESERVE_CODES = {
-    "denied": Code.DENIED_BY_APPROVER,
     "approval_missing": Code.APPROVAL_REQUIRED,
     "approval_expired": Code.APPROVAL_EXPIRED,
     "run_expired": Code.RUN_EXPIRED,
@@ -131,6 +132,8 @@ class Latch:
             # The approver must have seen every copied field, so a new one is a conflict.
             if existing["request_hash"] != request_hash or not paths <= stored:
                 return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CONFLICT, now)
+            if existing["state"] in CLOSED:
+                return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CLOSED, now)
             needs_approval = bool(existing["needs_approval"])
             paths = stored
             summary = existing["summary"]
@@ -163,13 +166,95 @@ class Latch:
         return self._build_prepared(ctx, spec, operation_id, needs_approval, request_hash,
                                     canonical, code, paths, summary)
 
-    def approve(self, prepared: PreparedAction, approver: UserContext) -> Decision:
-        return self._decide(prepared, approver, approve=True)
+    def approve(
+        self, prepared: PreparedAction, approver: UserContext, reference: str | None = None
+    ) -> Decision:
+        """Approve a pending request. reference names the evidence, such as a ticket."""
+        return self._decide(prepared, approver, True, self._check_reference(reference))
 
-    def deny(self, prepared: PreparedAction, approver: UserContext) -> Decision:
-        return self._decide(prepared, approver, approve=False)
+    def deny(
+        self, prepared: PreparedAction, approver: UserContext, reference: str | None = None
+    ) -> Decision:
+        """Deny a pending request. reference names the evidence, such as a ticket."""
+        return self._decide(prepared, approver, False, self._check_reference(reference))
 
-    def _decide(self, prepared: PreparedAction, approver: UserContext, approve: bool) -> Decision:
+    def pending(self, org_id: str, run_id: str | None = None) -> list[OperationStatus]:
+        """Prepared operations that need approval and have no decision yet, oldest first."""
+        return [self._status(row) for row in self.store.pending(org_id, run_id)]
+
+    def cancel(self, prepared: PreparedAction, by: UserContext) -> Decision:
+        """Stop a prepared or approved operation before it runs.
+
+        The requester can cancel, and so can a user in the same organization with the
+        tool's approve_permission. A cancelled operation returns CANCELLED.
+        """
+        now = self.clock()
+
+        def answer(code: Code, explanation: str | None = None) -> Decision:
+            self.store.audit(
+                "cancel",
+                str(code),
+                prepared.org_id,
+                run_id=prepared.run_id,
+                operation_id=prepared.operation_id,
+                user_id=by.user_id,
+                tool=prepared.tool,
+                now=now,
+            )
+            return Decision(
+                allowed=False,
+                code=code,
+                explanation=explanation or explain(code),
+                operation_id=prepared.operation_id,
+            )
+
+        if by.org_id != prepared.org_id:
+            return answer(Code.IDENTITY_MISMATCH)
+        binding = self._validate_prepared(prepared)
+        if isinstance(binding, Code):
+            return answer(binding)
+        _, tp, _ = binding
+        requester = by.user_id == prepared.user_id
+        approver = tp.approve_permission is not None and tp.approve_permission in by.permissions
+        if not (requester or approver):
+            return answer(
+                Code.APPROVER_NOT_ALLOWED,
+                "Only the requester or a user with this tool's approval permission can cancel.",
+            )
+        result = self.store.cancel(prepared.org_id, prepared.operation_id,
+                                   prepared.request_hash, now)
+        if result == "cancelled":
+            return answer(Code.CANCELLED)
+        if result == "closed":
+            return answer(self._row_code(prepared))
+        if result == "already_recorded":
+            return answer(Code.ALREADY_RECORDED)
+        return answer(Code.OPERATION_CONFLICT)
+
+    @staticmethod
+    def _check_reference(reference: str | None) -> str | None:
+        if reference is None:
+            return None
+        if not isinstance(reference, str):
+            raise ValueError("reference must be a string")  # noqa: TRY004 one error type for callers
+        if len(reference) > REFERENCE_LIMIT:
+            raise ValueError(f"reference must be at most {REFERENCE_LIMIT} characters")
+        if not reference.isprintable():
+            raise ValueError("reference must not contain control characters")
+        return reference
+
+    def _row_code(self, prepared: PreparedAction) -> Code:
+        row = self.store.get_operation(prepared.org_id, prepared.operation_id)
+        return Code(row["code"])
+
+    def _reference(self, org_id: str, operation_id: str) -> str | None:
+        approval = self.store.get_approval(org_id, operation_id)
+        return None if approval is None else approval["reference"]
+
+    def _decide(
+        self, prepared: PreparedAction, approver: UserContext, approve: bool,
+        reference: str | None,
+    ) -> Decision:
         now = self.clock()
         event = "approve" if approve else "deny"
 
@@ -183,6 +268,7 @@ class Latch:
                 user_id=approver.user_id,
                 tool=prepared.tool,
                 now=now,
+                reference=reference,
             )
             return Decision(
                 allowed=code == Code.APPROVED,
@@ -217,10 +303,12 @@ class Latch:
             self.clock,
             limits.run_lifetime_seconds,
             limits.approval_lifetime_seconds,
+            reference,
         )
+        if result == "closed":
+            return answer(self._row_code(prepared))
         failures = {
             "already_recorded": Code.ALREADY_RECORDED,
-            "denied": Code.DENIED_BY_APPROVER,
             "approval_used": Code.APPROVAL_USED,
             "hash_mismatch": Code.OPERATION_CONFLICT,
             "run_expired": Code.RUN_EXPIRED,
@@ -276,6 +364,9 @@ class Latch:
         row = self.store.get_operation(org_id, operation_id)
         if row is None:
             return None
+        return self._status(row)
+
+    def _status(self, row: dict[str, Any]) -> OperationStatus:
         return OperationStatus(
             operation_id=row["operation_id"],
             state=row["state"],
@@ -283,8 +374,12 @@ class Latch:
             tool=row["tool"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            copied=frozenset(json.loads(row["copied"])),
+            needs_approval=bool(row["needs_approval"]),
+            user_id=row["user_id"],
+            run_id=row["run_id"],
             summary=row["summary"],
+            copied=frozenset(json.loads(row["copied"])),
+            reference=self._reference(row["org_id"], row["operation_id"]),
         )
 
     def _gate(
@@ -294,13 +389,15 @@ class Latch:
         now = self.clock()
 
         def refuse(code: Code) -> ExecutionResult:
+            reference = self._reference(prepared.org_id, prepared.operation_id)
             self._audit("execute", code, ctx, prepared.tool, prepared.operation_id, now,
-                        outcome="denied")
+                        outcome="denied", reference=reference)
             return ExecutionResult(
                 operation_id=prepared.operation_id,
                 outcome="denied",
                 code=code,
                 explanation=explain(code),
+                reference=reference,
             )
 
         same = (ctx.user_id, ctx.org_id, ctx.run_id) == (
@@ -344,7 +441,10 @@ class Latch:
                 code=code,
                 explanation=explain(code),
                 replayed=True,
+                reference=self._reference(ctx.org_id, prepared.operation_id),
             )
+        if result == "closed":
+            return refuse(self._row_code(prepared))
         if result != "reserved":
             return refuse(RESERVE_CODES[result])
 
@@ -397,6 +497,7 @@ class Latch:
     ) -> ExecutionResult:
         duration_ms = int((time.perf_counter() - t0) * 1000)
         now = self.clock()
+        reference = self._reference(prepared.org_id, prepared.operation_id)
         self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
         self.store.audit(
             "execute",
@@ -409,6 +510,7 @@ class Latch:
             outcome=outcome,
             duration_ms=duration_ms,
             now=now,
+            reference=reference,
         )
         return ExecutionResult(
             operation_id=prepared.operation_id,
@@ -417,6 +519,7 @@ class Latch:
             explanation=explain(code),
             value=value,
             duration_ms=duration_ms,
+            reference=reference,
         )
 
     def _check_access(
@@ -555,6 +658,7 @@ class Latch:
         outcome: str | None = None,
         summary: str | None = None,
         copied: str | None = None,
+        reference: str | None = None,
     ) -> None:
         self.store.audit(
             event,
@@ -568,4 +672,5 @@ class Latch:
             now=now,
             summary=summary,
             copied=copied,
+            reference=reference,
         )

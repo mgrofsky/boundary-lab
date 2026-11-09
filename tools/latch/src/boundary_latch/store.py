@@ -23,12 +23,13 @@ CREATE TABLE IF NOT EXISTS operations (
 CREATE TABLE IF NOT EXISTS approvals (
   org_id TEXT NOT NULL, operation_id TEXT NOT NULL, approver_id TEXT NOT NULL,
   request_hash TEXT NOT NULL, decision TEXT NOT NULL, decided_at REAL NOT NULL,
-  expires_at REAL NOT NULL, consumed_at REAL,
+  expires_at REAL NOT NULL, consumed_at REAL, reference TEXT,
   PRIMARY KEY (org_id, operation_id));
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, org_id TEXT NOT NULL,
   run_id TEXT, operation_id TEXT, user_id TEXT, tool TEXT, event TEXT NOT NULL,
-  code TEXT NOT NULL, outcome TEXT, duration_ms INTEGER, summary TEXT, copied TEXT);
+  code TEXT NOT NULL, outcome TEXT, duration_ms INTEGER, summary TEXT, copied TEXT,
+  reference TEXT);
 """
 
 OPERATION_COLUMNS = (
@@ -57,10 +58,13 @@ ADDED_COLUMNS = {
         ("copied", "TEXT NOT NULL DEFAULT '[]'"),
         ("summary", "TEXT NOT NULL DEFAULT ''"),
     ],
-    "audit": [("summary", "TEXT"), ("copied", "TEXT")],
+    "approvals": [("reference", "TEXT")],
+    "audit": [("summary", "TEXT"), ("copied", "TEXT"), ("reference", "TEXT")],
 }
 
 RECORDED = ("reserved", "succeeded", "failed", "uncertain")
+# States that can never run again. The operation row's code says why.
+CLOSED = ("denied", "cancelled")
 
 
 class OperationExists(Exception):
@@ -189,13 +193,16 @@ class SQLiteStore:
         decision: str,
         now: float,
         expires_at: float,
+        reference: str | None = None,
     ) -> None:
         with self._lock:
             try:
                 self._conn.execute(
                     "INSERT INTO approvals (org_id, operation_id, approver_id, request_hash,"
-                    " decision, decided_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (org_id, operation_id, approver_id, request_hash, decision, now, expires_at),
+                    " decision, decided_at, expires_at, reference)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (org_id, operation_id, approver_id, request_hash, decision, now, expires_at,
+                     reference),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ApprovalExists(operation_id) from exc
@@ -216,7 +223,7 @@ class SQLiteStore:
     def decide_approval(
         self, org_id: str, operation_id: str, run_id: str, approver_id: str,
         expected_hash: str, decision: str, clock: Callable[[], float],
-        run_lifetime: int, approval_lifetime: int,
+        run_lifetime: int, approval_lifetime: int, reference: str | None = None,
     ) -> str:
         """Save the decision and update the pending operation together, or save neither."""
         with self._lock:
@@ -235,8 +242,8 @@ class SQLiteStore:
                     result = "hash_mismatch"
                 elif op["state"] in RECORDED:
                     result = "already_recorded"
-                elif op["state"] == "denied":
-                    result = "denied"
+                elif op["state"] in CLOSED:
+                    result = "closed"
                 elif self.get_approval(org_id, operation_id) is not None:
                     result = "approval_used"
                 elif run is None or now >= run["started_at"] + run_lifetime:
@@ -244,7 +251,7 @@ class SQLiteStore:
                 else:
                     expires_at = min(now + approval_lifetime, run["started_at"] + run_lifetime)
                     self.record_approval(org_id, operation_id, approver_id, expected_hash,
-                                         decision, now, expires_at)
+                                         decision, now, expires_at, reference)
                     code = "APPROVED" if decision == "approved" else "DENIED_BY_APPROVER"
                     self.set_state(org_id, operation_id, decision, code, now)
                     result = "recorded"
@@ -322,8 +329,8 @@ class SQLiteStore:
             return "hash_mismatch"
         if op["state"] in RECORDED:
             return "already_recorded"
-        if op["state"] == "denied":
-            return "denied"
+        if op["state"] in CLOSED:
+            return "closed"
         if now >= run_deadline:
             return "run_expired"
         placeholders = ", ".join("?" for _ in RECORDED)
@@ -358,6 +365,61 @@ class SQLiteStore:
         )
         return "reserved"
 
+    def cancel(self, org_id: str, operation_id: str, expected_hash: str, now: float) -> str:
+        """Mark a prepared or approved operation cancelled, unless it was reserved or closed.
+
+        Returns "cancelled", "already_recorded", "closed" or "hash_mismatch".
+        """
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                op = self._conn.execute(
+                    "SELECT state, request_hash FROM operations"
+                    " WHERE org_id = ? AND operation_id = ?",
+                    (org_id, operation_id),
+                ).fetchone()
+                if op is None or op["request_hash"] != expected_hash:
+                    result = "hash_mismatch"
+                elif op["state"] in RECORDED:
+                    result = "already_recorded"
+                elif op["state"] in CLOSED:
+                    result = "closed"
+                else:
+                    self._conn.execute(
+                        "UPDATE operations SET state = 'cancelled', code = 'CANCELLED',"
+                        " updated_at = ? WHERE org_id = ? AND operation_id = ?",
+                        (now, org_id, operation_id),
+                    )
+                    result = "cancelled"
+                self._conn.execute("COMMIT")
+            except sqlite3.Error as exc:
+                if self._conn.in_transaction:
+                    try:
+                        self._conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                raise StorageError(f"cancel failed: {exc}") from exc
+            return result
+
+    def pending(self, org_id: str, run_id: str | None = None) -> list[dict[str, Any]]:
+        """Prepared operations that need approval and have no decision yet, oldest first."""
+        query = (
+            "SELECT o.* FROM operations o WHERE o.org_id = ? AND o.state = 'prepared'"
+            " AND o.needs_approval = 1 AND NOT EXISTS (SELECT 1 FROM approvals a"
+            " WHERE a.org_id = o.org_id AND a.operation_id = o.operation_id)"
+        )
+        params: list[Any] = [org_id]
+        if run_id is not None:
+            query += " AND o.run_id = ?"
+            params.append(run_id)
+        query += " ORDER BY o.created_at, o.rowid"
+        with self._lock:
+            try:
+                rows = self._conn.execute(query, params).fetchall()
+            except sqlite3.Error as exc:
+                raise StorageError(f"pending failed: {exc}") from exc
+            return [dict(row) for row in rows]
+
     def finish(self, org_id: str, operation_id: str, outcome: str, code: str, now: float) -> None:
         self.set_state(org_id, operation_id, outcome, code, now)
 
@@ -375,15 +437,16 @@ class SQLiteStore:
         now: float = 0.0,
         summary: str | None = None,
         copied: str | None = None,
+        reference: str | None = None,
     ) -> None:
         with self._lock:
             try:
                 self._conn.execute(
                     "INSERT INTO audit (at, org_id, run_id, operation_id, user_id, tool, event,"
-                    " code, outcome, duration_ms, summary, copied)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " code, outcome, duration_ms, summary, copied, reference)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (now, org_id, run_id, operation_id, user_id, tool, event, code, outcome,
-                     duration_ms, summary, copied),
+                     duration_ms, summary, copied, reference),
                 )
             except sqlite3.Error as exc:
                 raise StorageError(f"audit failed: {exc}") from exc
