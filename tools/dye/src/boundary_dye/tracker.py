@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+import unicodedata
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -12,11 +13,37 @@ _JOINERS = re.compile(r"(?<=\d)[ .,-](?=\d)")
 _DIGIT_RUN = re.compile(r"\d+")
 _SPELLED_DOT = re.compile(r"\s*[(\[]?\bdot\b[)\]]?\s*")
 _SPELLED_AT = re.compile(r"\s*[(\[]?\bat\b[)\]]?\s*")
+_SEPARATORS = re.compile(r"[\s,=:;/?&()\[\]{}<>\"'`]+")
+MIN_TOKEN = 4
+_WORD_DIGITS = {
+    word: str(digit)
+    for digit, word in enumerate(
+        ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+    )
+}
+_DIGIT_WORD = "(?:" + "|".join(_WORD_DIGITS) + ")"
+_DIGIT_WORDS = re.compile(rf"\b{_DIGIT_WORD}(?:[\s-]+{_DIGIT_WORD})+\b", re.IGNORECASE)
+_ONE_DIGIT_WORD = re.compile(rf"\b{_DIGIT_WORD}\b", re.IGNORECASE)
+
+COMMON_IGNORE: tuple[str, ...] = (
+    r"[a-z]{2}-[a-z]+-\d",
+    r"\d{4}-\d{2}-\d{2}",
+)
+"""Opt in patterns for values that are never evidence: cloud regions such as us-east-2 and ISO dates."""
+
+
+def strip_format(text: str) -> str:
+    """Remove Unicode format characters, such as zero width spaces and joiners."""
+    return "".join(c for c in text if unicodedata.category(c) != "Cf")
 
 
 def normalize(text: str) -> str:
-    """Lowercase the text and collapse runs of whitespace to one space."""
-    return _SPACES.sub(" ", text.strip()).lower()
+    """Remove format characters, collapse runs of whitespace to one space and lowercase."""
+    return _SPACES.sub(" ", strip_format(text).strip()).lower()
+
+
+def _words_to_digits(match: re.Match[str]) -> str:
+    return "".join(_WORD_DIGITS[w.lower()] for w in _ONE_DIGIT_WORD.findall(match.group()))
 
 
 def spelled_out(text: str) -> str:
@@ -27,8 +54,10 @@ def spelled_out(text: str) -> str:
 def digit_runs(text: str) -> frozenset[str]:
     """Whole numbers in the text, with spaces, dots, commas and dashes between digits removed.
 
-    "$420.00" gives {"42000"} and "4471 2201" gives {"44712201"}.
+    "$420.00" gives {"42000"} and "4471 2201" gives {"44712201"}. Runs of two or more digit
+    words separated by spaces or dashes count as digits, so "four two zero" gives {"420"}.
     """
+    text = _DIGIT_WORDS.sub(_words_to_digits, strip_format(text))
     return frozenset(_DIGIT_RUN.findall(_JOINERS.sub("", text)))
 
 
@@ -36,6 +65,25 @@ def numeric_form(text: str) -> str | None:
     """The digits of a value made only of digits and joiners, else None."""
     joined = _JOINERS.sub("", text.strip())
     return joined if joined.isascii() and joined.isdigit() else None
+
+
+def tokens(text: str) -> list[str]:
+    """Pieces of a composite value worth checking on their own, such as the id inside an ARN.
+
+    The text is split on runs of whitespace and , = : ; / ? & ( ) [ ] { } < > quotes and
+    backticks. Dashes and dots do not split. A token is kept when it is at least four
+    characters long and holds a digit or an @. A token equal to the whole text is dropped.
+    """
+    if not _SEPARATORS.search(text):
+        return []
+    whole = text.strip()
+    return [
+        piece
+        for piece in _SEPARATORS.split(text)
+        if len(piece) >= MIN_TOKEN
+        and piece != whole
+        and ("@" in piece or any(c.isdigit() for c in piece))
+    ]
 
 
 def contains_term(text: str, term: str) -> bool:
@@ -47,6 +95,7 @@ def contains_term(text: str, term: str) -> bool:
 class Source:
     label: str
     text: str
+    path: str = ""
 
 
 @dataclass(frozen=True)
@@ -55,6 +104,7 @@ class Finding:
     value: str
     source: str
     matcher: str
+    source_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,7 +112,7 @@ class Report:
     findings: tuple[Finding, ...] = ()
 
     @property
-    def tainted(self) -> frozenset[str]:
+    def copied(self) -> frozenset[str]:
         return frozenset(finding.path for finding in self.findings)
 
     @property
@@ -71,7 +121,7 @@ class Report:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "tainted": sorted(self.tainted),
+            "copied": sorted(self.copied),
             "findings": [asdict(finding) for finding in self.findings],
         }
 
@@ -91,44 +141,134 @@ def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
 class Tracker:
     """Holds the untrusted text for one run and checks proposed arguments against it."""
 
-    def __init__(self) -> None:
+    SCHEMA = 1
+
+    def __init__(self, ignore: Iterable[str] = (), max_sources: int | None = None) -> None:
+        if max_sources is not None and max_sources < 1:
+            raise ValueError("max_sources must be at least 1")
+        self.max_sources = max_sources
         self._sources: list[Source] = []
         self._index: list[tuple[Source, str, str, frozenset[str]]] = []
         self._trusted: set[str] = set()
+        self._ignore: list[str] = []
+        self._ignore_compiled: list[re.Pattern[str]] = []
+        self.ignore(*ignore)
 
     @property
     def sources(self) -> tuple[Source, ...]:
         return tuple(self._sources)
 
-    def mark(self, label: str, text: str) -> Source:
-        """Record text that came from outside the app, such as a ticket body or a web page."""
+    def mark(self, label: str, text: str, path: str = "") -> Source:
+        """Record text that came from outside the app, such as a ticket body or a web page.
+
+        path says where in a larger record the text sat, such as body. It is optional.
+        """
         if not label:
             raise ValueError("label is required")
-        source = Source(label, text)
+        source = Source(label, text, path)
         plain = normalize(text)
         self._sources.append(source)
         self._index.append((source, plain, spelled_out(plain), digit_runs(text)))
+        if self.max_sources is not None and len(self._sources) > self.max_sources:
+            del self._sources[0]
+            del self._index[0]
         return source
+
+    def forget(self, source: Source) -> None:
+        """Remove one marked source. A source that is not held is ignored."""
+        for position, held in enumerate(self._sources):
+            if held == source:
+                del self._sources[position]
+                del self._index[position]
+                return
+
+    def mark_data(self, label: str, data: Any) -> list[Source]:
+        """Mark every scalar inside a dict or list as text, each with its own path.
+
+        None, booleans and empty strings are skipped, as check() skips them.
+        """
+        marked = []
+        for path, value in leaves(data):
+            if value is None or isinstance(value, bool) or str(value) == "":
+                continue
+            marked.append(self.mark(label, str(value), path))
+        return marked
 
     def trust(self, *values: Any) -> None:
         """Record values the app supplied itself, such as the signed in account. They are never reported."""
         self._trusted.update(normalize(str(value)) for value in values)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Everything needed to rebuild this tracker, as JSON ready data."""
+        return {
+            "schema": self.SCHEMA,
+            "sources": [asdict(source) for source in self._sources],
+            "trusted": sorted(self._trusted),
+            "ignore": list(self._ignore),
+            "max_sources": self.max_sources,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Tracker:
+        """Rebuild a tracker saved with to_dict(), for example after the app restarts."""
+        if data.get("schema") != cls.SCHEMA:
+            raise ValueError(f"unknown tracker schema {data.get('schema')!r}")
+        tracker = cls(ignore=data.get("ignore", ()), max_sources=data.get("max_sources"))
+        for item in data.get("sources", ()):
+            tracker.mark(item["label"], item["text"], item.get("path", ""))
+        tracker.trust(*data.get("trusted", ()))
+        return tracker
+
+    def ignore(self, *patterns: str) -> None:
+        """Skip values and tokens that match one of these regular expressions in full.
+
+        Each pattern is matched against the normalised form, which is lowercase with single spaces.
+        """
+        for pattern in patterns:
+            compiled = re.compile(pattern)
+            self._ignore.append(pattern)
+            self._ignore_compiled.append(compiled)
+
+    def _skipped(self, text: str) -> bool:
+        """True for an empty, trusted or ignored normalised value."""
+        if not text or text in self._trusted:
+            return True
+        return any(pattern.fullmatch(text) for pattern in self._ignore_compiled)
+
     def check(self, arguments: dict[str, Any]) -> Report:
-        """Report every argument value that appears in the marked text."""
+        """Report every argument value that appears in the marked text.
+
+        The whole value is tested first. When it does not match, each token inside it is
+        tested, and the first token that matches is reported with the matcher "token".
+        """
         findings: list[Finding] = []
         for path, value in leaves(arguments):
             if value is None or isinstance(value, bool):
                 continue
-            text = normalize(str(value))
-            if not text or text in self._trusted:
+            raw = str(value)
+            text = normalize(raw)
+            if self._skipped(text):
                 continue
-            number = numeric_form(text)
-            for source, plain, spelled, runs in self._index:
-                if contains_term(plain, text) or contains_term(spelled, text):
-                    findings.append(Finding(path, str(value), source.label, "text"))
-                    break
-                if number is not None and number in runs:
-                    findings.append(Finding(path, str(value), source.label, "digits"))
+            found = self._match(text)
+            if found is not None:
+                findings.append(Finding(path, raw, found[0].label, found[1], found[0].path))
+                continue
+            for token in tokens(raw):
+                plain = normalize(token)
+                if self._skipped(plain):
+                    continue
+                found = self._match(plain)
+                if found is not None:
+                    findings.append(Finding(path, token, found[0].label, "token", found[0].path))
                     break
         return Report(tuple(findings))
+
+    def _match(self, text: str) -> tuple[Source, str] | None:
+        """The first source holding the normalised text, and the matcher that found it."""
+        number = numeric_form(text)
+        for source, plain, spelled, runs in self._index:
+            if contains_term(plain, text) or contains_term(spelled, text):
+                return source, "text"
+            if number is not None and number in runs:
+                return source, "digits"
+        return None
