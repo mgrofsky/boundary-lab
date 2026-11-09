@@ -57,7 +57,7 @@ def _in_chunks(records, fn, label):
 
 
 def cmd_run(args) -> int:
-    from redline import api
+    from redline import api, pipeline
     from redline.judge import ChatEndpointJudge
     from redline.router import ShortCircuit
 
@@ -83,6 +83,8 @@ def cmd_run(args) -> int:
         short_circuit=short_circuit,
         seed=args.seed,
         cache=args.cache,
+        top_k=args.top_k,
+        floor=args.floor,
     )
     router = grader.router
     for record in records:
@@ -109,7 +111,9 @@ def cmd_run(args) -> int:
         "min_members": args.min_members,
         "margin": args.margin,
         "records": len(outputs),
-        "judge_calls": sum(1 for o in outputs if o["decided_by"] == "judge"),
+        "top_k": args.top_k,
+        "floor": args.floor,
+        "judge_calls": pipeline.judge_calls(outputs),
         "short_circuits": sum(1 for o in outputs if o["short_circuit"]),
         "seconds": round(seconds, 2),
     }
@@ -253,6 +257,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="center shortcut: required gap between good and bad match scores (default: 0.10)",
     )
     run.add_argument("--seed", type=int, default=0, help="random seed for repeatable k-means runs")
+    run.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
+    )
+    run.add_argument(
+        "--floor",
+        type=float,
+        default=None,
+        help="with --top-k, skip extra rules whose match score is below this (default: none)",
+    )
     run.set_defaults(func=cmd_run)
 
     attack = sub.add_parser("attack", help="send attack prompts to the model under test")

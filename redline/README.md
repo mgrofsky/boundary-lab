@@ -61,6 +61,8 @@ redline run --data data/holdout.jsonl --judge replay --router kmeans --k 12 --ou
 
 Both options can use `--short-circuit`. That lets the router pass or fail some answers using the labeled examples, without asking the judge. It's off by default. Fewer judge decisions can mean more mistakes, so check both.
 
+Add `--top-k 3` to check each answer against the three closest rules and keep the worst outcome. Each answer that reaches the judge then costs up to three judge calls instead of one. `--floor` skips extra rules with a low match score. The saved cache only covers one rule per answer, so this needs a live judge.
+
 The [routing guide](../docs/routing.md) walks through the settings, saved comparisons, and commands to compare your own runs.
 
 ## What happened
@@ -134,7 +136,7 @@ Redline's 80 attack prompts also run under [promptfoo](https://www.promptfoo.dev
 
 ## Where it falls short
 
-Both routers can mix up rules that use similar words, like account data and identity checks. Each response gets checked against one rule, so a violation of another rule can slip through. An off-topic match passes without asking the judge.
+Both routers can mix up rules that use similar words, like account data and identity checks. By default each response gets checked against one rule, so a violation of another rule can slip through. `--top-k` checks more rules for more judge calls. An off-topic match passes without asking the judge.
 
 The shortcut can also make the wrong call. Examples that look similar can need different decisions. Look at the missed violations, false alarms, and individual answers before choosing settings for your own work.
 

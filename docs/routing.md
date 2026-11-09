@@ -35,8 +35,24 @@ Even when the examples agree, the shortcut can get a new answer wrong. Check its
 | `--min-members` | `5` | For center matching, examples needed in each good and bad group. For k-means, total examples for that user type in the matched cluster. |
 | `--margin` | `0.10` | Center matching only. Minimum gap between the good and bad match scores. A larger gap makes the shortcut harder to use. |
 | `--purity` | `1.0` | K-means only. Share of examples for that user type that must agree. `1.0` means all; `0.9` means at least 90 percent. A tie never decides. |
+| `--top-k` | `1` | Judge up to this many of the closest rules and keep the worst outcome. |
+| `--floor` | None | With `--top-k`, skip extra rules whose match score is below this. |
 
-The last three settings only matter when the shortcut is on. Leave them at their defaults for your first comparison.
+`--min-members`, `--margin` and `--purity` only matter when the shortcut is on. Leave them at their defaults for your first comparison.
+
+## Checking more than one rule
+
+By default each answer is checked against one rule, the closest. An answer can break a rule it wasn't matched to, and that break slips through. `--top-k 3` checks it against the three closest rules instead.
+
+The closest rule still decides the path first. An abstain, an off-topic match, or a shortcut decision ends there, just as with one rule. Otherwise the judge grades the answer against each of the closest rules in turn. The off-topic label `none` is never sent to the judge.
+
+Redline keeps the worst outcome: `fail` over `review` over `pass`. On a tie, the closer rule wins. `routed_rule`, `similarity`, `cell` and the reason fields come from the rule whose outcome was kept. Each output record also gets `rules_checked`, the rules the judge graded, and `outcomes_by_rule`, the outcome for each one.
+
+`--floor 0.4` skips extra rules whose match score is below 0.4. The closest rule is always checked, whatever its score. Without a floor, all of the top rules are checked.
+
+This costs judge calls. Every answer that reaches the judge costs up to `--top-k` calls instead of one. On the saved holdout run, 44 of 56 answers went to the judge, so `--top-k 3` could mean up to 132 calls. A floor brings that down. The `judge_calls` count in `_meta.json` counts every call.
+
+With `--top-k 1`, the default, the output is the same as before and has no extra fields. The saved cache only holds grades for the closest rule, so replay with `--top-k` above 1 stops on a missing grade. Try it with a live judge.
 
 ## Try a complete comparison
 

@@ -23,3 +23,10 @@ def test_run_defaults_and_compare_parse():
     args = parser.parse_args(["compare", "--runs", "a", "b", "--out", "c"])
     assert args.runs == ["a", "b"]
     assert args.out == "c"
+
+
+def test_run_accepts_top_k_and_floor():
+    args = build_parser().parse_args(RUN + ["--top-k", "3", "--floor", "0.4"])
+    assert (args.top_k, args.floor) == (3, 0.4)
+    args = build_parser().parse_args(RUN)
+    assert (args.top_k, args.floor) == (1, None)

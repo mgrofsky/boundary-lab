@@ -130,3 +130,14 @@ def test_the_run_command_rejects_an_undeclared_user_type(
     assert "h-9" in message
     assert "user_type 'guest' is not declared in the rules file" in message
     assert "anonymous, verified" in message
+
+
+def test_grader_passes_top_k_and_floor_to_the_pipeline(rules_data, write_rules, train_file):
+    judge = FakeJudge(PASS)
+    grader = api.Grader(
+        rules=write_rules(rules_data), train=train_file, judge=judge,
+        embedder=WordEmbedder(), top_k=2, floor=-1.0,
+    )
+    out = grader.grade("can i pay by card", "Use the payment portal to pay by card.", "verified")
+    assert out["rules_checked"] == ["PAY-01", "ACCT-01"]
+    assert len(judge.calls) == 2

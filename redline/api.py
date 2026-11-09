@@ -27,7 +27,8 @@ class Grader:
 
     judge is a judge object from redline.judge. None means the replay judge, which reads
     saved answers from cache. short_circuit is False, True for the default settings, or a
-    ShortCircuit with your own settings.
+    ShortCircuit with your own settings. top_k above 1 judges up to that many of the closest
+    rules and keeps the worst outcome. floor skips extra rules less similar than it.
     """
 
     def __init__(
@@ -50,6 +51,8 @@ class Grader:
         self.train = _read_jsonl(train)
         self.examples = select(self.train)
         self.judge = judge if judge is not None else ReplayJudge(cache)
+        if top_k < 1:
+            raise ValueError(f"top_k must be at least 1, got {top_k}")
         self.top_k = top_k
         self.floor = floor
         if short_circuit is True:
@@ -80,7 +83,15 @@ class Grader:
         """Grade records that carry id, user_type, prompt and response."""
         for record in records:
             self.check_user_type(record["user_type"], record.get("id"))
-        return pipeline.run(records, self.rules, self.router, self.judge, self.examples)
+        return pipeline.run(
+            records,
+            self.rules,
+            self.router,
+            self.judge,
+            self.examples,
+            top_k=self.top_k,
+            floor=self.floor,
+        )
 
     def grade(self, prompt: str, response: str, user_type: str) -> dict:
         """Grade one answer and return its output record, without an id."""
