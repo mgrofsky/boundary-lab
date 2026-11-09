@@ -42,6 +42,7 @@ Dye does not import Latch and Latch does not import Dye. The link between them i
 
     [tools.change_plan]
     require_permission = "plans:write"
+    approve_permission = "plans:approve"
     copied_arguments = "approve"
 
     [tools.lookup_order]
