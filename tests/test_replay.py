@@ -83,3 +83,13 @@ def test_replay_missing_must_be_stop_or_review(tmp_path):
     cache.write_text("")
     with pytest.raises(ValueError, match="stop or review"):
         ReplayJudge(cache, missing="skip")
+
+
+def test_replay_counts_every_lookup_with_no_saved_grade(tmp_path, pay_rule):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    judge = ReplayJudge(cache, missing="review")
+    assert judge.missing_lookups == 0
+    judge.grade(pay_rule, EXAMPLES, *ARGS)
+    judge.grade(pay_rule, EXAMPLES, *ARGS)
+    assert judge.missing_lookups == 2

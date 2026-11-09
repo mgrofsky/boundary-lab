@@ -73,7 +73,7 @@ To try the shortcut, add `--short-circuit` to both run commands and use a new fo
 
 Use the same router settings for the holdout and attack runs in each folder. The comparison labels a folder using its holdout settings; it doesn't check that the attack settings match.
 
-The saved cache covers the included examples and tested settings: center matching and k-means with 4 or 12 clusters, with the shortcut on or off at its defaults. Other settings may need a grade that isn't in the cache. Replay stops if that happens. Add `--missing-grade review` to record those answers as `review` with the code `NO_SAVED_GRADE` and keep going. Their count is in `_meta.json` under `no_saved_grade`.
+The saved cache covers the included examples and tested settings: center matching and k-means with 4 or 12 clusters, with the shortcut on or off at its defaults. Other settings may need a grade that isn't in the cache. Replay stops if that happens. Add `--missing-grade review` to record those answers as `review` with the code `NO_SAVED_GRADE` and keep going. `_meta.json` counts those answers under `no_saved_grade_records` and every lookup with no grade under `no_saved_grade_lookups`. With `--top-k` above 1 a missing grade can sit behind another rule's fail, so the lookup count is the one to watch.
 
 For new examples, rules, or missing grades, set up a live judge using the [README](../redline/README.md#try-a-live-chatbot). Run with `--judge live` and a separate `--cache` path. Keep that cache path with the run so you can replay it later. Changing the judge model needs a fresh cache.
 

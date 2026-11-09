@@ -254,6 +254,8 @@ class ReplayJudge:
         if missing not in MISSING_GRADE:
             raise ValueError(f"missing must be stop or review, got {missing!r}")
         self.missing = missing
+        # Lookups that found no saved grade, counted for every rule checked.
+        self.missing_lookups = 0
         self.answers = {}
         self.models = set()
         for line in Path(cache_path).read_text().splitlines():
@@ -265,6 +267,7 @@ class ReplayJudge:
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
         if key not in self.answers:
+            self.missing_lookups += 1
             if self.missing == "review":
                 return {
                     "verdict": "review",

@@ -119,7 +119,9 @@ def cmd_run(args) -> int:
         "judge_calls": pipeline.judge_calls(outputs),
         "short_circuits": sum(1 for o in outputs if o["short_circuit"]),
         "missing_grade": args.missing_grade,
-        "no_saved_grade": sum(1 for o in outputs if o["reason_code"] == "NO_SAVED_GRADE"),
+        # Records whose kept outcome had no saved grade, and every lookup that had none.
+        "no_saved_grade_records": sum(1 for o in outputs if o["reason_code"] == "NO_SAVED_GRADE"),
+        "no_saved_grade_lookups": getattr(grader.judge, "missing_lookups", 0),
         "seconds": round(seconds, 2),
     }
     meta_path = out_dir / f"{stem}_meta.json"

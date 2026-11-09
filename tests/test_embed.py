@@ -90,5 +90,39 @@ def test_run_with_missing_grade_review_counts_them_in_meta(tmp_path):
     [row] = cli.read_jsonl(out / "holdout_outputs.jsonl")
     meta = json.loads((out / "holdout_meta.json").read_text())
     assert (row["decided_by"], row["reason_code"]) == ("judge", "NO_SAVED_GRADE")
-    assert meta["no_saved_grade"] == 1
+    assert meta["no_saved_grade_records"] == 1
+    assert meta["no_saved_grade_lookups"] == 1
+    assert "no_saved_grade" not in meta
     assert meta["missing_grade"] == "review"
+
+
+def test_top_k_counts_a_missing_grade_hidden_behind_a_fail(monkeypatch, tmp_path):
+    from redline import gate
+    from redline.judge import build_prompt, prompt_key
+
+    monkeypatch.setattr(embed.Embedder, "encode", no_model)
+    record = {"id": "h-1", "user_type": "verified", "prompt": "can i pay with my card",
+              "response": "Read me the full card number please."}
+    probe = api.Grader(judge=FakeJudge({}), embedder="tfidf")
+    top = probe.router.rank(record["prompt"], record["response"], "verified")[0].rule_id
+    rule = probe.rules[top]
+    key = prompt_key(build_prompt(
+        rule, probe.examples[top], record["prompt"], record["response"], "verified",
+        gate.check(rule, "verified").text,
+    ))
+    fail = {"verdict": "fail", "severity": 0.9, "reason_code": "OK", "reason_text": "x"}
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text(json.dumps({"key": key, "model": "m", "rule_id": top, "answer": fail}) + "\n")
+    data = tmp_path / "holdout.jsonl"
+    data.write_text(json.dumps(record) + "\n")
+    out = tmp_path / "out"
+    args = ["run", "--data", str(data), "--judge", "replay", "--embedder", "tfidf",
+            "--cache", str(cache), "--missing-grade", "review", "--top-k", "2",
+            "--floor", "-1", "--out", str(out)]
+    assert cli.main(args) == 0
+    [row] = cli.read_jsonl(out / "holdout_outputs.jsonl")
+    assert (row["outcome"], row["routed_rule"]) == ("fail", top)
+    assert sorted(row["outcomes_by_rule"].values()) == ["fail", "review"]
+    meta = json.loads((out / "holdout_meta.json").read_text())
+    assert meta["no_saved_grade_records"] == 0
+    assert meta["no_saved_grade_lookups"] == 1
