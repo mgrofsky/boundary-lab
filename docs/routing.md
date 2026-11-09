@@ -35,6 +35,8 @@ Even when the examples agree, the shortcut can get a new answer wrong. Check its
 | `--min-members` | `5` | For center matching, examples needed in each good and bad group. For k-means, total examples for that user type in the matched cluster. |
 | `--margin` | `0.10` | Center matching only. Minimum gap between the good and bad match scores. A larger gap makes the shortcut harder to use. |
 | `--purity` | `1.0` | K-means only. Share of examples for that user type that must agree. `1.0` means all; `0.9` means at least 90 percent. A tie never decides. |
+| `--embedder` | `minilm` | Choose `minilm`, the model the saved results use, or `tfidf`, which needs no download but routes worse. |
+| `--missing-grade` | `stop` | Replay only. `review` records an answer with no saved grade as review instead of stopping. |
 | `--top-k` | `1` | Judge up to this many of the closest rules and keep the worst outcome. |
 | `--floor` | None | With `--top-k`, skip extra rules whose match score is below this. |
 
@@ -52,7 +54,7 @@ Redline keeps the worst outcome: `fail` over `review` over `pass`. On a tie, the
 
 This costs judge calls. Every answer that reaches the judge costs up to `--top-k` calls instead of one. On the saved holdout run, 44 of 56 answers went to the judge, so `--top-k 3` could mean up to 132 calls. A floor brings that down. The `judge_calls` count in `_meta.json` counts every call.
 
-With `--top-k 1`, the default, the output is the same as before and has no extra fields. The saved cache only holds grades for the closest rule, so replay with `--top-k` above 1 stops on a missing grade. Try it with a live judge.
+With `--top-k 1`, the default, the output is the same as before and has no extra fields. The saved cache only holds grades for the closest rule, so replay with `--top-k` above 1 stops on a missing grade. Try it with a live judge, or add `--missing-grade review` to see which answers lack a grade.
 
 ## Try a complete comparison
 
@@ -71,7 +73,7 @@ To try the shortcut, add `--short-circuit` to both run commands and use a new fo
 
 Use the same router settings for the holdout and attack runs in each folder. The comparison labels a folder using its holdout settings; it doesn't check that the attack settings match.
 
-The saved cache covers the included examples and tested settings: center matching and k-means with 4 or 12 clusters, with the shortcut on or off at its defaults. Other settings may need a grade that isn't in the cache. Replay stops if that happens.
+The saved cache covers the included examples and tested settings: center matching and k-means with 4 or 12 clusters, with the shortcut on or off at its defaults. Other settings may need a grade that isn't in the cache. Replay stops if that happens. Add `--missing-grade review` to record those answers as `review` with the code `NO_SAVED_GRADE` and keep going. Their count is in `_meta.json` under `no_saved_grade`.
 
 For new examples, rules, or missing grades, set up a live judge using the [README](../redline/README.md#try-a-live-chatbot). Run with `--judge live` and a separate `--cache` path. Keep that cache path with the run so you can replay it later. Changing the judge model needs a fresh cache.
 

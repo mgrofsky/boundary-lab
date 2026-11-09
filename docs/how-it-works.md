@@ -2,7 +2,7 @@
 
 Redline reads an answer a chatbot gave, picks a rule to check, and usually asks a second model to grade it. You can also let the router decide some answers on its own. It compares the results with labels written by hand so you can see where the checks work and where they miss.
 
-For commands you can copy, see the [Redline README](../redline/README.md) and [routing guide](routing.md).
+For commands you can copy, see the [Redline README](../redline/README.md) and [routing guide](routing.md). The `Grader` class in `redline/api.py` runs the same steps from Python. `redline run` builds one, so the command and your code grade the same way.
 
 ## From answer to result
 
@@ -33,7 +33,7 @@ Three things go in. The rules live in `policy/rules.yaml`. The labeled examples 
 
 ## Step 1: route
 
-The router turns the user message and answer together into an embedding, a list of numbers used to compare texts. A high similarity score means the model placed two texts close together. It does not prove that they mean the same thing or follow the same rule.
+The router turns the user message and answer together into an embedding, a list of numbers used to compare texts. The default embedder is the `all-MiniLM-L6-v2` model. `--embedder tfidf` uses word counts from scikit-learn instead, fit on the training texts. It needs no download but routes worse. A high similarity score means the model placed two texts close together. It does not prove that they mean the same thing or follow the same rule.
 
 There are two ways to build the router:
 
@@ -42,7 +42,9 @@ There are two ways to build the router:
 
 Both routers use a similarity cutoff picked from the training file alone. At least 95 percent of the training examples meet that cutoff when compared with their closest center. A new answer below it gets `review`. This records a need for review. It doesn't contact a person or create a review task.
 
-An answer routed to `none` passes without calling the judge. That is a routing decision, so a wrong off-topic match can miss a rule break. Either router can also pick the wrong rule and send the judge down the wrong path. Only one rule is checked per answer.
+An answer routed to `none` passes without calling the judge. That is a routing decision, so a wrong off-topic match can miss a rule break. Either router can also pick the wrong rule and send the judge down the wrong path. By default only one rule is checked per answer.
+
+With `--top-k` above 1, the router ranks every rule by similarity. The judge then grades the answer against each of the closest rules at or above `--floor`, and Redline keeps the worst outcome: fail, then review, then pass. Each extra rule costs one more judge call. An abstain, an off-topic match, or a shortcut decision still ends the check at the closest rule. The [routing guide](routing.md#checking-more-than-one-rule) has the details.
 
 ### Optional decisions without the judge
 
@@ -58,6 +60,8 @@ If those conditions are not met, the answer goes to the judge. These shortcuts c
 
 Some rules depend on who is asking. The account data rule lets a verified customer hear their own balance, but not an anonymous one. The gate turns the rule and user type into one sentence for the judge. For an anonymous user on the account data rule, it says that nothing in this category may be given to them.
 
+The user types come from the rules file. By default they are `anonymous` and `verified`, and a rules file can declare its own under `user_types`. A record with an undeclared type is refused before grading. See [writing rules](writing-rules.md#naming-your-own-user-types).
+
 The gate doesn't read the answer or decide whether it passes. It tells the judge what the rule allows for this user type. Answers already decided by the router skip this step and the judge.
 
 ## Step 3: judge
@@ -68,13 +72,15 @@ The judge is asked for JSON with a pass or fail verdict, severity, reason code, 
 
 A live judge gets one more sentence at the end of its prompt. It asks the judge to copy a random check value, called a nonce, into its JSON under the key `nonce`. Each call gets a new value. A reply without that exact value gets `review` with the code `JUDGE_NONCE`, and it is not saved. This catches a reply that came from somewhere other than this request, such as text the answer tricked the judge into repeating. Replay never checks the nonce, since saved grades were already checked when they were made.
 
-If a live judge call fails, the answer gets `review`. Valid live grades can be saved in a cache file. Each grade is looked up using a hash, a fingerprint of the exact grading prompt without the nonce sentence. That keeps grades saved before the nonce check usable. Replay reads those saved grades. If one is missing, replay stops with an error. A new routing choice may need grades that aren't in the cache.
+If a live judge call fails, the answer gets `review`. Valid live grades can be saved in a cache file. Each grade is looked up using a hash, a fingerprint of the exact grading prompt without the nonce sentence. That keeps grades saved before the nonce check usable. Replay reads those saved grades. If one is missing, replay stops with an error by default. With `--missing-grade review`, the answer gets `review` with the code `NO_SAVED_GRADE` instead, and the run goes on. A new routing choice may need grades that aren't in the cache.
 
 ## Step 4: record
 
 Each completed answer gets one output record and one final outcome: pass, fail, or review. The record includes the selected rule, router name, center or cluster number, similarity score, and whether the shortcut decided it. It says who decided, either the router or the judge, and gives a reason code and explanation. Router decisions have no severity score.
 
-The report compares these outcomes with the hand labels and writes the numbers to `results/summary.json`. It also reports how often the shortcut decided answers and how many of those decisions matched the labels.
+With `--top-k` above 1, the record also lists `rules_checked` and `outcomes_by_rule`, and the rule fields come from the rule whose outcome was kept.
+
+The report compares these outcomes with the hand labels and writes the numbers to `results/summary.json`. `redline gate` reads that file and exits 1 when recall, the false alarm rate, or kappa crosses a limit you set, so a CI build can fail on it. It also reports how often the shortcut decided answers and how many of those decisions matched the labels.
 
 ## Choosing the judge
 
