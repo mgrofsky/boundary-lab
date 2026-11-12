@@ -210,6 +210,15 @@ class ChatEndpointJudge:
                     entry = json.loads(line)
                     self._saved[entry["key"]] = entry["answer"]
 
+    def without_cache(self) -> "ChatEndpointJudge":
+        """A judge on the same endpoint that sends every request and saves nothing.
+
+        Repeat attempts use it, so each one is a fresh call to the model.
+        """
+        return ChatEndpointJudge(
+            None, self.model, None, transport=self.transport, json_mode=self.json_mode
+        )
+
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
         if key in self._saved:

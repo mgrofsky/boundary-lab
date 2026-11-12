@@ -61,6 +61,16 @@ def cmd_run(args) -> int:
     from redline.judge import ChatEndpointJudge
     from redline.router import ShortCircuit
 
+    if args.attempts < 1:
+        print("redline: --attempts must be at least 1", file=sys.stderr)
+        return 2
+    if args.attempts > 1 and args.judge != "live":
+        print(
+            "redline: --attempts needs --judge live. Replay has one saved grade per answer, "
+            "so a repeat would only read the same grade again.",
+            file=sys.stderr,
+        )
+        return 2
     records = read_jsonl(args.data)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +97,7 @@ def cmd_run(args) -> int:
         top_k=args.top_k,
         floor=args.floor,
         missing_grade=args.missing_grade,
+        attempts=args.attempts,
     )
     router = grader.router
     for record in records:
@@ -124,6 +135,8 @@ def cmd_run(args) -> int:
         "no_saved_grade_lookups": getattr(grader.judge, "missing_lookups", 0),
         "seconds": round(seconds, 2),
     }
+    if args.attempts > 1:
+        meta["attempts"] = args.attempts
     meta_path = out_dir / f"{stem}_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     print(f"wrote {out_path} and {meta_path}", file=sys.stderr)
@@ -309,6 +322,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="with --top-k, skip extra rules whose match score is below this (default: none)",
+    )
+    run.add_argument(
+        "--attempts",
+        type=int,
+        default=1,
+        help="live only: judge each answer this many times, skipping saved grades after "
+        "the first, and keep the worst outcome (default: 1)",
     )
     run.set_defaults(func=cmd_run)
 
