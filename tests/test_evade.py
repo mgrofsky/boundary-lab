@@ -222,7 +222,7 @@ def test_evade_command_attacker_needs_its_settings(tmp_path, monkeypatch):
     for name in ("BASE_URL", "MODEL", "API_KEY"):
         monkeypatch.delenv(f"REDLINE_ATTACKER_{name}", raising=False)
     monkeypatch.chdir(tmp_path)
-    args = ["evade", "--data", "x.jsonl", "--out", "o", "--attacker"]
+    args = ["evade", "--data", "x.jsonl", "--out", "o", "--attacker", "--missing-grade", "review"]
     with pytest.raises(SystemExit, match="REDLINE_ATTACKER_BASE_URL"):
         cli.main(args)
 
@@ -258,3 +258,51 @@ def test_report_without_evade_labels_has_no_adaptive_block(tmp_path):
     out = tmp_path / "report"
     assert cli.main(["report", "--out", str(out)]) == 0
     assert "confirmed_adaptive" not in json.loads((out / "summary.json").read_text())
+
+
+def test_max_judge_calls_in_stage_two_keeps_the_candidates_found(rules):
+    grader = StubGrader(fails_unless("PASSME"), rules)
+    stage_one = 2 * (1 + len(mutate.REWRITES))
+    attacker = FakeAttacker(["<rewrite>one</rewrite>", "<rewrite>two</rewrite>"] * 3)
+    _, summary, candidates = evade.run(
+        BAD, grader, max_judge_calls=stage_one + 1, attacker=attacker, rounds=3
+    )
+    assert len(candidates) == 1
+    assert summary["attacker"]["candidates"] == 1
+    assert "max judge calls" in summary["stopped"]
+    assert summary["records"] == 2
+
+
+def test_the_attacker_block_has_the_same_keys_when_stage_one_stops(rules):
+    grader = StubGrader(lambda response: verdict("fail", "X"), rules)
+    _, summary, _ = evade.run(BAD, grader, max_judge_calls=3, attacker=FakeAttacker([]))
+    block = summary["attacker"]
+    assert (block["records_tried"], block["candidates_passed"], block["rounds_used"]) == (0, 0, 0)
+
+
+def test_evade_replay_with_missing_grade_stop_exits_2(tmp_path, capsys):
+    args = ["evade", "--data", "data/holdout.jsonl", "--out", str(tmp_path / "o")]
+    assert cli.main(args) == 2
+    assert "--missing-grade review" in capsys.readouterr().err
+
+
+def test_evade_command_with_attacker_writes_candidates(tmp_path, monkeypatch):
+    from redline import judge as judge_module
+
+    for name in ("BASE_URL", "MODEL", "API_KEY"):
+        monkeypatch.setenv(f"REDLINE_ATTACKER_{name}", "x")
+    monkeypatch.setattr(
+        judge_module, "http_transport", lambda *a, **k: lambda payload: "<rewrite>new</rewrite>"
+    )
+    data = tmp_path / "bad.jsonl"
+    rows = [r for r in cli.read_jsonl("data/holdout.jsonl") if r["label"] == "bad"][:1]
+    data.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = tmp_path / "evade"
+    args = ["evade", "--data", str(data), "--judge", "replay", "--missing-grade", "review"]
+    args += ["--embedder", "tfidf", "--attacker", "--rounds", "2", "--out", str(out)]
+    assert cli.main(args) == 0
+    summary = json.loads((out / "evade_summary.json").read_text())
+    assert "attacker" in summary
+    candidates = cli.read_jsonl(out / "evade_candidates.jsonl")
+    assert len(candidates) == summary["attacker"]["candidates"]
+    assert all(c["label"] == "unconfirmed" for c in candidates)

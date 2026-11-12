@@ -227,7 +227,14 @@ def run(records, grader, max_judge_calls=None, attacker=None, rounds=5, rewrites
     finally:
         grader.judge = counter.inner
     if attacker is not None and stats is None:
-        stats = {"records_tried": 0, "note": NOTE}
+        stats = {
+            "records_tried": 0,
+            "candidates": 0,
+            "candidates_passed": 0,
+            "rounds_used": 0,
+            "attacker_errors": 0,
+            "note": NOTE,
+        }
     names = [ORIGINAL, *rewrites]
     finished = list(done.values())
     summary = {

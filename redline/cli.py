@@ -178,6 +178,13 @@ def cmd_evade(args) -> int:
     if args.rounds < 1:
         print("redline: --rounds must be at least 1", file=sys.stderr)
         return 2
+    if args.judge == "replay" and args.missing_grade == "stop":
+        print(
+            "redline: evade in replay mode needs --missing-grade review. The saved cache has "
+            "no grades for rewritten answers, so the run would stop at the first one.",
+            file=sys.stderr,
+        )
+        return 2
     attacker = None
     if args.attacker:
         load_env_file()
