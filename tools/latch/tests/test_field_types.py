@@ -76,7 +76,7 @@ def test_an_amount_that_is_not_a_number_is_refused(amount):
 
 @pytest.mark.parametrize(("amount", "needs"), [(9000, True), (100, False), (9000.5, True),
                                                (100.5, False), (Decimal(9000), True),
-                                               (-5, False)])
+                                               (0, False), (-5, True), (-0.5, True)])
 def test_a_number_amount_still_decides_approval(amount, needs):
     latch, _ = build()
     prepared = latch.prepare(CTX, "pay", {"amount": amount}, "op1")

@@ -787,8 +787,9 @@ class Latch:
             return True
         if tp.approval.mode == "over_amount":
             # A missing or non number amount needs approval, so it never skips the check.
+            # A negative amount needs approval too, since it moves money the other way.
             amount = amount_value(args, tp.approval.amount_field)
-            return amount is None or amount > tp.approval.threshold_minor
+            return amount is None or amount < 0 or amount > tp.approval.threshold_minor
         return False
 
     def _request_hash(

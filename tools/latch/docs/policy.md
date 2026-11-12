@@ -89,4 +89,4 @@ A copied value is an argument value the model copied from text it read, such as 
 
 ## Minor units
 
-Amounts use whole numbers in the currency's smallest unit, called a minor unit. For dollars, that means cents. A `threshold_minor` of 5000 means $50.00: exactly 5000 needs no approval, while 5001 does. Use integers for money instead of floating-point numbers, and end the argument name with `_minor` so readers know how to interpret it.
+Amounts use whole numbers in the currency's smallest unit, called a minor unit. For dollars, that means cents. A `threshold_minor` of 5000 means $50.00: exactly 5000 needs no approval, while 5001 does. A negative amount always needs approval. Use integers for money instead of floating-point numbers, and end the argument name with `_minor` so readers know how to interpret it.
