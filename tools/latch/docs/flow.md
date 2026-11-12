@@ -99,7 +99,7 @@ A call whose arguments hold a copied value gives the run the `untrusted` label w
 
     prepared = latch.prepare(ctx, "send_message", args, operation_id=op, copied=report)
 
-Dye, another Boundary Lab project, finds copied values. For a tool with at least one label, a copied value also counts as `untrusted` for this call's own check. So a copied value cannot carry the chain through a tool whose labels alone would not complete it.
+Dye, another Boundary Lab project, finds copied values. The rule checks the call itself by its tool's labels only. The copied value counts from the moment the call is reserved, so later calls see it. To hold or stop the call that carries the copied value, set `copied_arguments = "approve"` or `"deny"` on that tool. See [policy.md](policy.md).
 
 ## With the MCP proxy
 

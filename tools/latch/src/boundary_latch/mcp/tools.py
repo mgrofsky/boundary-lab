@@ -68,7 +68,7 @@ def version(tool: dict[str, Any]) -> str:
 
 
 def old_version(tool: dict[str, Any]) -> str:
-    """The hash before 0.4.0 pins covered every field: name, description and inputSchema.
+    """The hash an earlier build of the proxy used: name, description and inputSchema only.
 
     Only used to read a pin file written that way.
     """

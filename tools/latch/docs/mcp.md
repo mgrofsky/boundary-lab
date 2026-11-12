@@ -132,7 +132,7 @@ The page shows the pinned and new definitions side by side. Until a person accep
 
 Without `--pin`, pins last for the process only. With `--pin FILE`, the proxy reads the pins at start and writes them each time they change. Each entry holds the hash, the first seen time, and the definition. The file is replaced in one step, so a crash never leaves half a file. A change between runs is caught too. If the file cannot be read, the proxy refuses to start.
 
-Before 0.4.0 the hash covered only the name, description, and `inputSchema`. When the proxy loads a pin written that way, it checks the kept definition against the old hash. If it matches, the proxy pins it again under the new hash without asking, since nothing changed. A pin that does not match is left alone, so a real change still shows.
+An earlier build of the proxy hashed only the name, description, and `inputSchema`. When the proxy loads a pin written that way, it checks the kept definition against the old hash. If it matches, the proxy pins it again under the new hash without asking, since nothing changed. A pin that does not match is left alone, so a real change still shows.
 
 The proxy learns tools from the server's `tools/list`, following `nextCursor` to the end. When the server sends `notifications/tools/list_changed`, the proxy fetches the list again on next use and passes the notification on.
 

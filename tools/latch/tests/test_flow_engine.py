@@ -245,14 +245,19 @@ def test_an_unlabelled_tool_with_a_copied_value_still_marks_the_run(clock):
     assert engine.store.run_labels("acme", "run1")["untrusted"]["tool"] == "plain"
 
 
-def test_a_copied_value_in_a_labelled_call_counts_as_untrusted_for_the_gate(clock):
+def test_a_copied_value_marks_the_run_but_the_gate_uses_the_tool_labels(clock):
     engine, _ = build(clock, "deny")
     run(engine, "get_file", "f1")
-    blocked = engine.prepare(ctx(), "create_pull_request", {}, "pr1", copied=["ref"])
+    # The gate checks this tool's labels. copied_arguments decides about this call.
+    assert run(engine, "create_pull_request", "pr1", copied=["ref"]).code == Code.EXECUTED
+    assert set(engine.store.run_labels("acme", "run1")) == {"untrusted", "sensitive",
+                                                            "external"}
+    blocked = engine.prepare(ctx(), "create_pull_request", {}, "pr2")
     assert blocked.code == Code.FLOW_BLOCKED
     assert blocked.explanation.endswith(
-        "This run read private data (get_file). "
-        "This call uses a copied value and acts outside (create_pull_request)."
+        "This run read untrusted input (copied value in create_pull_request) and private "
+        "data (get_file) and acted outside (create_pull_request). "
+        "This call acts outside (create_pull_request)."
     )
 
 
@@ -410,6 +415,21 @@ def test_audit_rows_carry_labels_and_the_reason(clock):
     assert prep["flow_reason"] == done["flow_reason"] == REASON
     rows = engine.store.audit_rows("acme")
     assert json.loads(rows[-1]["labels"]) == ["external"]
+    approve = next(e for e in events if e["operation_id"] == "pr1" and e["event"] == "approve")
+    assert approve["labels"] == ["external"] and approve["flow_reason"] == REASON
+
+
+def test_cancel_and_deny_rows_carry_labels_and_the_reason(clock):
+    events = []
+    engine, _ = build(clock, "approve", events=events)
+    read_issue_and_file(engine)
+    one = prepare(engine, "create_pull_request", "pr1")
+    two = prepare(engine, "create_pull_request", "pr2")
+    engine.deny(one, APPROVER)
+    engine.cancel(two, ctx())
+    for name, op in (("deny", "pr1"), ("cancel", "pr2")):
+        row = next(e for e in events if e["operation_id"] == op and e["event"] == name)
+        assert row["labels"] == ["external"] and row["flow_reason"] == REASON
 
 
 # Two calls at once
