@@ -16,7 +16,7 @@
 - The reason code `FLOW_BLOCKED`.
 - `PreparedAction.flow_reason` and `OperationStatus.flow_reason` hold one plain sentence that says which calls set each label and what this call adds.
 - `Latch.mark_run(ctx, label, note="")` adds a label to the run itself, for example when a user uploads a file.
-- A call with a copied value gives the run the `untrusted` label.
+- A copied value counts as `untrusted` for the call that carries it, at `prepare` and at `execute`, and gives the run that label once the call is reserved. A tool with no labels is still never gated.
 - Audit rows and `on_event` dicts gain `labels` and `flow_reason`. Fields are only added, so `schema` stays 1.
 - `boundary-latch check` prints the flow mode and how many tools carry each label.
 - `boundary-latch mcp --print-policy --flow` writes a starter policy with the rule on and every label on every tool.

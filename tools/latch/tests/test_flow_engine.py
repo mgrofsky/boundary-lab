@@ -245,20 +245,51 @@ def test_an_unlabelled_tool_with_a_copied_value_still_marks_the_run(clock):
     assert engine.store.run_labels("acme", "run1")["untrusted"]["tool"] == "plain"
 
 
-def test_a_copied_value_marks_the_run_but_the_gate_uses_the_tool_labels(clock):
+COPIED_REASON = ("This run read untrusted input (copied value in create_pull_request) and "
+                 "private data (get_file). This call acts outside (create_pull_request).")
+
+
+def test_deny_blocks_an_external_call_with_a_copied_value_after_private_data(clock):
+    engine, handlers = build(clock, "deny")
+    run(engine, "get_file", "f1")
+    blocked = engine.prepare(ctx(), "create_pull_request", {}, "pr1", copied=["ref"])
+    assert blocked.code == Code.FLOW_BLOCKED
+    assert blocked.explanation.endswith(COPIED_REASON)
+    assert handlers["create_pull_request"].call_count == 0
+    # Without the copied value the same call is not gated.
+    assert run(engine, "create_pull_request", "pr2").code == Code.EXECUTED
+
+
+def test_approve_asks_for_approval_naming_the_copied_value(clock):
+    engine, _handlers = build(clock, "approve")
+    run(engine, "get_file", "f1")
+    pr = prepare(engine, "create_pull_request", "pr1", copied=["ref"])
+    assert pr.needs_approval and pr.flow_reason == COPIED_REASON
+    engine.approve(pr, APPROVER)
+    assert engine.execute(pr, ctx()).code == Code.EXECUTED
+    assert engine.store.run_labels("acme", "run1")["untrusted"]["copied"] is True
+
+
+def test_the_copied_value_is_checked_again_inside_reserve(clock):
+    engine, handlers = build(clock, "deny")
+    pr = prepare(engine, "create_pull_request", "pr1", copied=["ref"])
+    assert pr.flow_reason == ""
+    run(engine, "get_file", "f1")
+    result = engine.execute(pr, ctx())
+    assert (result.outcome, result.code) == ("denied", Code.FLOW_BLOCKED)
+    assert result.explanation.endswith(COPIED_REASON)
+    assert handlers["create_pull_request"].call_count == 0
+
+
+def test_an_unlabelled_tool_with_a_copied_value_is_not_gated_but_marks_the_run(clock):
     engine, _ = build(clock, "deny")
     run(engine, "get_file", "f1")
-    # The gate checks this tool's labels. copied_arguments decides about this call.
-    assert run(engine, "create_pull_request", "pr1", copied=["ref"]).code == Code.EXECUTED
-    assert set(engine.store.run_labels("acme", "run1")) == {"untrusted", "sensitive",
-                                                            "external"}
+    run(engine, "create_pull_request", "pr1")
+    assert run(engine, "plain", "p1", copied=["ref"]).code == Code.EXECUTED
+    assert engine.store.run_labels("acme", "run1")["untrusted"] == {
+        "tool": "plain", "copied": True, "operation_id": "p1", "at": 1000.0}
     blocked = engine.prepare(ctx(), "create_pull_request", {}, "pr2")
     assert blocked.code == Code.FLOW_BLOCKED
-    assert blocked.explanation.endswith(
-        "This run read untrusted input (copied value in create_pull_request) and private "
-        "data (get_file) and acted outside (create_pull_request). "
-        "This call acts outside (create_pull_request)."
-    )
 
 
 # mark_run

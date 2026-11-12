@@ -95,11 +95,18 @@ A run can reach all three labels this way with no call to refuse. Rule 2 then ga
 
 ## With Dye
 
-A call whose arguments hold a copied value gives the run the `untrusted` label when it is reserved. Pass the paths as you already do:
+A copied value is text an outsider may have written, so it counts as `untrusted` for the call that carries it. Pass the paths as you already do:
 
     prepared = latch.prepare(ctx, "send_message", args, operation_id=op, copied=report)
 
-Dye, another Boundary Lab project, finds copied values. The rule checks the call itself by its tool's labels only. The copied value counts from the moment the call is reserved, so later calls see it. To hold or stop the call that carries the copied value, set `copied_arguments = "approve"` or `"deny"` on that tool. See [policy.md](policy.md).
+Dye, another Boundary Lab project, finds copied values. Latch keeps only the paths that name this tool's fields. When any remain, Latch checks the call as if the run already held `untrusted`, with the source "copied value in <tool>". It does this at `prepare` and again inside the reserve transaction.
+
+- A run that read private data calls an `external` tool with a copied argument. The call is gated. In `deny` mode it gets `FLOW_BLOCKED`. In `approve` mode it waits, and the reason names the copied value.
+- A tool with no labels is still never gated, even with a copied argument. The run gains `untrusted` when that call is reserved, so later `external` calls are gated.
+
+    This run read untrusted input (copied value in send_message) and private data (lookup_account). This call acts outside (send_message).
+
+`copied_arguments` still applies on its own. Set it to `"approve"` or `"deny"` to hold or stop any call with a copied value, whatever the run holds. See [policy.md](policy.md).
 
 ## With the MCP proxy
 

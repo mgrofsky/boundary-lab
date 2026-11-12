@@ -221,7 +221,7 @@ class Latch:
             flow_reason = existing["flow_reason"]
         else:
             flow_reason = self._flow_reason(
-                self.store.run_labels(ctx.org_id, ctx.run_id), spec.name, tp
+                self.store.run_labels(ctx.org_id, ctx.run_id), spec.name, tp, paths
             )
         if flow_reason and self.policy.flow.all_three == "deny":
             return self._deny_prepare(ctx, tool, operation_id, Code.FLOW_BLOCKED, now,
@@ -284,12 +284,17 @@ class Latch:
             user_id=ctx.user_id, now=now, summary=note, labels=json.dumps([label]),
         )
 
-    def _flow_reason(self, held: dict[str, dict[str, Any]], tool: str, tp: ToolPolicy) -> str:
+    def _flow_reason(
+        self, held: dict[str, dict[str, Any]], tool: str, tp: ToolPolicy,
+        copied: frozenset[str] = frozenset(),
+    ) -> str:
         """The flow reason when the rule gates this call, or "" when it does not.
 
-        The check uses this tool's labels. A copied value adds untrusted to the run
-        when the call is reserved; copied_arguments decides about the call itself.
+        A call with a copied value is checked as if the run already held untrusted,
+        from that copied value. A tool with no labels is still never gated.
         """
+        if copied and "untrusted" not in held:
+            held = {**held, "untrusted": {"tool": tool, "copied": True}}
         labels = tp.labels or ()
         if not flow.applies(self.policy.flow.all_three, held, labels):
             return ""
@@ -566,7 +571,7 @@ class Latch:
             deadline,
             limits.max_actions_per_run,
             clock=self.clock,
-            flow_check=self._flow_check(spec.name, tp),
+            flow_check=self._flow_check(spec.name, tp, prepared.copied),
             add_labels=self._labels_to_add(spec.name, tp, prepared),
         )
         if result in ("flow_blocked", "flow_approval"):
@@ -601,12 +606,12 @@ class Latch:
         )
         return spec, args, info
 
-    def _flow_check(self, tool: str, tp: ToolPolicy) -> FlowCheck:
+    def _flow_check(self, tool: str, tp: ToolPolicy, copied: frozenset[str]) -> FlowCheck:
         """The check reserve runs inside its transaction, with the run's labels then."""
         mode = self.policy.flow.all_three
 
         def check(held: dict[str, dict[str, Any]]) -> tuple[str, str] | None:
-            reason = self._flow_reason(held, tool, tp)
+            reason = self._flow_reason(held, tool, tp, copied)
             return (mode, reason) if reason else None
 
         return check
