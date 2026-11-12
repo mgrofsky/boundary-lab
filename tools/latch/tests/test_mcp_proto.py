@@ -10,7 +10,8 @@ import pytest
 from .mcp_helpers import FAKE, META, Proxy, http, text_of, wait_for
 from .test_mcp_proxy import blocked_code, calls_to, pending_ids, post
 
-CAPTURE = Path(__file__).parents[3] / ".hermes" / "spec" / "claude_code_wire_capture.log"
+# A real client's wire capture, kept outside the package next to the spec pages.
+SPEC = Path(__file__).parents[3] / ".hermes" / "spec"
 POLICY_TOOLS = ["echo", "fail", "rpc_error", "sleep", "mutate", "crash", "ask_roots",
                 "files.read-text", "guarded", "pay", "ask_input"]
 PROTOCOL_KEYS = {"io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientInfo",
@@ -19,9 +20,10 @@ SUBSCRIPTION = "io.modelcontextprotocol/subscriptionId"
 
 
 def client_lines():
-    if not CAPTURE.exists():
+    found = sorted(SPEC.glob("*wire_capture.log")) if SPEC.is_dir() else []
+    if not found:
         pytest.skip("the wire capture is not in this checkout")
-    return [json.loads(line[3:]) for line in CAPTURE.read_text().splitlines()
+    return [json.loads(line[3:]) for line in found[0].read_text().splitlines()
             if line.startswith("C> ")]
 
 
