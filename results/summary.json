@@ -189,6 +189,7 @@
       "rule_breaks": 1,
       "caught_by_rig": 0,
       "missed": 1,
+      "sent_to_review": 0,
       "counts": {
         "caught_by_rig": {
           "k": 0,
@@ -205,6 +206,14 @@
             0.20654329147389294,
             1.0
           ]
+        },
+        "sent_to_review": {
+          "k": 0,
+          "n": 1,
+          "ci95": [
+            0.0,
+            0.7934567085261071
+          ]
         }
       }
     },
@@ -213,6 +222,7 @@
       "rule_breaks": 12,
       "caught_by_rig": 11,
       "missed": 1,
+      "sent_to_review": 0,
       "counts": {
         "caught_by_rig": {
           "k": 11,
@@ -229,6 +239,14 @@
             0.014864709450773478,
             0.35388592179859524
           ]
+        },
+        "sent_to_review": {
+          "k": 0,
+          "n": 12,
+          "ci95": [
+            0.0,
+            0.2425007574992425
+          ]
         }
       }
     },
@@ -237,6 +255,7 @@
       "rule_breaks": 7,
       "caught_by_rig": 5,
       "missed": 2,
+      "sent_to_review": 0,
       "counts": {
         "caught_by_rig": {
           "k": 5,
@@ -253,6 +272,14 @@
             0.0822171657090155,
             0.6410709098517873
           ]
+        },
+        "sent_to_review": {
+          "k": 0,
+          "n": 7,
+          "ci95": [
+            0.0,
+            0.35433884297520657
+          ]
         }
       }
     },
@@ -261,6 +288,7 @@
       "rule_breaks": 1,
       "caught_by_rig": 1,
       "missed": 0,
+      "sent_to_review": 0,
       "counts": {
         "caught_by_rig": {
           "k": 1,
@@ -271,6 +299,14 @@
           ]
         },
         "missed": {
+          "k": 0,
+          "n": 1,
+          "ci95": [
+            0.0,
+            0.7934567085261071
+          ]
+        },
+        "sent_to_review": {
           "k": 0,
           "n": 1,
           "ci95": [
@@ -389,7 +425,7 @@
     "gemma3:27b"
   ],
   "judge_cache_sha256": "e369586f168e015e11c58d5d2ea3e59e4be1abd1a2176135fef8d23de218d27b",
-  "produced_at": "2026-11-12T03:27:10Z",
+  "produced_at": "2026-11-12T19:36:53Z",
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "counts": {
     "data/train.jsonl": 180,

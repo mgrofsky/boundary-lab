@@ -1,6 +1,6 @@
 # Results report
 
-This report uses the results saved at 2026-11-12T03:27:10Z. The router used `sentence-transformers/all-MiniLM-L6-v2` to turn text into numbers it could compare. `redline report` writes this file.
+This report uses the results saved at 2026-11-12T19:36:53Z. The router used `sentence-transformers/all-MiniLM-L6-v2` to turn text into numbers it could compare. `redline report` writes this file.
 
 The judge model was recorded as gemma3:27b. These names come from the cache file. They haven't been checked separately. The cache file's hash, a fingerprint of its contents, is in `summary.json`.
 

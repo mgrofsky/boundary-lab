@@ -16,7 +16,10 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     denom = 1 + zz / n
     center = (p + zz / (2 * n)) / denom
     half = z * math.sqrt(p * (1 - p) / n + zz / (4 * n * n)) / denom
-    return (max(0.0, center - half), min(1.0, center + half))
+    # Rounding can leave an end one step off, so the ends that are known are set exactly.
+    low = 0.0 if k == 0 else max(0.0, center - half)
+    high = 1.0 if k == n else min(1.0, center + half)
+    return (low, high)
 
 
 def interval(k: int, n: int) -> dict:

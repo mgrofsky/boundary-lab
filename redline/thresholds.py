@@ -23,12 +23,16 @@ def _counts(summary: dict, path: tuple[str, ...]) -> dict:
     """The count and interval stored beside a rate, under the block's "counts" key."""
     block = summary[path[0]]
     try:
-        return block["counts"][path[1]][path[2]]
-    except KeyError:
+        entry = block["counts"][path[1]][path[2]]
+    except (KeyError, TypeError):
+        entry = None
+    if not isinstance(entry, dict) or "ci95" not in entry:
         raise NoCounts(
-            f"the summary has no counts for {'.'.join(path)}, so --use-interval can't be "
-            "checked. Run redline report again with Redline 0.3.0 or later."
-        ) from None
+            f"the summary has no counts with a ci95 interval for {'.'.join(path)}, so "
+            "--use-interval can't be checked. Run redline report again with Redline 0.3.0 "
+            "or later."
+        )
+    return entry
 
 
 def _value(summary: dict, path: tuple[str, ...]) -> float:

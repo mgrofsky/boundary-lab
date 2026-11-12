@@ -21,7 +21,7 @@ The rates stay where they were. The counts sit beside them under a key named `co
 }
 ```
 
-`k` is how many answers, `n` is out of how many, and `ci95` is the low and high end. Under `attack`, each kind gets `counts.caught_by_rig` and `counts.missed`, both out of that kind's rule breaks. These are the published numbers from the saved run, rounded.
+`k` is how many answers, `n` is out of how many, and `ci95` is the low and high end. Under `attack`, each kind splits its rule breaks into `caught_by_rig`, `missed` and `sent_to_review`, the same three buckets as `attack_end_to_end`, each with its entry under `counts`. These are the published numbers from the saved run, rounded.
 
 `redline report` and `redline readme` print each end to end rate in this form: "21 of 24 (88%, 95% interval 69% to 96%)". That interval is wide. With 24 bad answers, a catch rate of 88 percent is consistent with a true rate anywhere from about 69 to 96 percent.
 

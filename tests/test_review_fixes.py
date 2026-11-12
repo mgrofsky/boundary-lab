@@ -239,3 +239,69 @@ def test_router_only_counts_records_the_router_passed_as_written_and_after_a_rew
         "as_written": interval(1, 3),
         "after_rewrite": interval(3, 3),
     }
+
+
+def test_an_attack_id_with_a_hash_is_looked_up_exactly_first():
+    prompts = [{"id": "atk#7", "kind": "card", "target_rule_id": "PAY-01"}]
+    outs = [{**_row("atk#7", ["fail"]), "routed_rule": "PAY-01"}]
+    outs[0].pop("outcomes")
+    labs = [_lab("atk#7", "bad")]
+    kinds = metrics.attack_summary(outs, labs, prompts)
+    assert kinds["card"]["caught_by_rig"] == 1
+    assert report._attack_routing(outs, prompts) == {"total": 1, "misrouted": 0}
+    summary = report.build_summary([], [], outs, labs, prompts, "m", {})
+    assert summary["attack"]["card"]["rule_breaks"] == 1
+
+
+def test_a_later_attempt_of_an_id_with_a_hash_still_finds_its_prompt():
+    prompts = [{"id": "atk#7", "kind": "card", "target_rule_id": "PAY-01"}]
+    assert metrics.prompt_id("atk#7#2", {"atk#7"}) == "atk#7"
+    assert metrics.prompt_id("plain#2", {"plain"}) == "plain"
+    outs = [{**_row("atk#7#2", ["pass"]), "routed_rule": "PAY-01"}]
+    assert report._attack_routing(outs, prompts) == {"total": 1, "misrouted": 0}
+
+
+def test_attack_kinds_count_a_review_as_sent_to_review_not_missed():
+    prompts = [{"id": "a1", "kind": "card"}, {"id": "a2", "kind": "card"}]
+    prompts.append({"id": "a3", "kind": "card"})
+    outs = [_row("a1", ["fail"]), _row("a2", ["review"]), _row("a3", ["pass"])]
+    labs = [_lab("a1", "bad"), _lab("a2", "bad"), _lab("a3", "bad")]
+    card = metrics.attack_summary(outs, labs, prompts)["card"]
+    assert (card["caught_by_rig"], card["missed"], card["sent_to_review"]) == (1, 1, 1)
+    assert card["counts"]["sent_to_review"] == interval_of(1, 3)
+    e2e = metrics.end_to_end(outs, labs)["counts"]["bad"]
+    assert e2e["sent_to_review"]["k"] == card["sent_to_review"]
+    assert e2e["missed"]["k"] == card["missed"]
+
+
+def interval_of(k, n):
+    from redline.intervals import interval
+
+    return interval(k, n)
+
+
+def test_wilson_ends_are_exact():
+    from redline.intervals import wilson
+
+    for n in range(1, 60):
+        assert wilson(0, n)[0] == 0.0
+        assert wilson(n, n)[1] == 1.0
+
+
+def test_gate_use_interval_with_counts_missing_ci95_exits_2(tmp_path, capsys):
+    import json
+
+    from redline import cli
+
+    summary = {
+        "end_to_end": {
+            "bad": {"caught": 0.9},
+            "good": {"wrongly_failed": 0.0},
+            "counts": {"bad": {"caught": {"k": 9, "n": 10}}, "good": {"wrongly_failed": {}}},
+        },
+    }
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps(summary))
+    args = ["gate", "--summary", str(path), "--min-recall", "0.5", "--use-interval"]
+    assert cli.main(args) == 2
+    assert "ci95" in capsys.readouterr().err

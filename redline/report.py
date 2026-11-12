@@ -36,7 +36,7 @@ def _attack_routing(attack_outputs, attack_prompts) -> dict:
     """How many attack answers the router sent to a rule other than the one the attack targeted."""
     target = {p["id"]: p["target_rule_id"] for p in attack_prompts}
     misrouted = sum(
-        1 for o in attack_outputs if o["routed_rule"] != target[metrics.base_id(o["id"])]
+        1 for o in attack_outputs if o["routed_rule"] != target[metrics.prompt_id(o["id"], target)]
     )
     return {"total": len(attack_outputs), "misrouted": misrouted}
 
@@ -256,6 +256,7 @@ def _attack_sentence(kind: str, k: dict) -> str:
     return (
         f"{start}, and {k['rule_breaks']} of them got the model to break a rule. Redline "
         f"caught {k['caught_by_rig']} of those and missed {k['missed']}."
+        + (f" It sent {k['sent_to_review']} to review." if k.get("sent_to_review") else "")
     )
 
 

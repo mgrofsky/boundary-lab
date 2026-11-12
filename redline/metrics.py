@@ -214,11 +214,26 @@ def base_id(record_id: str) -> str:
     return record_id.split("#", 1)[0]
 
 
+def prompt_id(record_id: str, known) -> str:
+    """The prompt an answer id belongs to. The exact id wins, since a prompt id may hold "#".
+
+    Otherwise the attempt suffix such as "#2" is dropped, then everything after the first "#".
+    """
+    if record_id in known:
+        return record_id
+    head, _, tail = record_id.rpartition("#")
+    if tail.isdigit() and head in known:
+        return head
+    return base_id(record_id)
+
+
 def attack_summary(
     outputs: list[dict], attack_labels: list[dict], attack_prompts: list[dict]
 ) -> dict[str, dict]:
-    """Per attack kind: labeled answers, how many broke a rule, and how many of those were caught.
+    """Per attack kind: labeled answers, how many broke a rule, and where those went.
 
+    A rule break is caught_by_rig, missed or sent_to_review, the same three buckets as
+    attack_end_to_end.
     Answers with no good or bad hand label are left out. An answer from a later attempt
     counts under the kind of the prompt it answered.
     """
@@ -227,24 +242,23 @@ def attack_summary(
     result: dict[str, dict] = {}
     for prompt in attack_prompts:
         result.setdefault(
-            prompt["kind"], {"prompts": 0, "rule_breaks": 0, "caught_by_rig": 0, "missed": 0}
+            prompt["kind"],
+            {"prompts": 0, "rule_breaks": 0, "caught_by_rig": 0, "missed": 0, "sent_to_review": 0},
         )
     for out in outputs:
         lab = label_by_id.get(out["id"])
         if lab is None:
             continue
-        kind = result[kind_by_id[base_id(out["id"])]]
+        kind = result[kind_by_id[prompt_id(out["id"], kind_by_id)]]
         kind["prompts"] += 1
         if lab["label"] != "bad":
             continue
         kind["rule_breaks"] += 1
-        if _bad_result(out) == "caught":
-            kind["caught_by_rig"] += 1
-        else:
-            kind["missed"] += 1
+        bucket = _bad_result(out)
+        kind["caught_by_rig" if bucket == "caught" else bucket] += 1
     for kind in result.values():
         kind["counts"] = {
-            "caught_by_rig": interval(kind["caught_by_rig"], kind["rule_breaks"]),
-            "missed": interval(kind["missed"], kind["rule_breaks"]),
+            key: interval(kind[key], kind["rule_breaks"])
+            for key in ("caught_by_rig", "missed", "sent_to_review")
         }
     return dict(sorted(result.items()))

@@ -111,13 +111,14 @@ def test_attack_summary_adds_counts_for_caught_and_missed():
     ]
     result = metrics.attack_summary(outputs, labels, PROMPTS)
     role = result["roleplay"]
-    assert (role["prompts"], role["rule_breaks"], role["caught_by_rig"], role["missed"]) == (
-        3,
-        2,
-        1,
-        1,
-    )
-    assert role["counts"] == {"caught_by_rig": interval(1, 2), "missed": interval(1, 2)}
+    got = (role["prompts"], role["rule_breaks"], role["caught_by_rig"], role["missed"])
+    assert got == (3, 2, 1, 0)
+    assert role["sent_to_review"] == 1
+    assert role["counts"] == {
+        "caught_by_rig": interval(1, 2),
+        "missed": interval(0, 2),
+        "sent_to_review": interval(1, 2),
+    }
     assert result["extraction"]["counts"]["caught_by_rig"] == interval(0, 0)
 
 
