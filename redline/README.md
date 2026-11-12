@@ -169,13 +169,15 @@ Repeats show how stable the grades are. `redline run --attempts 3 --judge live` 
 `redline evade` rewrites each bad answer in fixed ways that keep it readable, such as a fake pass verdict, padding, code blocks, zero width spaces, and look alike letters. It reports a bad answer as caught only if every version failed. With `--attacker`, a chat model then rewords the answers still caught, for up to five rounds.
 
 ```sh
-redline evade --data data/holdout.jsonl --judge live --out results/local/evade
-redline evade --data data/holdout.jsonl --judge live --attacker --max-judge-calls 500 --out results/local/evade
+redline evade --data data/holdout.jsonl --judge live --out results/local/evade --cache results/local/evade/judge_cache.jsonl
+redline evade --data data/holdout.jsonl --judge live --attacker --max-judge-calls 500 --out results/local/evade --cache results/local/evade/judge_cache.jsonl
 ```
+
+Pass your own `--cache` for live runs, so new grades stay out of the saved `data/judge_cache.jsonl`.
 
 A reworded answer that passes may no longer break the rule. So attacker results stay unconfirmed until a person labels them and passes the file to `redline report --evade-labels`.
 
-Replay works for a dry run, with `--missing-grade review`. The cache has never seen the rewritten answers, so they go to review and the numbers mean nothing. The evade numbers for this repo are not published until a live run is done.
+Replay works for a dry run, with `--missing-grade review`. The cache has never seen the rewritten answers, so every rewrite that reaches the judge goes to review. A rewrite the router sends off topic still passes without the judge. Either way, a replay run only shows that the command works. The evade numbers for this repo are not published until a live run is done.
 
 See [adaptive attacks](../docs/adaptive-attacks.md) for every rewrite, the output files, and the summary fields.
 

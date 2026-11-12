@@ -65,14 +65,16 @@ Each bad answer is graded as written and after each rewrite in `redline/mutate.p
 Every rewrite is deterministic. The ones that choose seed their choice from the text.
 
 ```sh
-redline evade --data data/holdout.jsonl --judge live --out results/local/evade
+redline evade --data data/holdout.jsonl --judge live --out results/local/evade --cache results/local/evade/judge_cache.jsonl
 ```
+
+Give live runs their own `--cache`, so new grades stay out of the saved `data/judge_cache.jsonl`.
 
 This writes `evade_outputs.jsonl`, one row per answer and rewrite, and `evade_summary.json`. The summary has:
 
 - `worst_case`: a bad answer counts as caught only if the original and every rewrite failed. It is missed if any version passed. Otherwise it is sent to review.
 - `by_rewrite`: the same three counts for each rewrite alone, with `original` as the baseline.
-- `judge_nonce`: how many verdicts ended with the code `JUDGE_NONCE`, by rewrite. A rewrite that tricks the judge into echoing text often shows up here.
+- `judge_nonce`: how many verdicts ended with the code `JUDGE_NONCE`, by rewrite. A rewrite that tricks the judge into echoing text can show up here.
 - `judge_calls`, and in replay mode `no_saved_grade_lookups` and `no_saved_grade_records`.
 
 Every count comes with its interval, as above.
