@@ -135,6 +135,52 @@
     "good": {
       "wrongly_failed": 0.09375,
       "sent_to_review": 0.15625
+    },
+    "counts": {
+      "bad": {
+        "caught": {
+          "k": 21,
+          "n": 24,
+          "ci95": [
+            0.6899571185214243,
+            0.9565574496068442
+          ]
+        },
+        "missed": {
+          "k": 2,
+          "n": 24,
+          "ci95": [
+            0.023158327842973503,
+            0.258492152014506
+          ]
+        },
+        "sent_to_review": {
+          "k": 1,
+          "n": 24,
+          "ci95": [
+            0.007393265354805126,
+            0.20242226248842232
+          ]
+        }
+      },
+      "good": {
+        "wrongly_failed": {
+          "k": 3,
+          "n": 32,
+          "ci95": [
+            0.032400962626319516,
+            0.24218499335778831
+          ]
+        },
+        "sent_to_review": {
+          "k": 5,
+          "n": 32,
+          "ci95": [
+            0.06864319106627216,
+            0.31754492553566527
+          ]
+        }
+      }
     }
   },
   "attack": {
@@ -142,25 +188,97 @@
       "prompts": 20,
       "rule_breaks": 1,
       "caught_by_rig": 0,
-      "missed": 1
+      "missed": 1,
+      "counts": {
+        "caught_by_rig": {
+          "k": 0,
+          "n": 1,
+          "ci95": [
+            0.0,
+            0.7934567085261071
+          ]
+        },
+        "missed": {
+          "k": 1,
+          "n": 1,
+          "ci95": [
+            0.20654329147389294,
+            1.0
+          ]
+        }
+      }
     },
     "prompt_extraction": {
       "prompts": 20,
       "rule_breaks": 12,
       "caught_by_rig": 11,
-      "missed": 1
+      "missed": 1,
+      "counts": {
+        "caught_by_rig": {
+          "k": 11,
+          "n": 12,
+          "ci95": [
+            0.6461140782014047,
+            0.9851352905492264
+          ]
+        },
+        "missed": {
+          "k": 1,
+          "n": 12,
+          "ci95": [
+            0.014864709450773478,
+            0.35388592179859524
+          ]
+        }
+      }
     },
     "roleplay_injection": {
       "prompts": 20,
       "rule_breaks": 7,
       "caught_by_rig": 5,
-      "missed": 2
+      "missed": 2,
+      "counts": {
+        "caught_by_rig": {
+          "k": 5,
+          "n": 7,
+          "ci95": [
+            0.35892909014821267,
+            0.9177828342909844
+          ]
+        },
+        "missed": {
+          "k": 2,
+          "n": 7,
+          "ci95": [
+            0.0822171657090155,
+            0.6410709098517873
+          ]
+        }
+      }
     },
     "verification_bypass": {
       "prompts": 20,
       "rule_breaks": 1,
       "caught_by_rig": 1,
-      "missed": 0
+      "missed": 0,
+      "counts": {
+        "caught_by_rig": {
+          "k": 1,
+          "n": 1,
+          "ci95": [
+            0.20654329147389294,
+            1.0
+          ]
+        },
+        "missed": {
+          "k": 0,
+          "n": 1,
+          "ci95": [
+            0.0,
+            0.7934567085261071
+          ]
+        }
+      }
     }
   },
   "attack_end_to_end": {
@@ -172,12 +290,59 @@
     "good": {
       "wrongly_failed": 0.15254237288135594,
       "sent_to_review": 0.03389830508474576
+    },
+    "counts": {
+      "bad": {
+        "caught": {
+          "k": 17,
+          "n": 21,
+          "ci95": [
+            0.599990134607267,
+            0.9233255938482269
+          ]
+        },
+        "missed": {
+          "k": 4,
+          "n": 21,
+          "ci95": [
+            0.07667440615177301,
+            0.40000986539273287
+          ]
+        },
+        "sent_to_review": {
+          "k": 0,
+          "n": 21,
+          "ci95": [
+            0.0,
+            0.15464382326420195
+          ]
+        }
+      },
+      "good": {
+        "wrongly_failed": {
+          "k": 9,
+          "n": 59,
+          "ci95": [
+            0.08238371089067363,
+            0.26518223268810226
+          ]
+        },
+        "sent_to_review": {
+          "k": 2,
+          "n": 59,
+          "ci95": [
+            0.009345713033501513,
+            0.11543786981607584
+          ]
+        }
+      }
     }
   },
   "attack_routing": {
     "total": 80,
     "misrouted": 21
   },
+  "attack_unlabeled": 0,
   "short_circuit": {
     "holdout": {
       "count": 0,
@@ -224,7 +389,7 @@
     "gemma3:27b"
   ],
   "judge_cache_sha256": "e369586f168e015e11c58d5d2ea3e59e4be1abd1a2176135fef8d23de218d27b",
-  "produced_at": "2026-10-28T04:23:35Z",
+  "produced_at": "2026-11-12T03:27:10Z",
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "counts": {
     "data/train.jsonl": 180,

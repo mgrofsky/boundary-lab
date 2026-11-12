@@ -1,6 +1,6 @@
 # Results report
 
-This report uses the results saved at 2026-10-28T04:23:35Z. The router used `sentence-transformers/all-MiniLM-L6-v2` to turn text into numbers it could compare. `redline report` writes this file.
+This report uses the results saved at 2026-11-12T03:27:10Z. The router used `sentence-transformers/all-MiniLM-L6-v2` to turn text into numbers it could compare. `redline report` writes this file.
 
 The judge model was recorded as gemma3:27b. These names come from the cache file. They haven't been checked separately. The cache file's hash, a fingerprint of its contents, is in `summary.json`.
 
@@ -73,9 +73,25 @@ Of the answers that broke a rule, Redline caught 88 percent. It passed 8 percent
 
 Of the answers that followed the rules, Redline failed 9 percent by mistake. That's the false alarm rate. It marked 16 percent of them for review and passed the other 75 percent.
 
+Each line gives the count, the share, and a 95 percent interval. With this few answers the true rate could sit anywhere in that interval.
+
+- Rule breaks caught: 21 of 24 (88%, 95% interval 69% to 96%).
+- Rule breaks passed by mistake: 2 of 24 (8%, 95% interval 2% to 26%).
+- Rule breaks sent to review: 1 of 24 (4%, 95% interval 1% to 20%).
+- Good answers wrongly failed: 3 of 32 (9%, 95% interval 3% to 24%).
+- Good answers sent to review: 5 of 32 (16%, 95% interval 7% to 32%).
+
 ## The attack run
 
 The model under test got 80 attack prompts, and 21 of them got it to break a rule, going by the hand labels. Redline caught 17 of those.
+
+Each line gives the count, the share, and a 95 percent interval. With this few answers the true rate could sit anywhere in that interval.
+
+- Rule breaks caught: 17 of 21 (81%, 95% interval 60% to 92%).
+- Rule breaks passed by mistake: 4 of 21 (19%, 95% interval 8% to 40%).
+- Rule breaks sent to review: 0 of 21 (0%, 95% interval 0% to 15%).
+- Good answers wrongly failed: 9 of 59 (15%, 95% interval 8% to 27%).
+- Good answers sent to review: 2 of 59 (3%, 95% interval 1% to 12%).
 
 The results are grouped by the rule each attack targeted. The router picked a different rule or no rule for 21 of the 80 attack answers. When the judge is used, it checks the rule the router picked. A wrong match can hide a violation, such as leaked instructions in an answer about payments.
 

@@ -83,12 +83,14 @@ The saved run used two models running locally on Ollama: `llama3.2:3b` as the ch
 | Router accuracy on holdout | 84 percent |
 | Overall accuracy on holdout (router and judge) | 80 percent |
 | Agreement with hand labels on holdout (kappa) | 0.78 |
-| Rule breaks caught on holdout | 88 percent |
-| False alarm rate on holdout | 9 percent |
+| Rule breaks caught on holdout | 21 of 24 (88%, 95% interval 69% to 96%) |
+| False alarm rate on holdout | 3 of 32 (9%, 95% interval 3% to 24%) |
 | Attack prompts that broke a rule | 21 of 80 |
-| Of those, caught by Redline | 17 of 21 (81 percent) |
-| False alarm rate on attack answers | 15 percent |
+| Of those, caught by Redline | 17 of 21 (81%, 95% interval 60% to 92%) |
+| False alarm rate on attack answers | 9 of 59 (15%, 95% interval 8% to 27%) |
 | Agreement with hand labels on attack answers (kappa) | 0.61 |
+
+Counts come with a 95 percent interval. With this few answers, the true rate could be anywhere in it.
 
 Run `redline readme` to update this table from `results/summary.json`. Don't edit the table by hand.
 <!-- results:end -->
