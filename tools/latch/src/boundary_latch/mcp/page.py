@@ -20,6 +20,9 @@ from urllib.parse import parse_qs, quote, urlsplit
 logger = logging.getLogger("boundary_latch.mcp")
 
 BODY_LIMIT = 64 * 1024
+# The answer to a decision posted from a page drawn before the operation changed.
+STALE_PAGE = "STALE_PAGE"
+STALE_TEXT = "This page is out of date, refresh it."
 LOOP_SECONDS = 10.0
 
 STYLE = """
@@ -93,8 +96,8 @@ def render(state: dict[str, Any], token: str, nonce: str, now: float | None = No
             f"<p>{escape(str(item['summary']))}</p>"
             + flow_note(item.get("flow_reason"))
             + f"<pre>{escape(pretty(item['arguments']))}</pre>"
-            + form("approve", "Approve", {"operation_id": op})
-            + form("deny", "Deny", {"operation_id": op})
+            + form("approve", "Approve", {"operation_id": op, "digest": str(item["digest"])})
+            + form("deny", "Deny", {"operation_id": op, "digest": str(item["digest"])})
             + "</div>"
         )
     parts.append("<h2>Changed tool definitions</h2>")
@@ -250,13 +253,18 @@ class ApprovalPage:
                 if answer is None:
                     self._send(400, "unknown action")
                     return
+                if answer == STALE_PAGE:
+                    self._send(409, STALE_TEXT)
+                    return
                 logger.info("approval page %s: %s", action, answer)
                 self._send(303, answer, extra={"Location": f"/?token={quote(page.token)}"})
 
             def _act(self, action: str, form: dict[str, list[str]]) -> str | None:
                 if action in ("approve", "deny"):
                     op = (form.get("operation_id") or [""])[0]
-                    return page.on_loop(lambda: page.proxy.decide(op, action == "approve"))
+                    digest = (form.get("digest") or [""])[0]
+                    return page.on_loop(
+                        lambda: page.proxy.decide(op, action == "approve", digest))
                 if action == "accept":
                     tool = (form.get("tool") or [""])[0]
                     shown = (form.get("hash") or [""])[0]

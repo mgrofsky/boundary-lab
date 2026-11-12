@@ -230,10 +230,22 @@ def test_a_small_payment_to_an_allowed_recipient_runs(proxy):
 # Approval
 
 
+def digest_for(proxy, op):
+    """The digest the page draws on the forms for this operation, or "" when none."""
+    _, _, body = http(proxy.page_url())
+    for form in body.split('<form method="post" action="/decide">')[1:]:
+        if f'name="operation_id" value="{op}"' in form and 'name="digest"' in form:
+            return form.split('name="digest" value="')[1].split('"')[0]
+    return ""
+
+
 def post(proxy, fields, token=True, host=None):
+    """Post a form. An approve or deny without a digest gets the one the page shows now."""
     url = proxy.page_url()
     base = url.split("?")[0].rstrip("/")
     body = dict(fields)
+    if body.get("action") in ("approve", "deny") and "digest" not in body:
+        body["digest"] = digest_for(proxy, body.get("operation_id", ""))
     if token:
         body["token"] = parse_qs(urlsplit(url).query)["token"][0]
     headers = {"Content-Type": "application/x-www-form-urlencoded"}

@@ -38,6 +38,7 @@
 - `boundary-latch mcp --print-policy` wrote a policy that did not parse when the server listed one tool name twice. It now writes the first and says on stderr which one it left out.
 - The approval page wrote each request line to the log with its token. It now cuts the query string and removes the token from every log line. The token is logged once, in the startup line with the page address.
 - Pins compared 12 hex characters of the sha256, and a server can find two definitions that share them in seconds. Pins, the changed list, and the accept form on the approval page now use the full sha256. `ToolSpec.version` keeps the first 32 characters and never decides a change. A pin file with 12 character hashes is moved to the full hash on load when its kept definition still matches.
+- The approval form carried only the operation id, so a person could approve from a page drawn before the flow reason changed. Each form now carries a digest of the request hash, the summary, and the flow reason. A decision whose digest no longer matches is refused with "This page is out of date, refresh it."
 - `approval.mode = "over_amount"` let a negative amount run without approval. A negative amount now needs approval, whatever the threshold.
 
 ## 0.3.0

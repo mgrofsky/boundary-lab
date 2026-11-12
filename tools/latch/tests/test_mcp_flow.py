@@ -1,7 +1,9 @@
 """The flow rule through the MCP proxy: end to end, and the wait after execute in process."""
 
 import asyncio
+import html
 import json
+import re
 import threading
 
 from boundary_latch.engine import Latch
@@ -12,7 +14,7 @@ from boundary_latch.policy import parse_policy
 from boundary_latch.store import SQLiteStore
 
 from .mcp_helpers import Proxy, http, text_of, wait_for
-from .test_mcp_proxy import blocked_code, calls_to, pending_ids, post
+from .test_mcp_proxy import blocked_code, calls_to, pending_ids, post, start_call
 
 FLOW_POLICY = """
 [limits]
@@ -176,7 +178,7 @@ def test_a_call_gated_at_execute_waits_for_approval_and_then_runs():
         [item] = items
         assert item["flow_reason"] == LATE
         assert stdin.calls == []
-        assert proxy.decide(item["operation_id"], True) == "APPROVED"
+        assert proxy.decide(item["operation_id"], True, item["digest"]) == "APPROVED"
         return await task
 
     kind, value = asyncio.run(scenario())
@@ -206,3 +208,52 @@ def test_a_call_gated_at_execute_in_deny_mode_is_blocked():
     assert text.startswith("Blocked by Latch: FLOW_BLOCKED.")
     assert LATE in text
     assert stdin.calls == []
+
+
+STALE_POLICY = FLOW_POLICY.replace(
+    'labels = ["external"]', 'labels = ["external"]\napproval.mode = "always"')
+
+
+def approve_form(proxy):
+    """The fields of the first Approve form on the page as it is drawn now."""
+    _, _, body = http(proxy.page_url())
+    form = body.split('<form method="post" action="/decide">')[1].split("</form>")[0]
+    fields = dict(re.findall(r'name="([^"]+)" value="([^"]*)"', form))
+    assert fields["action"] == "approve"
+    return {key: html.unescape(value) for key, value in fields.items() if key != "token"}
+
+
+def test_an_approval_from_a_page_drawn_before_the_reason_changed_is_refused(tmp_path):
+    proxy = Proxy(tmp_path, "--approval-wait", "20", policy=STALE_POLICY.format(mode="approve"))
+    try:
+        start_call(proxy, "create_pull_request", {"body": "b"}, 81)
+        wait_for(lambda: pending_ids(proxy))
+        old = approve_form(proxy)
+        assert old["digest"]
+        read_both(proxy)
+        start_call(proxy, "create_pull_request", {"body": "b"}, 82)
+        wait_for(lambda: REASON in http(proxy.page_url())[2])
+        status, _, body = post(proxy, old)
+        assert status == 409
+        assert body == "This page is out of date, refresh it."
+        assert calls_to(proxy, "create_pull_request") == []
+        assert pending_ids(proxy) == [old["operation_id"]]
+        fresh = approve_form(proxy)
+        assert fresh["digest"] != old["digest"]
+        assert post(proxy, fresh)[0] == 303
+        assert json.loads(text_of(proxy.recv_id(82)))["tool"] == "create_pull_request"
+        assert len(calls_to(proxy, "create_pull_request")) == 1
+    finally:
+        proxy.close()
+
+
+def test_an_approve_form_without_a_digest_is_refused(tmp_path):
+    proxy = Proxy(tmp_path, "--approval-wait", "20", policy=STALE_POLICY.format(mode="approve"))
+    try:
+        start_call(proxy, "create_pull_request", {"body": "b"}, 83)
+        [op] = wait_for(lambda: pending_ids(proxy))
+        assert post(proxy, {"action": "approve", "operation_id": op, "digest": ""})[0] == 409
+        assert post(proxy, {"action": "deny", "operation_id": op, "digest": "x"})[0] == 409
+        assert pending_ids(proxy) == [op]
+    finally:
+        proxy.close()

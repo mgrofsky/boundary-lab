@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import logging
 import os
 import threading
@@ -29,6 +31,8 @@ STOP_SECONDS = 5.0
 OPEN = ("prepared", "approved")
 # How many times one call may go back to waiting because the flow rule changed its reason.
 FLOW_ROUNDS = 3
+# decide() answers this when the form's digest does not match the operation now.
+STALE_PAGE = "STALE_PAGE"
 
 
 class ChildGone(Exception):
@@ -430,18 +434,35 @@ class Proxy(ToolCatalog):
                 continue
             pending.append({
                 "operation_id": status.operation_id, "tool": status.tool,
-                "summary": status.summary, "arguments": prepared.arguments,
-                "flow_reason": prepared.flow_reason,
+                "summary": prepared.summary, "arguments": prepared.arguments,
+                "flow_reason": prepared.flow_reason, "digest": self.form_digest(prepared),
                 "waited": max(0, int(now - status.created_at)),
             })
         changed = [{"tool": name, "hash": item.hash, "old": item.old, "new": item.new}
                    for name, item in self.changed.items()]
         return {"pending": pending, "changed": changed}
 
-    def decide(self, op_id: str, approve: bool) -> str:
+    @staticmethod
+    def form_digest(prepared: PreparedAction) -> str:
+        """What the person saw: the request hash, the summary and the flow reason."""
+        body = wire.canonical([prepared.request_hash, prepared.summary, prepared.flow_reason])
+        return hashlib.sha256(body.encode()).hexdigest()
+
+    def decide(self, op_id: str, approve: bool, digest: str = "") -> str:
+        """Approve or deny the operation, only if the page showed what is current now.
+
+        The digest comes from the form. It must match the operation as it would be
+        approved, so a page drawn before the flow reason changed cannot approve it.
+        """
         prepared = self.prepared.get(op_id)
         if prepared is None:
             return "UNKNOWN_OPERATION"
+        status = self.latch.operation_status(self.settings.org, op_id)
+        if (status is None or status.flow_reason != prepared.flow_reason
+                or not hmac.compare_digest(digest.encode(),
+                                           self.form_digest(prepared).encode())):
+            logger.warning("refused a decision from an out of date approval page")
+            return STALE_PAGE
         act = self.latch.approve if approve else self.latch.deny
         decision = act(prepared, self.approver, reference="approval-page")
         self._wake(op_id)

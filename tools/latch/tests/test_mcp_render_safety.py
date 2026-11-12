@@ -13,7 +13,8 @@ QUOTE = '"><script>alert(1)</script>'
 def state():
     return {
         "pending": [{"operation_id": QUOTE, "tool": PAYLOAD, "summary": PAYLOAD,
-                     "arguments": {PAYLOAD: QUOTE}, "waited": 3, "flow_reason": PAYLOAD}],
+                     "arguments": {PAYLOAD: QUOTE}, "waited": 3, "flow_reason": PAYLOAD,
+                     "digest": QUOTE}],
         "changed": [{"tool": QUOTE, "hash": QUOTE,
                      "old": {"name": PAYLOAD, "description": QUOTE},
                      "new": {"name": PAYLOAD, "description": PAYLOAD}}],
@@ -49,7 +50,7 @@ def test_while_something_is_shown_the_page_does_not_reload_by_itself(shown):
 
 def test_the_flow_reason_is_shown_above_the_arguments():
     item = {"operation_id": "op", "tool": "send", "summary": "s", "arguments": {"a": 1},
-            "waited": 0, "flow_reason": "This run read private data (get_file)."}
+            "waited": 0, "flow_reason": "This run read private data (get_file).", "digest": "d"}
     html = render({"pending": [item], "changed": []}, "token", "nonce")
     reason = html.index("This run read private data (get_file).")
     assert reason < html.index("&quot;a&quot;: 1")

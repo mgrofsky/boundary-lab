@@ -102,7 +102,7 @@ For `over_amount`, the amount must be a finite number. A string, a bool, a missi
 
 ## Approval
 
-A call that needs approval waits on the approval page. The page lists each waiting call with the tool, a one line summary, the flow reason when the flow rule applies, the full arguments, the operation id, and how long it has waited. A person clicks Approve or Deny. The decision goes through `Latch.approve` or `Latch.deny` with the reference `approval-page`.
+A call that needs approval waits on the approval page. The page lists each waiting call with the tool, a one line summary, the flow reason when the flow rule applies, the full arguments, the operation id, and how long it has waited. A person clicks Approve or Deny. The decision goes through `Latch.approve` or `Latch.deny` with the reference `approval-page`. Each form carries a digest of the request hash, the summary, and the flow reason as the page drew them. If any of them changed since, for example because other calls gave the run new labels, the page answers "This page is out of date, refresh it." and records nothing. The person refreshes and decides again.
 
 The approver is the user from `--approver`. That user holds every `approve_permission` in the policy, in the same organization as the agent.
 
@@ -120,7 +120,7 @@ The flow rule can apply after `prepare`, when another call adds a label in betwe
 
 ### The page
 
-The page runs on `127.0.0.1` only. Each proxy process makes a random key and prints the full address with the key on stderr. Every request must carry that key. The page refuses a request whose `Host` header is not `127.0.0.1` or `localhost` with the right port, which stops DNS rebinding. Decisions are POST only.
+The page runs on `127.0.0.1` only. Each proxy process makes a random key and prints the full address with the key on stderr. Every request must carry that key. The page refuses a request whose `Host` header is not `127.0.0.1` or `localhost` with the right port, which stops DNS rebinding. Decisions are POST only. The page logs each request without its query string, and never logs the key after the startup line.
 
 The page sends `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a Content-Security-Policy that allows no outside loads. While nothing waits and no definition changed, it refreshes itself every two seconds. While it shows something, it does not reload by itself, so an item never moves under the pointer just before a click. It shows a Refresh link and the time it was drawn instead. Everything it shows came from the model or the server, so it escapes all of it. The key never appears in anything sent to the client.
 
