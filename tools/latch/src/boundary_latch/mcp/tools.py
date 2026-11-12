@@ -58,23 +58,40 @@ def fits(name: Any) -> bool:
     return isinstance(name, str) and NAME.fullmatch(name) is not None
 
 
+# Earlier builds kept this many hex characters of a hash in a pin file.
+OLD_PIN_LENGTH = 12
+# ToolSpec.version is capped at 32 characters. It names the definition; it never
+# decides whether a definition changed. The full hash does that.
+SPEC_VERSION_LENGTH = 32
+
+
 def version(tool: dict[str, Any]) -> str:
-    """The first 12 hex characters of the sha256 of the whole tool object.
+    """The full sha256, in hex, of the whole tool object. Pins compare this.
 
     The proxy serves the whole object, so title, annotations, outputSchema and any
     other field a client sees are covered.
     """
-    return hashlib.sha256(canonical(tool).encode()).hexdigest()[:12]
+    return hashlib.sha256(canonical(tool).encode()).hexdigest()
+
+
+def spec_version(tool: dict[str, Any]) -> str:
+    """The start of the full hash, short enough for ToolSpec.version."""
+    return version(tool)[:SPEC_VERSION_LENGTH]
 
 
 def old_version(tool: dict[str, Any]) -> str:
-    """The hash an earlier build of the proxy used: name, description and inputSchema only.
+    """The hash the first build of the proxy used: name, description and inputSchema only.
 
     Only used to read a pin file written that way.
     """
     body = {"name": tool.get("name"), "description": tool.get("description"),
             "inputSchema": tool.get("inputSchema")}
-    return hashlib.sha256(canonical(body).encode()).hexdigest()[:12]
+    return hashlib.sha256(canonical(body).encode()).hexdigest()[:OLD_PIN_LENGTH]
+
+
+def old_hashes(tool: dict[str, Any]) -> set[str]:
+    """Every short hash an earlier build could have stored for this definition."""
+    return {old_version(tool), version(tool)[:OLD_PIN_LENGTH]}
 
 
 def _safe_field(name: str) -> bool:
@@ -123,7 +140,7 @@ def build_spec(tool: dict[str, Any], handler: Handler, timeout: float) -> ToolSp
     description = tool.get("description")
     return ToolSpec(
         name=name,
-        version=version(tool),
+        version=spec_version(tool),
         args_model=args_model(tool.get("inputSchema")),
         handler=handler,
         description=description if isinstance(description, str) else "",

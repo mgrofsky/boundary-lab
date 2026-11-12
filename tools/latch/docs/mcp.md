@@ -126,13 +126,13 @@ The page sends `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Referrer-Pol
 
 ## Pinned tool definitions
 
-The proxy hashes the whole tool object it serves: name, description, `inputSchema`, title, annotations, `outputSchema`, and any other field. The first definition it sees for a name is pinned. If the server later gives the same name a different definition, the tool is changed. Calls to it return `TOOL_CHANGED` until a person accepts the new definition on the approval page.
+The proxy hashes the whole tool object it serves: name, description, `inputSchema`, title, annotations, `outputSchema`, and any other field. The hash is the full sha256 of the object as canonical JSON, and every compare uses all 64 hex characters. `ToolSpec.version` shows only the first 32; it never decides whether a tool changed. The first definition it sees for a name is pinned. If the server later gives the same name a different definition, the tool is changed. Calls to it return `TOOL_CHANGED` until a person accepts the new definition on the approval page.
 
 The page shows the pinned and new definitions side by side. Until a person accepts, `tools/list` keeps showing the pinned definition. After acceptance it shows the new one. The proxy writes an audit row with event `tool_changed` when it finds a change and `tool_accepted` when a person accepts.
 
 Without `--pin`, pins last for the process only. With `--pin FILE`, the proxy reads the pins at start and writes them each time they change. Each entry holds the hash, the first seen time, and the definition. The file is replaced in one step, so a crash never leaves half a file. A change between runs is caught too. If the file cannot be read, the proxy refuses to start.
 
-An earlier build of the proxy hashed only the name, description, and `inputSchema`. When the proxy loads a pin written that way, it checks the kept definition against the old hash. If it matches, the proxy pins it again under the new hash without asking, since nothing changed. A pin that does not match is left alone, so a real change still shows.
+Earlier builds of the proxy stored 12 hex characters: first of a hash over only the name, description, and `inputSchema`, later of the whole object hash. When the proxy loads a pin written either way, it hashes the kept definition both ways. If one matches the stored value, the proxy pins it again under the full hash without asking, since nothing changed. A pin that does not match is left alone, so the tool shows as changed.
 
 The proxy learns tools from the server's `tools/list`, following `nextCursor` to the end. When the server sends `notifications/tools/list_changed`, the proxy fetches the list again on next use and passes the notification on.
 

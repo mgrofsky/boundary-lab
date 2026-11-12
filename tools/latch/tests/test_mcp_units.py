@@ -104,9 +104,9 @@ ODD = {"type": "object", "properties": {"my-arg": {}, "class": {}, "copy": {}, "
        "required": ["class"]}
 
 
-def test_version_is_12_hex_and_covers_the_whole_tool_object():
+def test_version_is_the_full_sha256_and_covers_the_whole_tool_object():
     tool = {"name": "a", "description": "d", "inputSchema": {"type": "object"}}
-    assert len(version(tool)) == 12
+    assert len(version(tool)) == 64
     int(version(tool), 16)
     assert version(tool) == version(dict(reversed(list(tool.items()))))
     assert version(tool) != version({**tool, "description": "e"})
@@ -122,8 +122,8 @@ def test_the_old_version_covers_only_name_description_and_schema():
     tool = {"name": "a", "description": "d", "inputSchema": {"type": "object"}}
     assert old_version(tool) == old_version({**tool, "title": "ignored"})
     assert old_version(tool) != old_version({**tool, "description": "e"})
-    # A tool with only those three fields keeps its hash, so its pin does not change.
-    assert old_version(tool) == version(tool)
+    # A tool with only those three fields hashes the same way, so its pin does not change.
+    assert old_version(tool) == version(tool)[:12]
     assert old_version({**tool, "title": "t"}) != version({**tool, "title": "t"})
 
 
@@ -183,7 +183,7 @@ def test_spec_has_version_describe_and_timeout():
     tool = {"name": "files.read-text", "description": "Reads.", "inputSchema": ODD}
     spec = build_spec(tool, lambda args, info: None, 7.5)
     assert spec.name == "files.read-text"
-    assert spec.version == version(tool)
+    assert spec.version == version(tool)[:32]
     assert spec.timeout_seconds == 7.5
     assert spec.args_model.model_config["extra"] == "forbid"
     checked = spec.args_model.model_validate({"class": "c", "my-arg": {"b": [1, 2]}})
@@ -339,3 +339,69 @@ def test_print_policy_says_on_stderr_which_duplicate_it_skipped(monkeypatch, cap
         assert main.print_policy(["server"]) == 0
     assert parse_policy(capsys.readouterr().out).tools.keys() == {"echo"}
     assert "left out tool 'echo': the server listed this name before" in caplog.text
+
+
+def test_the_pin_hash_is_the_full_sha256_and_the_spec_version_is_32_characters():
+    full = version(TOOL)
+    assert len(full) == 64 and int(full, 16) >= 0
+    spec = build_spec(TOOL, lambda args, info: None, 1.0)
+    assert spec.version == full[:32]
+
+
+def test_a_pin_with_the_short_whole_object_hash_is_pinned_again_silently(tmp_path):
+    path = tmp_path / "pins.json"
+    path.write_text(json.dumps({"echo": {"hash": version(TOOL)[:12], "first_seen": 1.0,
+                                         "definition": TOOL}}))
+    pins = Pins(path)
+    assert pins.get("echo")["hash"] == version(TOOL)
+    assert json.loads(path.read_text())["echo"]["hash"] == version(TOOL)
+
+
+def test_a_short_pin_whose_definition_does_not_match_is_a_change(tmp_path):
+    path = tmp_path / "pins.json"
+    other = {**TOOL, "description": "something else"}
+    path.write_text(json.dumps({"echo": {"hash": version(other)[:12], "first_seen": 1.0,
+                                         "definition": TOOL}}))
+    proxy = make_proxy(Pins(path))
+    proxy.learn([TOOL])
+    assert "echo" in proxy.changed
+
+
+def make_proxy(pins):
+    from boundary_latch.engine import Latch
+    from boundary_latch.mcp.proxy import Proxy, Settings
+    from boundary_latch.store import SQLiteStore
+
+    policy = parse_policy('[tools.echo]\nrequire_permission = "mcp:use"\n')
+    return Proxy(Latch(policy, SQLiteStore()), Settings(), pins, lambda data: None)
+
+
+def colliding_pair(length):
+    """Two echo definitions whose hashes share the first length hex characters."""
+    seen = {}
+    for n in range(1_000_000):
+        tool = {**TOOL, "description": f"d{n}"}
+        prefix = version(tool)[:length]
+        if prefix in seen:
+            return seen[prefix], tool
+        seen[prefix] = tool
+    raise AssertionError("no collision found")
+
+
+def test_two_definitions_that_share_a_short_prefix_are_still_a_change(monkeypatch):
+    from boundary_latch.mcp import tools
+
+    monkeypatch.setattr(tools, "SPEC_VERSION_LENGTH", 4)
+    first, second = colliding_pair(4)
+    assert version(first) != version(second)
+    assert tools.spec_version(first) == tools.spec_version(second)
+    proxy = make_proxy(Pins())
+    proxy.learn([first])
+    assert proxy.changed == {}
+    proxy.learn([second])
+    assert proxy.changed["echo"].hash == version(second)
+    assert proxy.served["echo"] == first
+    assert not proxy.accept("echo", version(second)[:4])
+    assert not proxy.accept("echo", version(second)[:12])
+    assert proxy.accept("echo", version(second))
+    assert proxy.served["echo"] == second

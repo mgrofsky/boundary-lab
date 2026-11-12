@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import ConfigError
-from .tools import old_version, version
+from .tools import old_hashes, version
 
 
 class Pins:
@@ -31,10 +31,12 @@ class Pins:
                 self._save()
 
     def _upgrade(self) -> bool:
-        """Pin again, under the whole object hash, entries written by the old hash.
+        """Pin again, under the full hash, entries an earlier build wrote with a short one.
 
-        Only an entry whose kept definition gives its stored hash under the old method
-        is changed, so a real change still shows as changed.
+        Earlier builds stored 12 hex characters, of either the three field hash or the
+        whole object hash. Only an entry whose kept definition hashes to its stored
+        value is changed, so a real change still shows as changed. The served
+        definition is never compared by prefix.
         """
         changed = False
         for entry in self.entries.values():
@@ -42,7 +44,7 @@ class Pins:
             if not isinstance(definition, dict):
                 continue
             new = version(definition)
-            if entry["hash"] != new and entry["hash"] == old_version(definition):
+            if entry["hash"] != new and entry["hash"] in old_hashes(definition):
                 entry["hash"] = new
                 changed = True
         return changed
