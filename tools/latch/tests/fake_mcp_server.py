@@ -22,7 +22,7 @@ state = {"echo_description": "Echo the arguments back."}
 def tools() -> list[dict]:
     plain = {"type": "object", "properties": {}}
     return [
-        {"name": "echo", "description": state["echo_description"],
+        {"name": "echo", "title": "Echo", "description": state["echo_description"],
          "inputSchema": {"type": "object", "properties": {"text": {"type": "string"},
                                                           "extra": {}},
                          "required": ["text"]}},

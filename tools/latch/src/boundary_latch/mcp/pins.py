@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import ConfigError
+from .tools import old_version, version
 
 
 class Pins:
@@ -26,6 +27,25 @@ class Pins:
         self.entries: dict[str, dict[str, Any]] = {}
         if self.path is not None and self.path.exists():
             self.entries = self._load(self.path)
+            if self._upgrade():
+                self._save()
+
+    def _upgrade(self) -> bool:
+        """Pin again, under the whole object hash, entries written by the old hash.
+
+        Only an entry whose kept definition gives its stored hash under the old method
+        is changed, so a real change still shows as changed.
+        """
+        changed = False
+        for entry in self.entries.values():
+            definition = entry.get("definition")
+            if not isinstance(definition, dict):
+                continue
+            new = version(definition)
+            if entry["hash"] != new and entry["hash"] == old_version(definition):
+                entry["hash"] = new
+                changed = True
+        return changed
 
     @staticmethod
     def _load(path: Path) -> dict[str, dict[str, Any]]:

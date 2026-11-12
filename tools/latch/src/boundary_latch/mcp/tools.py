@@ -59,7 +59,19 @@ def fits(name: Any) -> bool:
 
 
 def version(tool: dict[str, Any]) -> str:
-    """The first 12 hex characters of the sha256 of name, description and inputSchema."""
+    """The first 12 hex characters of the sha256 of the whole tool object.
+
+    The proxy serves the whole object, so title, annotations, outputSchema and any
+    other field a client sees are covered.
+    """
+    return hashlib.sha256(canonical(tool).encode()).hexdigest()[:12]
+
+
+def old_version(tool: dict[str, Any]) -> str:
+    """The hash before 0.4.0 pins covered every field: name, description and inputSchema.
+
+    Only used to read a pin file written that way.
+    """
     body = {"name": tool.get("name"), "description": tool.get("description"),
             "inputSchema": tool.get("inputSchema")}
     return hashlib.sha256(canonical(body).encode()).hexdigest()[:12]

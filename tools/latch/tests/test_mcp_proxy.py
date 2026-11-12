@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 
-from boundary_latch.mcp.tools import version
+from boundary_latch.mcp.tools import old_version, version
 
 from .mcp_helpers import FAKE, POLICY, Proxy, http, text_of, wait_for
 
@@ -465,6 +465,32 @@ def test_a_pin_file_catches_a_change_between_runs(tmp_path):
         assert saved["hash"] == shown and saved["first_seen"] == 1.0
     finally:
         second.close()
+
+
+def test_a_pin_file_from_the_old_hash_stays_quiet_and_still_catches_a_new_field(tmp_path):
+    pins = tmp_path / "pins.json"
+    first = Proxy(tmp_path, "--pin", str(pins))
+    first.call("echo", {"text": "x"})
+    first.close()
+    data = json.loads(pins.read_text())
+    echo = data["echo"]["definition"]
+    # A pin from before 0.4.0, for the same definition: it must not look changed.
+    assert old_version(echo) != version(echo)
+    data["echo"] = {"hash": old_version(echo), "first_seen": 1.0, "definition": echo}
+    # A pin whose kept definition had an annotation the server has since dropped.
+    guarded = {**data["guarded"]["definition"], "annotations": {"readOnlyHint": True}}
+    data["guarded"] = {"hash": old_version(guarded), "first_seen": 1.0, "definition": guarded}
+    pins.write_text(json.dumps(data))
+    second = Proxy(tmp_path, "--pin", str(pins))
+    try:
+        assert "result" in second.call("echo", {"text": "x"})
+        assert "isError" not in second.call("echo", {"text": "y"})["result"]
+        assert blocked_code(second.call("guarded", {"note": "n"})) == "TOOL_CHANGED"
+    finally:
+        second.close()
+    saved = json.loads(pins.read_text())
+    assert saved["echo"]["hash"] == version(echo)
+    assert saved["guarded"]["hash"] == version(guarded)
 
 
 def test_a_bad_pin_file_stops_the_proxy_before_the_server_starts(tmp_path):

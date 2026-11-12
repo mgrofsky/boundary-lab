@@ -13,6 +13,7 @@ from boundary_latch.mcp.tools import (
     build_spec,
     comment,
     fits,
+    old_version,
     starter_policy,
     version,
 )
@@ -103,14 +104,27 @@ ODD = {"type": "object", "properties": {"my-arg": {}, "class": {}, "copy": {}, "
        "required": ["class"]}
 
 
-def test_version_is_12_hex_and_covers_name_description_and_schema():
+def test_version_is_12_hex_and_covers_the_whole_tool_object():
     tool = {"name": "a", "description": "d", "inputSchema": {"type": "object"}}
     assert len(version(tool)) == 12
     int(version(tool), 16)
     assert version(tool) == version(dict(reversed(list(tool.items()))))
     assert version(tool) != version({**tool, "description": "e"})
     assert version(tool) != version({**tool, "inputSchema": {"type": "object", "x": 1}})
-    assert version(tool) == version({**tool, "title": "ignored"})
+    # The proxy serves the whole object, so every field a client sees is covered.
+    assert version(tool) != version({**tool, "title": "t"})
+    assert version(tool) != version({**tool, "annotations": {"readOnlyHint": True}})
+    assert version(tool) != version({**tool, "outputSchema": {"type": "object"}})
+    assert version(tool) != version({**tool, "_meta": {"x": 1}})
+
+
+def test_the_old_version_covers_only_name_description_and_schema():
+    tool = {"name": "a", "description": "d", "inputSchema": {"type": "object"}}
+    assert old_version(tool) == old_version({**tool, "title": "ignored"})
+    assert old_version(tool) != old_version({**tool, "description": "e"})
+    # A tool with only those three fields keeps its hash, so its pin does not change.
+    assert old_version(tool) == version(tool)
+    assert old_version({**tool, "title": "t"}) != version({**tool, "title": "t"})
 
 
 def test_odd_property_names_validate_and_dump_by_their_own_names():
@@ -236,3 +250,34 @@ def test_a_bad_pins_file_is_refused(tmp_path, body):
     path.write_text(body)
     with pytest.raises(ConfigError):
         Pins(path)
+
+
+TOOL = {"name": "echo", "description": "d", "inputSchema": {"type": "object"},
+        "annotations": {"readOnlyHint": True}}
+
+
+def test_a_pin_written_by_the_old_hash_is_pinned_again_silently(tmp_path):
+    path = tmp_path / "pins.json"
+    path.write_text(json.dumps({"echo": {"hash": old_version(TOOL), "first_seen": 1.0,
+                                         "definition": TOOL}}))
+    pins = Pins(path)
+    assert pins.get("echo")["hash"] == version(TOOL)
+    assert pins.get("echo")["first_seen"] == 1.0
+    assert "accepted_at" not in pins.get("echo")
+    assert json.loads(path.read_text())["echo"]["hash"] == version(TOOL)
+
+
+def test_an_old_pin_whose_definition_does_not_match_is_left_alone(tmp_path):
+    path = tmp_path / "pins.json"
+    entry = {"hash": "000000000000", "first_seen": 1.0, "definition": TOOL}
+    path.write_text(json.dumps({"echo": entry}))
+    assert Pins(path).get("echo") == entry
+
+
+def test_a_pin_with_the_new_hash_is_left_alone(tmp_path):
+    path = tmp_path / "pins.json"
+    path.write_text(json.dumps({"echo": {"hash": version(TOOL), "first_seen": 1.0,
+                                         "definition": TOOL}}))
+    before = path.read_text()
+    Pins(path)
+    assert path.read_text() == before
