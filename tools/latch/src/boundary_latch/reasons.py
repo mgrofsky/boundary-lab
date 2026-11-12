@@ -8,6 +8,7 @@ class Code(StrEnum):
     DENIED_BY_APPROVER = "DENIED_BY_APPROVER"
     UNKNOWN_TOOL = "UNKNOWN_TOOL"
     TOOL_CHANGED = "TOOL_CHANGED"
+    INPUT_NOT_REQUESTED = "INPUT_NOT_REQUESTED"
     NO_POLICY = "NO_POLICY"
     INVALID_ARGUMENTS = "INVALID_ARGUMENTS"
     MISSING_PERMISSION = "MISSING_PERMISSION"
@@ -50,6 +51,7 @@ EXPLANATIONS: dict[Code, str] = {
         "This tool's definition changed after it was first seen. "
         "A person must accept the new definition."
     ),
+    Code.INPUT_NOT_REQUESTED: "This call carries an answer the server did not ask for.",
     Code.NO_POLICY: "The policy has no rules for this tool, so Latch blocks it.",
     Code.INVALID_ARGUMENTS: "The request's inputs do not match what this tool accepts.",
     Code.MISSING_PERMISSION: "The user does not have the permission this tool requires.",

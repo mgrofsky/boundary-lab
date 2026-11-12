@@ -165,10 +165,18 @@ approval.mode = "always"
 def test_the_approval_page_shows_the_input_round_under_its_own_headings(tmp_path):
     proxy = Proxy(tmp_path, "--approval-wait", "20", policy=INPUT_POLICY, modern=True)
     try:
+        # The server issues a requestState with markup in it for topic "markup".
+        proxy.send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+            "name": "ask_input", "arguments": {"topic": "markup"}}})
+        [first] = wait_for(lambda: pending_ids(proxy))
+        post(proxy, {"action": "approve", "operation_id": first})
+        asked = proxy.recv_id(4)["result"]
+        assert asked["resultType"] == "input_required"
+        assert asked["requestState"] == "<script>s</script>"
         proxy.send({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
-            "name": "ask_input", "arguments": {"topic": "t"},
+            "name": "ask_input", "arguments": {"topic": "markup"},
             "inputResponses": {"confirm": {"action": "accept", "content": {"ok": "<b>x</b>"}}},
-            "requestState": "<script>s</script>"}})
+            "requestState": asked["requestState"]}})
         [op] = wait_for(lambda: pending_ids(proxy))
         _, _, page = http(proxy.page_url())
         assert "<h3>Input responses</h3>" in page and "<h3>Request state</h3>" in page
@@ -178,7 +186,7 @@ def test_the_approval_page_shows_the_input_round_under_its_own_headings(tmp_path
         assert "$requestState" not in arguments and "topic" in arguments
         post(proxy, {"action": "approve", "operation_id": op})
         reply = proxy.recv_id(5)
-        assert reply["result"]["resultType"] == "input_required"
+        assert reply["result"]["resultType"] == "complete"
     finally:
         proxy.close()
 

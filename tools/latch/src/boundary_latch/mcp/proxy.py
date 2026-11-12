@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -50,6 +51,10 @@ META_KEYS = frozenset({
 })
 
 
+# How many input requests from the server the proxy keeps. The oldest is dropped first.
+INPUT_RECORDS = 1000
+
+
 class ChildGone(Exception):
     """The server exited before it answered."""
 
@@ -65,6 +70,14 @@ class Settings:
     approval_wait: float = 120.0
     page_on: bool = True
     open_browser: bool = True
+
+
+@dataclass(frozen=True)
+class Asked:
+    """What a server asked for when it answered a tools/call with input_required."""
+
+    state: str | None
+    keys: frozenset[str]
 
 
 @dataclass
@@ -116,6 +129,9 @@ class Proxy(ToolCatalog):
         self._call_meta: dict[str, dict[str, Any] | None] = {}
         # Open subscriptions/listen requests: the proxy's id to the client's id.
         self._listens: dict[int, Any] = {}
+        # The input each tool and arguments wait for, from the server's input_required
+        # results: round_key -> Asked. A client round must match one of these.
+        self._asked: OrderedDict[str, Asked] = OrderedDict()
         # _meta key names already logged as dropped.
         self._dropped_meta: set[str] = set()
 
@@ -449,6 +465,10 @@ class Proxy(ToolCatalog):
         if isinstance(checked, str):
             return "error", {"code": wire.INVALID_PARAMS, "message": checked}
         name, arguments, meta = checked
+        if any(param in params for param in RESERVED):
+            key = self.round_key(name, arguments)
+            if not self.asked_for(key, params.get("inputResponses"), params.get("requestState")):
+                return self._refuse_round(name)
         meta = self.forwarded_meta(meta)
         self.keep_protocol(params)
         await self.ensure_tools()
@@ -490,6 +510,45 @@ class Proxy(ToolCatalog):
             if status is None or status.state not in OPEN:
                 self._open_ops.pop(key, None)
                 self._call_meta.pop(op_id, None)
+
+    # Input rounds
+
+    @staticmethod
+    def round_key(name: str, arguments: Any) -> str:
+        """The tool and its own arguments, without the input round, as canonical JSON."""
+        if isinstance(arguments, dict):
+            arguments = {key: value for key, value in arguments.items()
+                         if key not in RESERVED.values()}
+        return wire.canonical([name, arguments])
+
+    def asked_for(self, key: str, answers: Any, state: Any) -> bool:
+        """True when the server asked for this round: same state, and only keys it asked."""
+        asked = self._asked.get(key)
+        if asked is None or asked.state != state:
+            return False
+        return isinstance(answers, dict | None) and set(answers or {}) <= asked.keys
+
+    def remember_request(self, key: str, value: dict[str, Any]) -> None:
+        """Keep what an input_required result asks for. It replaces any earlier one."""
+        self._asked.pop(key, None)
+        state, requests = value.get("requestState"), value.get("inputRequests")
+        if not isinstance(state, str | None) or not isinstance(requests, dict):
+            logger.warning("the server asked for input in a shape the proxy does not know, "
+                           "so no answer to it will pass")
+            return
+        self._asked[key] = Asked(state=state, keys=frozenset(requests))
+        while len(self._asked) > INPUT_RECORDS:
+            self._asked.popitem(last=False)
+
+    def _refuse_round(self, name: str) -> tuple[str, Any]:
+        """Refuse an input round the server did not ask for, before prepare."""
+        logger.warning("refused a tools/call that carries input the server did not ask for")
+        self.latch._write_audit(
+            "prepare", str(Code.INPUT_NOT_REQUESTED), self.settings.org, run_id=self.run_id,
+            operation_id=str(uuid.uuid4()), user_id=self.settings.user, tool=name,
+            now=self.latch.clock(),
+        )
+        return self._blocked(Code.INPUT_NOT_REQUESTED)
 
     def _refused_repeat(self, decision: Decision, op_id: str, key: str) -> tuple[str, Any]:
         """Answer a refused prepare. An operation still open for it can never run now.
@@ -593,10 +652,6 @@ class Proxy(ToolCatalog):
 
     async def handler(self, args: dict[str, Any], info: CallInfo) -> Any:
         """The Latch handler. It is the only place a tools/call is sent to the server."""
-        child_id = self._new_id()
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._to_child[child_id] = ("proxy", future)
-        self._in_flight[info.operation_id] = child_id
         params: dict[str, Any] = {"name": info.tool}
         # Latch checked the input round under reserved names. The server gets it back
         # where MCP puts it, never inside arguments.
@@ -605,6 +660,18 @@ class Proxy(ToolCatalog):
             if reserved in arguments:
                 params[param] = arguments.pop(reserved)
         params["arguments"] = arguments
+        key = self.round_key(info.tool, arguments)
+        if any(param in params for param in RESERVED):
+            # Checked again here, since another copy of the round may have used it up.
+            if not self.asked_for(key, params.get("inputResponses"), params.get("requestState")):
+                self._replies[info.operation_id] = {"result": wire.blocked(
+                    str(Code.INPUT_NOT_REQUESTED), explain(Code.INPUT_NOT_REQUESTED))}
+                raise ToolFailed("the server no longer asks for this input")
+            self._asked.pop(key, None)
+        child_id = self._new_id()
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._to_child[child_id] = ("proxy", future)
+        self._in_flight[info.operation_id] = child_id
         meta = self._call_meta.get(info.operation_id)
         if meta is not None:
             params["_meta"] = meta
@@ -630,6 +697,8 @@ class Proxy(ToolCatalog):
         if value.get("isError") is True:
             self._replies[info.operation_id] = reply
             raise ToolFailed("the tool reported an error")
+        if value.get("resultType") == "input_required":
+            self.remember_request(key, value)
         return value
 
     # Approval page actions, run on the event loop

@@ -133,21 +133,27 @@ def call_tool(msg_id, params: dict) -> None:
         send({"jsonrpc": "2.0", "id": msg_id, "result": text("mutated")})
         tools_changed()
     elif name == "ask_input":
+        # topic "nostate" asks with no requestState; topic "markup" issues a state with markup.
+        topic = args.get("topic")
         given = params.get("requestState")
-        if "inputResponses" in params and given in issued:
+        known = given in issued or (topic == "nostate" and given is None)
+        if "inputResponses" in params and known:
             issued.discard(given)
             send({"jsonrpc": "2.0", "id": msg_id, "result": text(
                 {"tool": name, "args": args, "inputResponses": params["inputResponses"],
                  "requestState": given})})
             return
-        token = f"state-{len(issued) + 1}-{msg_id}"
-        issued.add(token)
-        send({"jsonrpc": "2.0", "id": msg_id, "result": {
-            "resultType": "input_required", "requestState": token,
-            "inputRequests": {"confirm": {"method": "elicitation/create", "params": {
+        result = {"resultType": "input_required", "inputRequests": {"confirm": {
+            "method": "elicitation/create", "params": {
                 "mode": "form", "message": "Go ahead?",
                 "requestedSchema": {"type": "object",
-                                    "properties": {"ok": {"type": "boolean"}}}}}}}})
+                                    "properties": {"ok": {"type": "boolean"}}}}}}}
+        if topic != "nostate":
+            token = "<script>s</script>" if topic == "markup" else \
+                f"state-{len(issued) + 1}-{msg_id}"
+            issued.add(token)
+            result["requestState"] = token
+        send({"jsonrpc": "2.0", "id": msg_id, "result": result})
     elif name == "crash":
         os._exit(3)
     elif name == "ask_roots":

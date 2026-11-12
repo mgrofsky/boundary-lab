@@ -146,3 +146,189 @@ def test_a_long_or_odd_meta_key_is_logged_safely(modern):
     err = modern.stderr()
     assert "\x1b" not in err
     assert repr(key)[:80] in err and "k" * 100 not in err
+
+
+# Input rounds must be ones the server asked for
+
+ANSWER = {"confirm": {"action": "accept", "content": {"ok": True}}}
+
+
+@pytest.fixture
+def rounds(tmp_path):
+    started = Proxy(tmp_path, "--approval-port", "-1", "--db", str(tmp_path / "latch.db"),
+                    modern=True)
+    yield started
+    started.close()
+
+
+def round_call(proxy, tool, args, answers=None, state=None):
+    params = {"name": tool, "arguments": args}
+    if answers is not None:
+        params["inputResponses"] = answers
+    if state is not None:
+        params["requestState"] = state
+    return proxy.request("tools/call", params)
+
+
+def rounds_sent(proxy):
+    return [m["params"] for m in proxy.server_calls() if "inputResponses" in m["params"]
+            or "requestState" in m["params"]]
+
+
+def audit_rows(tmp_path):
+    import subprocess
+    import sys
+
+    out = subprocess.run([sys.executable, "-m", "boundary_latch", "audit",
+                          str(tmp_path / "latch.db"), "--json"],
+                         capture_output=True, text=True, check=True).stdout
+    return [json.loads(line) for line in out.splitlines()]
+
+
+def first_round(proxy, topic="t"):
+    return proxy.call("ask_input", {"topic": topic})["result"]
+
+
+@pytest.mark.parametrize(("tool", "args"), [("echo", {"text": "x"}),
+                                            ("ask_input", {"topic": "t"})])
+def test_a_made_up_round_is_refused_before_prepare(rounds, tmp_path, tool, args):
+    from .test_mcp_proxy import blocked_code
+
+    reply = round_call(rounds, tool, args, ANSWER, "made-up")
+    assert blocked_code(reply) == "INPUT_NOT_REQUESTED"
+    assert "This call carries an answer the server did not ask for." in \
+        reply["result"]["content"][0]["text"]
+    assert rounds_sent(rounds) == []
+    rounds.close()
+    rows = [row for row in audit_rows(tmp_path) if row["tool"] == tool]
+    assert [(row["event"], row["code"]) for row in rows] == [("prepare", "INPUT_NOT_REQUESTED")]
+
+
+@pytest.mark.parametrize("change", ["state", "key", "args", "no_state"])
+def test_a_round_that_does_not_match_what_the_server_asked_is_refused(rounds, change):
+    from .test_mcp_proxy import blocked_code
+
+    state = first_round(rounds)["requestState"]
+    args, answers = {"topic": "t"}, dict(ANSWER)
+    if change == "state":
+        state = state + "x"
+    elif change == "key":
+        answers["other"] = {"action": "accept"}
+    elif change == "args":
+        args = {"topic": "u"}
+    else:
+        state = None
+    assert blocked_code(round_call(rounds, "ask_input", args, answers, state)) == \
+        "INPUT_NOT_REQUESTED"
+    assert rounds_sent(rounds) == []
+
+
+def test_a_matching_round_is_used_up_once_it_is_sent(rounds):
+    from .test_mcp_proxy import blocked_code
+
+    state = first_round(rounds)["requestState"]
+    done = round_call(rounds, "ask_input", {"topic": "t"}, ANSWER, state)
+    assert done["result"]["resultType"] == "complete"
+    again = round_call(rounds, "ask_input", {"topic": "t"}, ANSWER, state)
+    assert blocked_code(again) == "INPUT_NOT_REQUESTED"
+    assert len(rounds_sent(rounds)) == 1
+
+
+def test_a_round_may_answer_some_of_the_requests_or_none(rounds):
+    state = first_round(rounds)["requestState"]
+    reply = round_call(rounds, "ask_input", {"topic": "t"}, {}, state)
+    assert reply["result"]["resultType"] == "complete"
+    assert len(rounds_sent(rounds)) == 1
+
+
+def test_a_round_with_no_state_matches_a_request_with_no_state(rounds):
+    from .test_mcp_proxy import blocked_code
+
+    first = first_round(rounds, "nostate")
+    assert "requestState" not in first
+    assert blocked_code(round_call(rounds, "ask_input", {"topic": "nostate"}, ANSWER,
+                                   "s")) == "INPUT_NOT_REQUESTED"
+    done = round_call(rounds, "ask_input", {"topic": "nostate"}, ANSWER)
+    assert done["result"]["resultType"] == "complete"
+
+
+def test_a_new_request_replaces_the_old_one(rounds):
+    from .test_mcp_proxy import blocked_code
+
+    old = first_round(rounds)["requestState"]
+    new = first_round(rounds)["requestState"]
+    assert old != new
+    assert blocked_code(round_call(rounds, "ask_input", {"topic": "t"}, ANSWER, old)) == \
+        "INPUT_NOT_REQUESTED"
+    done = round_call(rounds, "ask_input", {"topic": "t"}, ANSWER, new)
+    assert done["result"]["resultType"] == "complete"
+
+
+def test_two_copies_of_one_round_send_it_once(rounds):
+    state = first_round(rounds)["requestState"]
+    params = {"name": "ask_input", "arguments": {"topic": "t"}, "inputResponses": ANSWER,
+              "requestState": state}
+    for msg_id in (71, 72):
+        rounds.send({"jsonrpc": "2.0", "id": msg_id, "method": "tools/call", "params": params})
+    replies = [rounds.recv_id(71), rounds.recv_id(72)]
+    assert len(rounds_sent(rounds)) == 1
+    texts = [r["result"]["content"][0]["text"] for r in replies]
+    assert sum("INPUT_NOT_REQUESTED" in text for text in texts) == 1
+
+
+def test_a_round_that_waits_for_a_person_can_be_repeated_until_it_runs(tmp_path):
+    from .test_mcp_proto import INPUT_POLICY
+    from .test_mcp_proxy import pending_ids, post
+
+    proxy = Proxy(tmp_path, "--approval-wait", "0", policy=INPUT_POLICY, modern=True)
+    try:
+        assert "waits for a person" in proxy.call("ask_input", {"topic": "t"})["result"][
+            "content"][0]["text"]
+        [first] = pending_ids(proxy)
+        post(proxy, {"action": "approve", "operation_id": first})
+        state = proxy.call("ask_input", {"topic": "t"})["result"]["requestState"]
+        for _ in range(2):
+            text = round_call(proxy, "ask_input", {"topic": "t"}, ANSWER, state)["result"][
+                "content"][0]["text"]
+            assert "waits for a person" in text
+        [op] = pending_ids(proxy)
+        assert op in text
+        post(proxy, {"action": "approve", "operation_id": op})
+        done = round_call(proxy, "ask_input", {"topic": "t"}, ANSWER, state)
+        assert done["result"]["resultType"] == "complete"
+        assert len(rounds_sent(proxy)) == 1
+    finally:
+        proxy.close()
+
+
+@pytest.mark.parametrize("value", [
+    {"requestState": 5, "inputRequests": {"a": {}}},
+    {"requestState": "s", "inputRequests": ["a"]},
+    {"requestState": "s"},
+])
+def test_an_odd_input_request_is_not_kept_and_drops_the_old_one(value):
+    proxy = unit_proxy()
+    key = proxy.round_key("echo", {"text": "x"})
+    proxy.remember_request(key, {"requestState": "s", "inputRequests": {"a": {}}})
+    assert proxy.asked_for(key, {"a": {}}, "s")
+    proxy.remember_request(key, value)
+    assert not proxy.asked_for(key, {"a": {}}, "s")
+    assert not proxy.asked_for(key, {}, 5)
+
+
+def test_the_input_request_table_drops_the_oldest(monkeypatch):
+    from boundary_latch.mcp import proxy as module
+
+    monkeypatch.setattr(module, "INPUT_RECORDS", 3)
+    proxy = unit_proxy()
+    keys = [proxy.round_key("echo", {"text": str(n)}) for n in range(4)]
+    for key in keys:
+        proxy.remember_request(key, {"inputRequests": {"a": {}}})
+    assert not proxy.asked_for(keys[0], {"a": {}}, None)
+    assert all(proxy.asked_for(key, {"a": {}}, None) for key in keys[1:])
+
+
+def test_the_round_key_leaves_out_the_input_round():
+    proxy = unit_proxy()
+    assert proxy.round_key("t", {"a": 1, "$requestState": "s", "$inputResponses": {}}) == \
+        proxy.round_key("t", {"a": 1})
