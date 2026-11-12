@@ -65,7 +65,7 @@ def test_tools_list_hides_tools_the_policy_does_not_name(proxy):
 def test_the_proxy_follows_every_page_of_the_server_list(proxy):
     proxy.call("echo", {"text": "x"})
     lists = [m for m in proxy.server_log() if m.get("method") == "tools/list"]
-    assert [m["params"].get("cursor") for m in lists] == [None, "3", "6", "9"]
+    assert [m["params"].get("cursor") for m in lists] == [None, "3", "6", "9", "12"]
 
 
 @pytest.mark.parametrize("tool", ["secret", "bad name", "missing"])

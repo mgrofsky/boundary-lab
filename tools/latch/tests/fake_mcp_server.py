@@ -44,6 +44,16 @@ def tools() -> list[dict]:
          "inputSchema": {"type": "object", "properties": {"note": {}}}},
         {"name": "pay", "description": "Pays an amount.",
          "inputSchema": {"type": "object", "properties": {"amount": {}, "to": {}}}},
+        {"name": "get_issue", "description": "Read a public issue anyone can write.",
+         "inputSchema": {"type": "object", "properties": {"number": {}}},
+         "annotations": {"readOnlyHint": True, "openWorldHint": True}},
+        {"name": "get_private_file", "description": "Read a file from a private repository.",
+         "inputSchema": {"type": "object", "properties": {"path": {}}},
+         "annotations": {"readOnlyHint": True}},
+        {"name": "create_pull_request", "description": "Open a public pull request.",
+         "inputSchema": {"type": "object", "properties": {"body": {}}},
+         "annotations": {"readOnlyHint": False, "destructiveHint": False,
+                         "openWorldHint": True}},
         {"name": "secret", "description": "Not in any policy.", "inputSchema": plain},
         {"name": "bad name", "description": "Name with a space.", "inputSchema": plain},
     ]
@@ -67,7 +77,8 @@ def text(value) -> dict:
 def call_tool(msg_id, params: dict) -> None:
     name = params.get("name")
     args = params.get("arguments", {})
-    if name in ("echo", "files.read-text", "guarded", "pay"):
+    if name in ("echo", "files.read-text", "guarded", "pay", "get_issue", "get_private_file",
+                "create_pull_request"):
         send({"jsonrpc": "2.0", "id": msg_id, "result": text({"tool": name, "args": args})})
     elif name == "fail":
         send({"jsonrpc": "2.0", "id": msg_id,

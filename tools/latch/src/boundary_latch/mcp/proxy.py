@@ -27,6 +27,8 @@ logger = logging.getLogger("boundary_latch.mcp")
 LINE_LIMIT = 64 * 1024 * 1024
 STOP_SECONDS = 5.0
 OPEN = ("prepared", "approved")
+# How many times one call may go back to waiting because the flow rule changed its reason.
+FLOW_ROUNDS = 3
 
 
 class ChildGone(Exception):
@@ -247,8 +249,9 @@ class Proxy(ToolCatalog):
         else:
             self.to_client(wire.result(call.msg_id, value))
 
-    def _blocked(self, code: Code, extra: str = "") -> tuple[str, Any]:
-        text = explain(code) + (f" {extra}" if extra else "")
+    def _blocked(self, code: Code, extra: str = "", text: str | None = None
+                 ) -> tuple[str, Any]:
+        text = (text or explain(code)) + (f" {extra}" if extra else "")
         return "result", wire.blocked(str(code), text)
 
     def _refuse_changed(self, name: str, op_id: str) -> tuple[str, Any]:
@@ -279,31 +282,58 @@ class Proxy(ToolCatalog):
             return self._refuse_changed(name, op_id)
         prepared = self.latch.prepare(self.ctx, name, arguments, op_id)
         if isinstance(prepared, Decision):
-            return self._blocked(prepared.code)
-        if prepared.needs_approval:
-            if not self.settings.page_on:
-                self.latch.cancel(prepared, self.ctx)
-                return self._blocked(Code.NEEDS_APPROVAL, "The approval page is off.")
-            self.prepared[op_id] = prepared
-            self._open_ops[key] = op_id
-            state = await self.wait_for_decision(op_id)
-            if call.cancelled:
-                return self._blocked(Code.CANCELLED)
-            if state == "prepared":
-                return "result", wire.text_result(
-                    f"This call waits for a person to approve it. Operation id {op_id}. "
-                    "Repeat the same call later, with the same arguments, to get the result."
-                )
-            if state != "approved":
-                status = self.latch.operation_status(self.settings.org, op_id)
-                self._open_ops.pop(key, None)
-                return self._blocked(status.code if status else Code.OPERATION_CONFLICT)
-        if name in self.changed:
-            return self._refuse_changed(name, op_id)
+            return self._blocked(prepared.code, text=prepared.explanation)
         try:
-            return await self.execute(prepared)
+            for _ in range(FLOW_ROUNDS):
+                if prepared.needs_approval:
+                    waited = await self._await_approval(call, prepared, key)
+                    if waited is not None:
+                        return waited
+                if name in self.changed:
+                    return self._refuse_changed(name, op_id)
+                outcome, reply = await self.execute(prepared)
+                if not self._needs_flow_approval(outcome):
+                    return self.map_outcome(outcome, reply)
+                # The flow rule applied after prepare. A person must see the reason and
+                # approve, so prepare again to get it and wait like any other approval.
+                prepared = self.latch.prepare(self.ctx, name, arguments, op_id)
+                if isinstance(prepared, Decision):
+                    return self._blocked(prepared.code, text=prepared.explanation)
+            return self._blocked(Code.NEEDS_APPROVAL, text=outcome.explanation)
         finally:
-            self._open_ops.pop(key, None)
+            # A call still waiting keeps its operation, so a repeat of it reuses the id.
+            status = self.latch.operation_status(self.settings.org, op_id)
+            if status is None or status.state not in OPEN:
+                self._open_ops.pop(key, None)
+
+    @staticmethod
+    def _needs_flow_approval(outcome: ExecutionResult) -> bool:
+        return outcome.outcome == "denied" and outcome.code == Code.NEEDS_APPROVAL
+
+    async def _await_approval(self, call: Call, prepared: PreparedAction, key: str
+                              ) -> tuple[str, Any] | None:
+        """Wait for a person. None when the call is approved and may run."""
+        op_id = prepared.operation_id
+        if not self.settings.page_on:
+            self.latch.cancel(prepared, self.ctx)
+            extra = "The approval page is off."
+            if prepared.flow_reason:
+                extra += f" {prepared.flow_reason}"
+            return self._blocked(Code.NEEDS_APPROVAL, extra)
+        self.prepared[op_id] = prepared
+        self._open_ops[key] = op_id
+        state = await self.wait_for_decision(op_id)
+        if call.cancelled:
+            return self._blocked(Code.CANCELLED)
+        if state == "prepared":
+            return "result", wire.text_result(
+                f"This call waits for a person to approve it. Operation id {op_id}. "
+                "Repeat the same call later, with the same arguments, to get the result."
+            )
+        if state != "approved":
+            status = self.latch.operation_status(self.settings.org, op_id)
+            return self._blocked(status.code if status else Code.OPERATION_CONFLICT)
+        return None
 
     async def wait_for_decision(self, op_id: str) -> str:
         status = self.latch.operation_status(self.settings.org, op_id)
@@ -328,7 +358,8 @@ class Proxy(ToolCatalog):
         self._opened = True
         threading.Thread(target=webbrowser.open, args=(self.page_url,), daemon=True).start()
 
-    async def execute(self, prepared: PreparedAction) -> tuple[str, Any]:
+    async def execute(self, prepared: PreparedAction
+                      ) -> tuple[ExecutionResult, dict[str, Any] | None]:
         """Run the operation once. Calls that share an operation id share the answer."""
         op_id = prepared.operation_id
         task = self._running.get(op_id)
@@ -338,14 +369,14 @@ class Proxy(ToolCatalog):
             task.add_done_callback(lambda _: self._running.pop(op_id, None))
         return await asyncio.shield(task)
 
-    async def _execute(self, prepared: PreparedAction) -> tuple[str, Any]:
+    async def _execute(self, prepared: PreparedAction
+                       ) -> tuple[ExecutionResult, dict[str, Any] | None]:
         op_id = prepared.operation_id
         try:
             outcome = await self.latch.aexecute(prepared, self.ctx)
         finally:
             self.prepared.pop(op_id, None)
-        reply = self._replies.pop(op_id, None)
-        return self.map_outcome(outcome, reply)
+        return outcome, self._replies.pop(op_id, None)
 
     def map_outcome(self, outcome: ExecutionResult, reply: dict[str, Any] | None
                     ) -> tuple[str, Any]:
@@ -357,7 +388,7 @@ class Proxy(ToolCatalog):
             return "result", reply["result"]
         if outcome.outcome == "uncertain" and not outcome.replayed:
             return "result", wire.text_result(f"Latch: {outcome.code}. {outcome.explanation}")
-        return self._blocked(outcome.code)
+        return self._blocked(outcome.code, text=outcome.explanation)
 
     async def handler(self, args: dict[str, Any], info: CallInfo) -> Any:
         """The Latch handler. It is the only place a tools/call is sent to the server."""
@@ -400,6 +431,7 @@ class Proxy(ToolCatalog):
             pending.append({
                 "operation_id": status.operation_id, "tool": status.tool,
                 "summary": status.summary, "arguments": prepared.arguments,
+                "flow_reason": prepared.flow_reason,
                 "waited": max(0, int(now - status.created_at)),
             })
         changed = [{"tool": name, "hash": item.hash, "old": item.old, "new": item.new}
