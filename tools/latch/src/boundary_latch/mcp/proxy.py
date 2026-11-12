@@ -286,7 +286,7 @@ class Proxy(ToolCatalog):
             return self._refuse_changed(name, op_id)
         prepared = self.latch.prepare(self.ctx, name, arguments, op_id)
         if isinstance(prepared, Decision):
-            return self._blocked(prepared.code, text=prepared.explanation)
+            return self._refused_repeat(prepared, op_id, key)
         try:
             for _ in range(FLOW_ROUNDS):
                 if prepared.needs_approval:
@@ -302,13 +302,29 @@ class Proxy(ToolCatalog):
                 # approve, so prepare again to get it and wait like any other approval.
                 prepared = self.latch.prepare(self.ctx, name, arguments, op_id)
                 if isinstance(prepared, Decision):
-                    return self._blocked(prepared.code, text=prepared.explanation)
+                    return self._refused_repeat(prepared, op_id, key)
             return self._blocked(Code.NEEDS_APPROVAL, text=outcome.explanation)
         finally:
             # A call still waiting keeps its operation, so a repeat of it reuses the id.
             status = self.latch.operation_status(self.settings.org, op_id)
             if status is None or status.state not in OPEN:
                 self._open_ops.pop(key, None)
+
+    def _refused_repeat(self, decision: Decision, op_id: str, key: str) -> tuple[str, Any]:
+        """Answer a refused prepare. An operation still open for it can never run now.
+
+        In deny mode a repeat of a waiting call can come back FLOW_BLOCKED. The
+        operation is then cancelled and taken off the page, and a call waiting on it
+        wakes up.
+        """
+        waiting = self.prepared.pop(op_id, None)
+        status = self.latch.operation_status(self.settings.org, op_id)
+        if waiting is not None and status is not None and status.state in OPEN:
+            self.latch.cancel(waiting, self.ctx)
+        if self._open_ops.get(key) == op_id:
+            self._open_ops.pop(key, None)
+        self._wake(op_id)
+        return self._blocked(decision.code, text=decision.explanation)
 
     @staticmethod
     def _needs_flow_approval(outcome: ExecutionResult) -> bool:

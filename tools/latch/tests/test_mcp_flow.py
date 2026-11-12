@@ -257,3 +257,21 @@ def test_an_approve_form_without_a_digest_is_refused(tmp_path):
         assert pending_ids(proxy) == [op]
     finally:
         proxy.close()
+
+
+def test_a_repeat_that_the_flow_rule_blocks_closes_the_waiting_operation(tmp_path):
+    proxy = Proxy(tmp_path, "--approval-wait", "20", policy=STALE_POLICY.format(mode="deny"))
+    try:
+        start_call(proxy, "create_pull_request", {"body": "b"}, 91)
+        [op] = wait_for(lambda: pending_ids(proxy))
+        read_both(proxy)
+        reply = proxy.call("create_pull_request", {"body": "b"}, msg_id=92)
+        assert blocked_code(reply) == "FLOW_BLOCKED"
+        assert text_of(reply).endswith(REASON)
+        assert blocked_code(proxy.recv_id(91)) == "CANCELLED"
+        assert pending_ids(proxy) == []
+        assert post(proxy, {"action": "approve", "operation_id": op, "digest": "x"})[2] == \
+            "UNKNOWN_OPERATION"
+        assert calls_to(proxy, "create_pull_request") == []
+    finally:
+        proxy.close()
