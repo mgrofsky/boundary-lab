@@ -157,9 +157,37 @@ run_idle_seconds = 3600
 """
 
 
-def starter_policy(tools: list[dict[str, Any]]) -> tuple[str, list[str]]:
-    """The policy text, and the names left out because Latch cannot use them."""
+FLOW_HEAD = """\
+# The flow rule is on. Every tool starts with all three labels, the safe starting
+# point. Remove the labels that do not apply to each tool. See docs/flow.md.
+[flow]
+all_three = "approve"
+"""
+
+ALL_LABELS = 'labels = ["untrusted", "sensitive", "external"]'
+HINTS = ("readOnlyHint", "destructiveHint", "openWorldHint")
+
+
+def hints(tool: dict[str, Any]) -> str:
+    """The server's own annotations as one comment, or "" when it sent none."""
+    annotations = tool.get("annotations")
+    if not isinstance(annotations, dict):
+        return ""
+    parts = [f"{name}={json.dumps(annotations[name])}" for name in HINTS if name in annotations]
+    if not parts:
+        return ""
+    return comment(f"The server says: {', '.join(parts)}.")
+
+
+def starter_policy(tools: list[dict[str, Any]], flow: bool = False) -> tuple[str, list[str]]:
+    """The policy text, and the names left out because Latch cannot use them.
+
+    With flow, the [flow] rule is on and every tool gets all three labels. The
+    server's annotations only appear in a comment; they never choose a label.
+    """
     lines = [STARTER_HEAD.rstrip("\n")]
+    if flow:
+        lines += ["", FLOW_HEAD.rstrip("\n")]
     skipped = []
     for tool in tools:
         name = tool.get("name")
@@ -174,4 +202,9 @@ def starter_policy(tools: list[dict[str, Any]]) -> tuple[str, list[str]]:
         lines.append('require_permission = "mcp:use"')
         lines.append('approve_permission = "mcp:approve"')
         lines.append('approval.mode = "always"')
+        if flow:
+            claim = hints(tool)
+            if claim:
+                lines.append(f"# {claim} That is its own claim; choose labels yourself.")
+            lines.append(ALL_LABELS)
     return "\n".join(lines) + "\n", skipped

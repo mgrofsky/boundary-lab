@@ -585,6 +585,21 @@ def test_print_policy_writes_a_policy_that_check_accepts(tmp_path):
     assert checked.returncode == 0, checked.stderr
 
 
+def test_print_policy_flow_writes_labels_and_the_server_hints(tmp_path):
+    result = run_cli("--print-policy", "--flow", "--", sys.executable, str(FAKE),
+                     str(tmp_path / "log"))
+    assert result.returncode == 0, result.stderr
+    assert '[flow]\nall_three = "approve"' in result.stdout
+    assert result.stdout.count('labels = ["untrusted", "sensitive", "external"]') == 14
+    assert "# The server says: readOnlyHint=true, openWorldHint=true." in result.stdout
+    path = tmp_path / "starter.toml"
+    path.write_text(result.stdout)
+    checked = subprocess.run([sys.executable, "-m", "boundary_latch", "check", str(path)],
+                             capture_output=True, text=True, check=False)
+    assert checked.returncode == 0, checked.stderr
+    assert 'flow rule: all_three = "approve"' in checked.stdout
+
+
 def test_the_proxy_runs_under_a_thread_safe_shutdown(tmp_path):
     proxy = Proxy(tmp_path)
     done = threading.Event()

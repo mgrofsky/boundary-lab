@@ -52,6 +52,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
                         help="JSON file that keeps tool definitions pinned between runs")
     parser.add_argument("--print-policy", action="store_true",
                         help="print a starter policy for the server's tools and exit")
+    parser.add_argument("--flow", action="store_true",
+                        help="with --print-policy, turn on the flow rule and label every tool")
     parser.add_argument("server", nargs=argparse.REMAINDER,
                         help="-- then the server command and its arguments")
 
@@ -119,7 +121,7 @@ def run(args: argparse.Namespace) -> int:
         return fail("give the server command after --")
     setup_logging()
     if args.print_policy:
-        return print_policy(command)
+        return print_policy(command, flow=args.flow)
     if not args.policy:
         return fail("--policy is required")
     try:
@@ -181,13 +183,13 @@ async def serve(latch: Latch, settings: Settings, pins: Pins, command: list[str]
             page.close()
 
 
-def print_policy(command: list[str]) -> int:
+def print_policy(command: list[str], flow: bool = False) -> int:
     try:
         tools = asyncio.run(list_tools(command))
     except (OSError, ValueError, TypeError, TimeoutError) as exc:
         logger.error("could not list the server's tools: %s", exc)
         return 1
-    text, skipped = starter_policy(tools)
+    text, skipped = starter_policy(tools, flow=flow)
     for name in skipped:
         logger.warning("left out tool %r: the name does not fit Latch's pattern", name[:80])
     sys.stdout.write(text)
