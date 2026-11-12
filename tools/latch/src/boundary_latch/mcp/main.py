@@ -27,6 +27,10 @@ logger = logging.getLogger("boundary_latch.mcp")
 
 LIST_SECONDS = 30.0
 PROTOCOL = "2025-06-18"
+SKIP_REASONS = {
+    "name": "the name does not fit Latch's pattern",
+    "duplicate": "the server listed this name before, and only the first is written",
+}
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -190,8 +194,8 @@ def print_policy(command: list[str], flow: bool = False) -> int:
         logger.error("could not list the server's tools: %s", exc)
         return 1
     text, skipped = starter_policy(tools, flow=flow)
-    for name in skipped:
-        logger.warning("left out tool %r: the name does not fit Latch's pattern", name[:80])
+    for name, why in skipped:
+        logger.warning("left out tool %r: %s", name[:80], SKIP_REASONS[why])
     sys.stdout.write(text)
     sys.stdout.flush()
     return 0

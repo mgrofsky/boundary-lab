@@ -214,7 +214,7 @@ def test_starter_policy_parses_and_quotes_names():
     policy = parse_policy(text)
     assert set(policy.tools) == {"echo", "files.read-text"}
     assert '[tools."files.read-text"]' in text
-    assert skipped == ["bad name", "3"]
+    assert skipped == [("bad name", "name"), ("3", "name")]
     for tp in policy.tools.values():
         assert tp.require_permission == "mcp:use"
         assert tp.approve_permission == "mcp:approve"
@@ -222,6 +222,17 @@ def test_starter_policy_parses_and_quotes_names():
     assert policy.limits.run_lifetime_seconds == 0
     assert policy.flow.all_three == "allow"
     assert "[flow]" not in text and "labels" not in text
+
+
+def test_starter_policy_skips_a_name_already_written():
+    tools = [{"name": "echo", "description": "first"}, {"name": "echo", "description": "second"},
+             {"name": "other"}]
+    text, skipped = starter_policy(tools, flow=True)
+    policy = parse_policy(text)
+    assert set(policy.tools) == {"echo", "other"}
+    assert text.count("[tools.echo]") == 1
+    assert "# first" in text and "# second" not in text
+    assert skipped == [("echo", "duplicate")]
 
 
 def test_starter_policy_with_flow_labels_every_tool_and_turns_the_rule_on():
@@ -315,3 +326,16 @@ def test_a_pin_with_the_new_hash_is_left_alone(tmp_path):
     before = path.read_text()
     Pins(path)
     assert path.read_text() == before
+
+
+def test_print_policy_says_on_stderr_which_duplicate_it_skipped(monkeypatch, capsys, caplog):
+    from boundary_latch.mcp import main
+
+    async def fake_list(command):
+        return [{"name": "echo"}, {"name": "echo"}]
+
+    monkeypatch.setattr(main, "list_tools", fake_list)
+    with caplog.at_level("WARNING", logger="boundary_latch.mcp"):
+        assert main.print_policy(["server"]) == 0
+    assert parse_policy(capsys.readouterr().out).tools.keys() == {"echo"}
+    assert "left out tool 'echo': the server listed this name before" in caplog.text

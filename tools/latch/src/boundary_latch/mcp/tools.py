@@ -179,21 +179,29 @@ def hints(tool: dict[str, Any]) -> str:
     return comment(f"The server says: {', '.join(parts)}.")
 
 
-def starter_policy(tools: list[dict[str, Any]], flow: bool = False) -> tuple[str, list[str]]:
-    """The policy text, and the names left out because Latch cannot use them.
+def starter_policy(tools: list[dict[str, Any]], flow: bool = False
+                   ) -> tuple[str, list[tuple[str, str]]]:
+    """The policy text, and the tools left out with why: "name" or "duplicate".
 
-    With flow, the [flow] rule is on and every tool gets all three labels. The
-    server's annotations only appear in a comment; they never choose a label.
+    A name that does not fit Latch's pattern is left out, and so is a name already
+    written, since TOML refuses a table defined twice. With flow, the [flow] rule is
+    on and every tool gets all three labels. The server's annotations only appear in
+    a comment; they never choose a label.
     """
     lines = [STARTER_HEAD.rstrip("\n")]
     if flow:
         lines += ["", FLOW_HEAD.rstrip("\n")]
-    skipped = []
+    skipped: list[tuple[str, str]] = []
+    written: set[str] = set()
     for tool in tools:
         name = tool.get("name")
         if not fits(name):
-            skipped.append(str(name))
+            skipped.append((str(name), "name"))
             continue
+        if name in written:
+            skipped.append((name, "duplicate"))
+            continue
+        written.add(name)
         lines.append("")
         note = comment(tool.get("description"))
         if note:
