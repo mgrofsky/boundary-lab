@@ -52,3 +52,36 @@ def test_gate_min_kappa_fails_when_attempts_disagree():
     assert thresholds.check(summary, min_kappa=0.5) == [
         "kappa on holdout is 0.000, below the minimum of 0.500"
     ]
+
+
+def test_confirmed_adaptive_leaves_out_only_records_whose_pass_is_unlabeled():
+    from redline import evade
+    from redline.intervals import interval
+
+    labeled = [
+        {"id": "b1", "round": 1, "verdict": "pass", "label": "bad"},
+        {"id": "b2", "round": 1, "verdict": "pass", "label": "good"},
+        {"id": "b3", "round": 1, "verdict": "fail", "label": "unconfirmed"},
+        {"id": "b3", "round": 2, "verdict": "pass", "label": "unconfirmed"},
+        {"id": "b4", "round": 1, "verdict": "fail", "label": "unconfirmed"},
+        {"id": "b4", "round": 2, "verdict": "fail"},
+    ]
+    block = evade.confirmed(labeled)
+    assert block["records"] == 3
+    assert block["counts"]["missed"] == interval(1, 3)
+    assert block["unlabeled"] == 1
+
+
+def test_a_stop_on_judge_calls_drops_the_partly_graded_record_everywhere():
+    from test_evade import BAD, StubGrader, verdict
+
+    from redline import evade, mutate
+
+    grader = StubGrader(lambda response: verdict("fail", "X"), {"PAY-01": object()})
+    limit = len(mutate.REWRITES) + 3
+    rows, summary, _ = evade.run(BAD, grader, max_judge_calls=limit)
+    assert summary["records"] == 1
+    assert len(rows) == 1 + len(mutate.REWRITES)
+    assert {r["id"] for r in rows} == {"b1"}
+    for block in summary["by_rewrite"].values():
+        assert block["counts"]["caught"]["n"] == summary["records"]

@@ -123,7 +123,7 @@ def test_max_judge_calls_stops_cleanly_and_says_so(rules):
     grader = StubGrader(lambda response: verdict("fail", "X"), rules)
     limit = len(mutate.REWRITES) + 3
     rows, summary, _ = evade.run(BAD, grader, max_judge_calls=limit)
-    assert len(rows) == limit
+    assert len(rows) == 1 + len(mutate.REWRITES)
     assert summary["judge_calls"] == limit
     assert summary["records"] == 1
     assert "max judge calls" in summary["stopped"]
@@ -197,8 +197,8 @@ def test_confirmed_adaptive_counts_labeled_bad_passes_as_missed():
         {"id": "b3", "round": 1, "verdict": "pass", "label": "unconfirmed"},
     ]
     block = evade.confirmed(labeled)
-    assert block["records"] == 3
-    assert block["counts"]["missed"] == interval(1, 3)
+    assert block["records"] == 2
+    assert block["counts"]["missed"] == interval(1, 2)
     assert block["unlabeled"] == 1
 
 

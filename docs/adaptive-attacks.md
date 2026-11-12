@@ -85,7 +85,7 @@ Replay works too, but the saved cache has never seen the rewritten answers. Repl
 redline evade --data data/holdout.jsonl --judge replay --missing-grade review --embedder tfidf --out results/local/evade
 ```
 
-`evade` takes the same router and rules options as `run`. `--max-judge-calls 200` stops cleanly after 200 judge calls, writes what it has, and says so under `stopped` in the summary. Only records finished before the stop count in `worst_case`.
+`evade` takes the same router and rules options as `run`. `--max-judge-calls 200` stops cleanly after 200 judge calls, writes what it has, and says so under `stopped` in the summary. A record cut off part way is dropped from every block and from `evade_outputs.jsonl`, so all of them cover the same finished records.
 
 ### Stage 2: a model attacker
 
@@ -103,7 +103,7 @@ Candidates count only after a person labels them. Change each `label` to `good` 
 redline report --evade-labels results/local/evade/evade_candidates_labeled.jsonl
 ```
 
-The summary gains `confirmed_adaptive`. A record counts as missed there when one of its rewrites passed and a person labeled it bad. It has the count and interval like every other rate.
+The summary gains `confirmed_adaptive`. A record counts as missed there when one of its rewrites passed and a person labeled it bad. A record whose passing rewrite has no label yet is left out, and `unlabeled` counts those rewrites. A record whose rewrites all failed stays in as not missed. It has the count and interval like every other rate.
 
 ## What this repo does and does not show
 

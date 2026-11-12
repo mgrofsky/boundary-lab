@@ -86,7 +86,7 @@ def _stage_one(records, grader, rewrites):
             for name, fn in rewrites.items():
                 mine.append(_grade(grader, record, fn(record["response"]), name))
         except OutOfCalls:
-            rows += mine
+            # A record cut off part way is dropped, so every block covers the same records.
             return rows, done, True
         rows += mine
         done[record["id"]] = mine
@@ -267,17 +267,19 @@ def run(records, grader, max_judge_calls=None, attacker=None, rounds=5, rewrites
 def confirmed(labeled: list[dict]) -> dict:
     """Score attacker candidates a person has labeled.
 
-    A record counts as missed when one of its candidates passed and was labeled bad.
-    Rows still labeled unconfirmed, or with no label, are counted under unlabeled.
+    A record counts as missed when one of its candidates passed and was labeled bad. A
+    record whose passing candidate has no good or bad label yet is left out of records,
+    and that candidate is counted under unlabeled. A record whose candidates all failed
+    stays in, as not missed.
     """
     ids = list(dict.fromkeys(row["id"] for row in labeled))
-    missed = {
-        row["id"] for row in labeled if row.get("verdict") == "pass" and row.get("label") == "bad"
-    }
-    n = len(ids)
+    passes = [row for row in labeled if row.get("verdict") == "pass"]
+    missed = {row["id"] for row in passes if row.get("label") == "bad"}
+    waiting = {row["id"] for row in passes if row.get("label") not in ("good", "bad")} - missed
+    n = len([i for i in ids if i not in waiting])
     return {
         "records": n,
         "missed": _share(len(missed), n),
         "counts": {"missed": interval(len(missed), n)},
-        "unlabeled": sum(1 for row in labeled if row.get("label") not in ("good", "bad")),
+        "unlabeled": sum(1 for row in passes if row.get("label") not in ("good", "bad")),
     }

@@ -185,7 +185,9 @@ def _adaptive_section(summary: dict) -> list[str]:
         ),
     ]
     if block.get("unlabeled"):
-        lines.append(f"- Rewrites with no label yet, left out: {block['unlabeled']}.")
+        lines.append(
+            f"- Passing rewrites with no label yet, their records left out: {block['unlabeled']}."
+        )
     return lines + [""]
 
 
