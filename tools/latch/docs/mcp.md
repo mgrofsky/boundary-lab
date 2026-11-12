@@ -56,6 +56,7 @@ Most hosts read an `mcpServers` map. Put the proxy where the server command was,
 | `--no-open` | off | Do not open the approval page in a browser. |
 | `--pin FILE` | none | A JSON file that keeps tool definitions pinned between runs. |
 | `--print-policy` | off | Print a starter policy for the server's tools and exit. |
+| `--flow` | off | With `--print-policy`, turn on the flow rule and give every tool all three labels. |
 
 By default the agent holds every `require_permission` named in the policy. It never holds an `approve_permission`, even when another tool requires the same string. The proxy refuses to start when one tool uses the same string for both.
 
@@ -101,7 +102,7 @@ For `over_amount`, the amount must be a finite number. A string, a bool, a missi
 
 ## Approval
 
-A call that needs approval waits on the approval page. The page lists each waiting call with the tool, a one line summary, the full arguments, the operation id, and how long it has waited. A person clicks Approve or Deny. The decision goes through `Latch.approve` or `Latch.deny` with the reference `approval-page`.
+A call that needs approval waits on the approval page. The page lists each waiting call with the tool, a one line summary, the flow reason when the flow rule applies, the full arguments, the operation id, and how long it has waited. A person clicks Approve or Deny. The decision goes through `Latch.approve` or `Latch.deny` with the reference `approval-page`.
 
 The approver is the user from `--approver`. That user holds every `approve_permission` in the policy, in the same organization as the agent.
 
@@ -115,19 +116,23 @@ If the client sends `notifications/cancelled` for a call that waits for approval
 
 With `--approval-port -1` there is no page, so a call that needs approval is refused at once with `NEEDS_APPROVAL`.
 
+The flow rule can apply after `prepare`, when another call adds a label in between. Then `execute` refuses with `NEEDS_APPROVAL` and the reason. The proxy does not pass that refusal to the client. It prepares the call again, waits for a person like any other approval, and runs it after approval. With the page off, the client gets `NEEDS_APPROVAL` and the reason.
+
 ### The page
 
 The page runs on `127.0.0.1` only. Each proxy process makes a random key and prints the full address with the key on stderr. Every request must carry that key. The page refuses a request whose `Host` header is not `127.0.0.1` or `localhost` with the right port, which stops DNS rebinding. Decisions are POST only.
 
-The page sends `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a Content-Security-Policy that allows no outside loads. It refreshes itself every two seconds. Everything it shows came from the model or the server, so it escapes all of it. The key never appears in anything sent to the client.
+The page sends `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a Content-Security-Policy that allows no outside loads. While nothing waits and no definition changed, it refreshes itself every two seconds. While it shows something, it does not reload by itself, so an item never moves under the pointer just before a click. It shows a Refresh link and the time it was drawn instead. Everything it shows came from the model or the server, so it escapes all of it. The key never appears in anything sent to the client.
 
 ## Pinned tool definitions
 
-The proxy hashes each tool's name, description, and `inputSchema`. The first definition it sees for a name is pinned. If the server later gives the same name a different definition, the tool is changed. Calls to it return `TOOL_CHANGED` until a person accepts the new definition on the approval page.
+The proxy hashes the whole tool object it serves: name, description, `inputSchema`, title, annotations, `outputSchema`, and any other field. The first definition it sees for a name is pinned. If the server later gives the same name a different definition, the tool is changed. Calls to it return `TOOL_CHANGED` until a person accepts the new definition on the approval page.
 
 The page shows the pinned and new definitions side by side. Until a person accepts, `tools/list` keeps showing the pinned definition. After acceptance it shows the new one. The proxy writes an audit row with event `tool_changed` when it finds a change and `tool_accepted` when a person accepts.
 
 Without `--pin`, pins last for the process only. With `--pin FILE`, the proxy reads the pins at start and writes them each time they change. Each entry holds the hash, the first seen time, and the definition. The file is replaced in one step, so a crash never leaves half a file. A change between runs is caught too. If the file cannot be read, the proxy refuses to start.
+
+Before 0.4.0 the hash covered only the name, description, and `inputSchema`. When the proxy loads a pin written that way, it checks the kept definition against the old hash. If it matches, the proxy pins it again under the new hash without asking, since nothing changed. A pin that does not match is left alone, so a real change still shows.
 
 The proxy learns tools from the server's `tools/list`, following `nextCursor` to the end. When the server sends `notifications/tools/list_changed`, the proxy fetches the list again on next use and passes the notification on.
 
@@ -141,6 +146,40 @@ Every call needs approval at first. Loosen it from there. A read only tool can d
 
     [tools.read_file]
     require_permission = "mcp:use"
+
+## Flow labels
+
+The flow rule stops one run from reading untrusted input, reading private data, and acting outside. See [flow.md](flow.md). For a GitHub server, a labelled policy looks like this:
+
+    [flow]
+    all_three = "approve"
+
+    [tools.get_issue]
+    require_permission = "mcp:use"
+    approve_permission = "mcp:approve"
+    labels = ["untrusted"]
+
+    [tools.get_file_contents]
+    require_permission = "mcp:use"
+    approve_permission = "mcp:approve"
+    labels = ["sensitive", "untrusted"]
+
+    [tools.create_pull_request]
+    require_permission = "mcp:use"
+    approve_permission = "mcp:approve"
+    labels = ["external"]
+
+    [tools.list_branches]
+    require_permission = "mcp:use"
+    labels = []
+
+`get_file_contents` carries `untrusted` too, since a file in a public repository is text an outsider wrote. Reading an issue and a file, then opening a pull request, waits on the approval page with the reason.
+
+To start from the safe side, add `--flow`:
+
+    boundary-latch mcp --print-policy --flow -- <server command> [args...]
+
+This turns on `[flow]` with `all_three = "approve"` and gives every tool all three labels. A head comment tells you to remove the labels that do not apply. If the server sent annotations for a tool, such as `readOnlyHint`, `destructiveHint`, or `openWorldHint`, a comment shows them as the server's own claim. The proxy never uses them to choose labels, because a server can claim anything.
 
 ## Limits
 

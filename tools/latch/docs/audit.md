@@ -1,6 +1,6 @@
 # The audit
 
-Latch writes one audit row for every decision from `prepare`, `approve`, `deny`, `cancel`, and `execute`. The rows live in the `audit` table of the SQLite database. They never hold the tool's raw arguments, its return value, or the handler's error text. The summary from `describe` is built from the arguments, so it holds whatever your `describe` function puts in it.
+Latch writes one audit row for every decision from `prepare`, `approve`, `deny`, `cancel`, and `execute`, and for each `mark_run`. The rows live in the `audit` table of the SQLite database. They never hold the tool's raw arguments, its return value, or the handler's error text. The summary from `describe` is built from the arguments, so it holds whatever your `describe` function puts in it.
 
 ## Read it from the command line
 
@@ -35,7 +35,7 @@ The dict from `on_event` and each line of `--json` hold the same fields.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | schema | integer | The field layout version. It is 1. |
-| event | string | `prepare`, `approve`, `deny`, `cancel`, or `execute`. The MCP proxy also writes `tool_changed` and `tool_accepted`. |
+| event | string | `prepare`, `approve`, `deny`, `cancel`, `execute`, or `mark_run`. The MCP proxy also writes `tool_changed` and `tool_accepted`. |
 | code | string | The reason code, such as `ALLOWED` or `RUN_LIMIT` |
 | org_id | string | The organization |
 | run_id | string or null | The run the operation belongs to |
@@ -48,6 +48,10 @@ The dict from `on_event` and each line of `--json` hold the same fields.
 | reference | string or null | The approval reference, on `approve`, `deny`, and `execute` rows |
 | summary | string or null | The one line summary from `describe`, on `prepare` rows that saved an operation |
 | copied | list of strings or null | The copied argument paths, on `prepare` rows that saved an operation |
+| labels | list of strings or null | The tool's flow labels from the policy, on rows for a tool that sets `labels`. On a `mark_run` row, the label the app added. |
+| flow_reason | string or null | The flow rule's reason, on `prepare` and `execute` rows for a call the rule gated |
+
+A `mark_run` row has the code `ALLOWED`, no tool, and the app's note as its summary.
 
 The summary comes from your tool's `describe` function. Leave secrets and message text out of it, because it is saved here.
 

@@ -12,9 +12,21 @@
 - Pinned tool definitions. A tool whose name, description, or `inputSchema` changes after it was first seen returns the new code `TOOL_CHANGED` until a person accepts it. `--pin FILE` keeps the pins between runs.
 - `boundary-latch mcp --print-policy` prints a starter policy for a server's tools, with approval on for every tool.
 - Audit rows with event `tool_changed` and `tool_accepted`.
+- The flow rule. `[flow] all_three = "approve"` or `"deny"` stops one run from reading untrusted input, reading private data, and acting outside. Tools say what they do with `labels`. See docs/flow.md.
+- The reason code `FLOW_BLOCKED`.
+- `PreparedAction.flow_reason` and `OperationStatus.flow_reason` hold one plain sentence that says which calls set each label and what this call adds.
+- `Latch.mark_run(ctx, label, note="")` adds a label to the run itself, for example when a user uploads a file.
+- A call with a copied value gives the run the `untrusted` label.
+- Audit rows and `on_event` dicts gain `labels` and `flow_reason`. Fields are only added, so `schema` stays 1.
+- `boundary-latch check` prints the flow mode and how many tools carry each label.
+- `boundary-latch mcp --print-policy --flow` writes a starter policy with the rule on and every label on every tool.
+- The demo has a `lookup_note` tool and a tenth scenario, `flow_chain`, that shows the rule.
 
 ### Changed
 
+- The MCP proxy pins the hash of the whole tool object, so a change to the title, annotations, `outputSchema`, or any other field shows as `TOOL_CHANGED`. A pin file written with the old hash is moved to the new one on load when its definition did not change.
+- The approval page reloads by itself only while nothing waits. While it shows a call or a changed tool, it shows a Refresh link and the time it was drawn.
+- The database gains `runs.labels`, `operations.flow_reason`, `approvals.flow_reason`, `audit.labels`, and `audit.flow_reason`. A database from an older release gets them when opened.
 - `ToolSpec.name` now accepts the names MCP servers use: a letter, then up to 63 letters, digits, underscores, dots, or hyphens. Upper case letters, dots, and hyphens are new. These names are stored with SQL parameters and shown as text, so they stay safe in the audit, the `audit` command, and the demo page.
 
 ### Fixed

@@ -18,6 +18,8 @@ Latch is part of [Boundary Lab](https://github.com/mgrofsky/boundary-lab/blob/ma
 
 - The run has not used up its call limit, its lifetime, or its idle time.
 
+- One run does not read untrusted input, read private data, and act outside, if the policy turns on the flow rule. The call that would complete that chain is refused or waits for a person, with a reason.
+
 - Calls that need approval wait for another user. The approval covers that exact request, expires, and works once.
 
 - Repeating the same request with the same operation ID in the same run does not run the tool again. This still works after a restart if you keep the SQLite database.
@@ -121,6 +123,8 @@ Calls the policy blocks never reach the server. Calls that need approval wait on
 - [Approvals](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/approvals.md): what an approval covers, summaries, references, the pending list, and cancel.
 
 - [Limits](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/limits.md): call limits, time limits, and what to do when the outcome is unclear.
+
+- [Flow rule](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/flow.md): stop one run from reading untrusted input, reading private data, and acting outside.
 
 - [Audit](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/audit.md): the audit fields, the `audit` command, and `on_event`.
 

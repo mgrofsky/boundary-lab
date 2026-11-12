@@ -2,7 +2,7 @@
 
 The policy is one TOML file. It sets the rules for each tool. Latch rejects unknown keys, so a misspelled key causes an error. Load the file with `load_policy(path)`, or pass its text to `parse_policy(text)`. Check a file with `boundary-latch check policy.toml`.
 
-Latch makes a fingerprint of the loaded policy settings, called a digest. It includes that fingerprint when it records each request. If you change the settings and load the new policy, a pending request prepared under the old policy returns `OPERATION_CONFLICT`. Check what happened to the old request, then submit a new operation ID and get a new approval if needed. Changing one tool's policy changes the fingerprint for all tools. Comments and formatting do not change it.
+Latch makes a fingerprint of the loaded policy settings, called a digest. It includes that fingerprint when it records each request. If you change the settings and load the new policy, a pending request prepared under the old policy returns `OPERATION_CONFLICT`. Check what happened to the old request, then submit a new operation ID and get a new approval if needed. Changing one tool's policy changes the fingerprint for all tools. Comments and formatting do not change it. A policy that does not use the `[flow]` table or `labels` keeps the fingerprint it had before 0.4.0.
 
 ## Limits
 
@@ -42,8 +42,20 @@ Each tool you register needs a `[tools.<name>]` table.
 | allowed_recipients | list of strings | none | The only values allowed in that argument |
 | approval | table | mode never | When the call waits for approval |
 | copied_arguments | "allow", "deny" or "approve" | allow | What to do when an argument value was copied from text the model read |
+| labels | list of "untrusted", "sensitive", "external" | none | What the tool does, for the flow rule. Each label at most once. |
 
 `recipient_field` and `allowed_recipients` go together. Set both or neither. A tool whose approval mode is not `never`, or that sets `copied_arguments = "approve"`, must set `approve_permission`.
+
+## Flow
+
+    [flow]
+    all_three = "approve"
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| all_three | "allow", "approve" or "deny" | allow | What to do with the call that would let one run read untrusted input, read private data, and act outside |
+
+With `all_three` set to `approve` or `deny`, every tool must set `labels`, even `labels = []`. In `approve` mode, every tool with a label needs `approve_permission`. See [flow.md](flow.md).
 
 ## Copied arguments
 
