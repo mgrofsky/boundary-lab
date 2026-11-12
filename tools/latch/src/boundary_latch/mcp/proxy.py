@@ -23,6 +23,7 @@ from ..reasons import Code, explain
 from . import wire
 from .catalog import Changed, ToolCatalog
 from .pins import Pins
+from .tools import RESERVED
 
 logger = logging.getLogger("boundary_latch.mcp")
 
@@ -31,6 +32,11 @@ STOP_SECONDS = 5.0
 OPEN = ("prepared", "approved")
 # How many times one call may go back to waiting because the flow rule changed its reason.
 FLOW_ROUNDS = 3
+SUBSCRIPTION = "io.modelcontextprotocol/subscriptionId"
+PAGE_KEYS = {"inputResponses": "input_responses", "requestState": "request_state"}
+TASK_UPDATE = "Blocked by Latch: input to a running task is not checked yet"
+# The params keys of a tools/call the proxy understands. Any other key is refused.
+CALL_KEYS = frozenset({"name", "arguments", "_meta", "inputResponses", "requestState"})
 # decide() answers this when the form's digest does not match the operation now.
 STALE_PAGE = "STALE_PAGE"
 
@@ -92,6 +98,15 @@ class Proxy(ToolCatalog):
         self._in_flight: dict[str, int] = {}
         self._opened = False
         self._tasks: set[asyncio.Task] = set()
+        # The protocol fields of the latest client request that had them. None until then,
+        # which is the older era: the proxy's own requests then carry no _meta.
+        self._protocol: dict[str, Any] | None = None
+        # Top level fields of the server's last tools/list page, other than tools.
+        self._list_fields: dict[str, Any] = {}
+        # The client's params._meta for each operation, forwarded with its tools/call.
+        self._call_meta: dict[str, dict[str, Any] | None] = {}
+        # Open subscriptions/listen requests: the proxy's id to the client's id.
+        self._listens: dict[int, Any] = {}
 
     # Writing
 
@@ -107,13 +122,20 @@ class Proxy(ToolCatalog):
         self._next_id += 1
         return self._next_id
 
+    def with_protocol(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Params for a message of the proxy's own, with the client's protocol fields."""
+        if self._protocol is None:
+            return params
+        return {**params, "_meta": dict(self._protocol)}
+
     async def request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a request of the proxy's own to the child and wait for the answer."""
         child_id = self._new_id()
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._to_child[child_id] = ("proxy", future)
         try:
-            self.to_child({"jsonrpc": "2.0", "id": child_id, "method": method, "params": params})
+            self.to_child({"jsonrpc": "2.0", "id": child_id, "method": method,
+                           "params": self.with_protocol(params)})
             return await future
         finally:
             self._to_child.pop(child_id, None)
@@ -140,6 +162,10 @@ class Proxy(ToolCatalog):
     def on_client(self, message: dict[str, Any]) -> None:
         kind = wire.kind(message)
         method = message.get("method")
+        if kind == "request":
+            fields = wire.protocol_fields(message.get("params"))
+            if fields:
+                self._protocol = fields
         if kind == "response":
             self.to_child(message)
             return
@@ -161,8 +187,16 @@ class Proxy(ToolCatalog):
                 return
             self.to_child(message)
             return
+        if method == "tasks/update":
+            # Input to a task that already ran through Latch would reach the server with
+            # nothing checked, so it is refused until Latch can check it.
+            logger.warning("refused tasks/update: input to a running task is not checked yet")
+            self.to_client(wire.error(message["id"], wire.METHOD_NOT_FOUND, TASK_UPDATE))
+            return
         child_id = self._new_id()
         self._to_child[child_id] = ("client", message["id"])
+        if method == "subscriptions/listen":
+            self._listens[child_id] = message["id"]
         self.to_child({**message, "id": child_id})
 
     def on_cancelled(self, message: dict[str, Any]) -> None:
@@ -177,6 +211,10 @@ class Proxy(ToolCatalog):
         for child_id, (owner, client_id) in list(self._to_child.items()):
             if owner == "client" and wire.id_key(client_id) == wire.id_key(request_id):
                 self.to_child({**message, "params": {**params, "requestId": child_id}})
+                # The client ignores any answer that comes later, so forget the request.
+                # A subscriptions/listen may never be answered at all.
+                self._to_child.pop(child_id, None)
+                self._listens.pop(child_id, None)
                 return
 
     def _cancel_call(self, call: Call) -> None:
@@ -194,7 +232,8 @@ class Proxy(ToolCatalog):
         if child_id is not None:
             with contextlib.suppress(ChildGone):
                 self.to_child({"jsonrpc": "2.0", "method": "notifications/cancelled",
-                               "params": {"requestId": child_id, "reason": "cancelled"}})
+                               "params": self.with_protocol(
+                                   {"requestId": child_id, "reason": "cancelled"})})
 
     # Messages from the child
 
@@ -203,9 +242,7 @@ class Proxy(ToolCatalog):
             return
         try:
             message, _ = wire.parse(line)
-            if not isinstance(message, dict):
-                raise wire.BadMessage(wire.INVALID_REQUEST, "not an object")
-            kind = wire.kind(message)
+            kind = wire.check_child(message)
         except wire.BadMessage:
             logger.warning("dropped a line from the server that is not a JSON-RPC message")
             return
@@ -220,11 +257,61 @@ class Proxy(ToolCatalog):
                 if not value.done():
                     value.set_result(message)
                 return
+            if message["id"] in self._listens:
+                # A subscription that ended: its result names the subscription too.
+                message = self._client_subscription(message, "result")
+                del self._listens[message["id"]]
             self.to_client({**message, "id": value})
             return
-        if message.get("method") == "notifications/tools/list_changed":
+        method = message.get("method")
+        if method == "notifications/tools/list_changed":
             self._tools_known = False
+        if kind == "notification":
+            if self._ended_subscription(message):
+                logger.info("dropped a server notification for a subscription that ended")
+                return
+            message = self._client_subscription(message, "params")
+            if method == "notifications/cancelled":
+                message = self._cancelled_listen(message)
         self.to_client(message)
+
+    def _ended_subscription(self, message: dict[str, Any]) -> bool:
+        """True for a notification tagged with a subscription that is no longer open.
+
+        Every id the server sees is the proxy's, so the client could not match it. The
+        client has cancelled that subscription and would ignore it anyway.
+        """
+        params = message.get("params")
+        meta = params.get("_meta") if isinstance(params, dict) else None
+        if not isinstance(meta, dict) or SUBSCRIPTION not in meta:
+            return False
+        return meta[SUBSCRIPTION] not in self._listens
+
+    def _client_subscription(self, message: dict[str, Any], part: str) -> dict[str, Any]:
+        """Put the client's listen id where the server put the proxy's.
+
+        A subscription's id is the JSON-RPC id of its subscriptions/listen request, and
+        the server only saw the proxy's id for it.
+        """
+        body = message.get(part)
+        meta = body.get("_meta") if isinstance(body, dict) else None
+        sub_id = meta.get(SUBSCRIPTION) if isinstance(meta, dict) else None
+        if not isinstance(sub_id, int) or isinstance(sub_id, bool):
+            return message
+        if sub_id not in self._listens:
+            return message
+        meta = {**meta, SUBSCRIPTION: self._listens[sub_id]}
+        return {**message, part: {**body, "_meta": meta}}
+
+    def _cancelled_listen(self, message: dict[str, Any]) -> dict[str, Any]:
+        """A server that ends a subscription cancels its listen request by the proxy's id."""
+        params = message.get("params")
+        request_id = params.get("requestId") if isinstance(params, dict) else None
+        if not isinstance(request_id, int) or request_id not in self._listens:
+            return message
+        client_id = self._listens.pop(request_id)
+        self._to_child.pop(request_id, None)
+        return {**message, "params": {**params, "requestId": client_id}}
 
     def child_gone(self) -> None:
         for owner, value in list(self._to_child.values()):
@@ -265,13 +352,46 @@ class Proxy(ToolCatalog):
         )
         return self._blocked(Code.TOOL_CHANGED)
 
-    async def run_call(self, call: Call, params: Any) -> tuple[str, Any]:
+    @staticmethod
+    def call_input(params: Any) -> tuple[str, Any, dict[str, Any] | None] | str:
+        """The tool name, the arguments Latch checks, and the _meta to forward.
+
+        Returns the text of an invalid params error instead when the params hold a key
+        the proxy does not check, or a field of the wrong type. inputResponses and
+        requestState go into the arguments under reserved names, so the request hash,
+        the summary and the approval page cover them.
+        """
         if not isinstance(params, dict) or not isinstance(params.get("name"), str):
-            return "error", {"code": wire.INVALID_PARAMS, "message": "tools/call needs a name"}
-        name = params["name"]
+            return "tools/call needs a name"
+        unknown = sorted(set(params) - CALL_KEYS)
+        if unknown:
+            return f"tools/call params has keys the proxy does not check: {', '.join(unknown)}"
+        meta = params.get("_meta")
+        if "_meta" in params and not isinstance(meta, dict):
+            return "tools/call _meta must be an object"
         arguments = params.get("arguments", {})
         if arguments is None:
             arguments = {}
+        if isinstance(arguments, dict):
+            taken = sorted(set(arguments) & set(RESERVED.values()))
+            if taken:
+                return f"tools/call arguments may not use the reserved name {taken[0]}"
+        for param, reserved in RESERVED.items():
+            if param not in params:
+                continue
+            value = params[param]
+            kind = dict if param == "inputResponses" else str
+            if not isinstance(value, kind):
+                return f"tools/call {param} must be {'an object' if kind is dict else 'a string'}"
+            if isinstance(arguments, dict):
+                arguments = {**arguments, reserved: value}
+        return params["name"], arguments, meta if "_meta" in params else None
+
+    async def run_call(self, call: Call, params: Any) -> tuple[str, Any]:
+        checked = self.call_input(params)
+        if isinstance(checked, str):
+            return "error", {"code": wire.INVALID_PARAMS, "message": checked}
+        name, arguments, meta = checked
         await self.ensure_tools()
         key = wire.canonical([name, arguments])
         op_id = self._open_ops.get(key)
@@ -295,6 +415,7 @@ class Proxy(ToolCatalog):
                         return waited
                 if name in self.changed:
                     return self._refuse_changed(name, op_id)
+                self._call_meta[op_id] = meta
                 outcome, reply = await self.execute(prepared)
                 if not self._needs_flow_approval(outcome):
                     return self.map_outcome(outcome, reply)
@@ -309,6 +430,7 @@ class Proxy(ToolCatalog):
             status = self.latch.operation_status(self.settings.org, op_id)
             if status is None or status.state not in OPEN:
                 self._open_ops.pop(key, None)
+                self._call_meta.pop(op_id, None)
 
     def _refused_repeat(self, decision: Decision, op_id: str, key: str) -> tuple[str, Any]:
         """Answer a refused prepare. An operation still open for it can never run now.
@@ -416,14 +538,26 @@ class Proxy(ToolCatalog):
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._to_child[child_id] = ("proxy", future)
         self._in_flight[info.operation_id] = child_id
+        params: dict[str, Any] = {"name": info.tool}
+        # Latch checked the input round under reserved names. The server gets it back
+        # where MCP puts it, never inside arguments.
+        arguments = dict(args)
+        for param, reserved in RESERVED.items():
+            if reserved in arguments:
+                params[param] = arguments.pop(reserved)
+        params["arguments"] = arguments
+        meta = self._call_meta.get(info.operation_id)
+        if meta is not None:
+            params["_meta"] = meta
         try:
             self.to_child({"jsonrpc": "2.0", "id": child_id, "method": "tools/call",
-                           "params": {"name": info.tool, "arguments": args}})
+                           "params": params})
             reply = await future
         except asyncio.CancelledError:
             with contextlib.suppress(ChildGone):
                 self.to_child({"jsonrpc": "2.0", "method": "notifications/cancelled",
-                               "params": {"requestId": child_id, "reason": "timed out"}})
+                               "params": self.with_protocol(
+                                   {"requestId": child_id, "reason": "timed out"})})
             raise
         finally:
             self._to_child.pop(child_id, None)
@@ -448,12 +582,18 @@ class Proxy(ToolCatalog):
             prepared = self.prepared.get(status.operation_id)
             if prepared is None:
                 continue
-            pending.append({
+            arguments = prepared.arguments
+            item = {
                 "operation_id": status.operation_id, "tool": status.tool,
-                "summary": prepared.summary, "arguments": prepared.arguments,
+                "summary": prepared.summary, "arguments": arguments,
                 "flow_reason": prepared.flow_reason, "digest": self.form_digest(prepared),
                 "waited": max(0, int(now - status.created_at)),
-            })
+            }
+            # The input round is shown under its own headings, not among the arguments.
+            for param, reserved in RESERVED.items():
+                if reserved in arguments:
+                    item[PAGE_KEYS[param]] = arguments.pop(reserved)
+            pending.append(item)
         changed = [{"tool": name, "hash": item.hash, "old": item.old, "new": item.new}
                    for name, item in self.changed.items()]
         return {"pending": pending, "changed": changed}

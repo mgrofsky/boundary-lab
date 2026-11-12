@@ -27,7 +27,7 @@ LOOP_SECONDS = 10.0
 
 STYLE = """
 body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; color: #1d1d1f; background: #fff; }
-h1 { font-size: 20px; } h2 { font-size: 17px; margin-top: 28px; }
+h1 { font-size: 20px; } h2 { font-size: 17px; margin-top: 28px; } h3 { font-size: 15px; }
 .item { border: 1px solid #ccc; border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
 pre { background: #f4f4f4; padding: 8px; overflow-x: auto; white-space: pre-wrap; }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -58,6 +58,17 @@ def scrub(text: str, token: str) -> str:
     for secret in {token, quote(token)}:
         text = text.replace(secret, "[token]")
     return text
+
+
+def input_round(item: dict[str, Any]) -> str:
+    """The input a 2026-07-28 client sends back to the server, each under its own heading."""
+    parts = []
+    if "input_responses" in item:
+        parts.append(f"<h3>Input responses</h3><pre>{escape(pretty(item['input_responses']))}"
+                     "</pre>")
+    if "request_state" in item:
+        parts.append(f"<h3>Request state</h3><pre>{escape(str(item['request_state']))}</pre>")
+    return "".join(parts)
 
 
 def pretty(value: Any) -> str:
@@ -95,7 +106,8 @@ def render(state: dict[str, Any], token: str, nonce: str, now: float | None = No
             f'<span class="muted">waited {int(item["waited"])} s, operation {escape(op)}</span></p>'
             f"<p>{escape(str(item['summary']))}</p>"
             + flow_note(item.get("flow_reason"))
-            + f"<pre>{escape(pretty(item['arguments']))}</pre>"
+            + f"<h3>Arguments</h3><pre>{escape(pretty(item['arguments']))}</pre>"
+            + input_round(item)
             + form("approve", "Approve", {"operation_id": op, "digest": str(item["digest"])})
             + form("deny", "Deny", {"operation_id": op, "digest": str(item["digest"])})
             + "</div>"

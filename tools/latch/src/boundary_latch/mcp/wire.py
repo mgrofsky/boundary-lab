@@ -8,6 +8,7 @@ from typing import Any
 
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
+METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
@@ -80,6 +81,25 @@ def kind(message: dict[str, Any]) -> str:
     raise BadMessage(INVALID_REQUEST, "Invalid Request", msg_id)
 
 
+def check_child(message: Any) -> str:
+    """The kind of a message from the server. Raises BadMessage for any other shape.
+
+    It is stricter than kind(): jsonrpc must be "2.0", a message is a request, a
+    notification or a response and never two at once, a response holds result or
+    error but not both, and a request id is never null.
+    """
+    if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+        raise BadMessage(INVALID_REQUEST, "not a JSON-RPC 2.0 object")
+    has_method = "method" in message
+    if has_method and ("result" in message or "error" in message):
+        raise BadMessage(INVALID_REQUEST, "both a method and a result or error")
+    if "result" in message and "error" in message:
+        raise BadMessage(INVALID_REQUEST, "both a result and an error")
+    if has_method and "id" in message and message["id"] is None:
+        raise BadMessage(INVALID_REQUEST, "a request with a null id")
+    return kind(message)
+
+
 def check_client(line: bytes) -> dict[str, Any]:
     """Parse a client line. Refuse a batch, a non object, and a tools/call with duplicate keys."""
     value, duplicates = parse(line)
@@ -111,9 +131,27 @@ def result(msg_id: Any, value: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": msg_id, "result": value}
 
 
+# The _meta keys a 2026-07-28 client puts on every request to name the protocol it speaks.
+PROTOCOL_KEYS = ("io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientInfo",
+                 "io.modelcontextprotocol/clientCapabilities")
+COMPLETE = "complete"
+
+
+def protocol_fields(params: Any) -> dict[str, Any]:
+    """The protocol fields in a request's params._meta, or {} when it has none."""
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    if not isinstance(meta, dict):
+        return {}
+    return {key: meta[key] for key in PROTOCOL_KEYS if key in meta}
+
+
 def text_result(text: str) -> dict[str, Any]:
-    """A tools/call result the model can read, marked as an error."""
-    return {"content": [{"type": "text", "text": text}], "isError": True}
+    """A tools/call result the model can read, marked as an error.
+
+    resultType "complete" is what a 2026-07-28 client needs. Older clients ignore it.
+    """
+    return {"content": [{"type": "text", "text": text}], "isError": True,
+            "resultType": COMPLETE}
 
 
 def blocked(code: str, explanation: str) -> dict[str, Any]:

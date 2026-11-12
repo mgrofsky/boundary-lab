@@ -61,14 +61,29 @@ approval.threshold_minor = 5000
 
 [tools."bad name"]
 require_permission = "mcp:use"
+
+[tools.ask_input]
+require_permission = "mcp:use"
+
+[tools.reserved]
+require_permission = "mcp:use"
 """
+
+# The protocol fields a 2026-07-28 client puts in every request's _meta, as in the capture.
+META = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"},
+    "io.modelcontextprotocol/clientCapabilities": {"elicitation": {"form": {}}},
+}
 
 
 class Proxy:
     """One proxy process, with helpers to talk JSON-RPC to it."""
 
-    def __init__(self, tmp: Path, *options: str, policy: str = POLICY, init: bool = True):
+    def __init__(self, tmp: Path, *options: str, policy: str = POLICY, init: bool = True,
+                 modern: bool = False):
         self.tmp = tmp
+        self.modern = modern
         self.log = tmp / "server.log"
         self.policy = tmp / "policy.toml"
         self.policy.write_text(policy)
@@ -76,7 +91,8 @@ class Proxy:
         self.err = self.err_path.open("w")
         command = [sys.executable, "-m", "boundary_latch", "mcp", "--policy", str(self.policy),
                    "--no-open", "--approver", "person", *options,
-                   "--", sys.executable, str(FAKE), str(self.log)]
+                   "--", sys.executable, str(FAKE), str(self.log),
+                   *(["--modern"] if modern else [])]
         self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=self.err)
         self.lines: queue.Queue = queue.Queue()
@@ -97,6 +113,11 @@ class Proxy:
         self.proc.stdin.flush()
 
     def send(self, message: dict[str, Any]) -> None:
+        """Send one message. In modern mode a request gets the protocol fields in _meta."""
+        if self.modern and "method" in message and "id" in message:
+            params = message.get("params", {})
+            if isinstance(params, dict) and "_meta" not in params:
+                message = {**message, "params": {**params, "_meta": META}}
         self.send_raw(json.dumps(message).encode() + b"\n")
 
     def recv(self, timeout: float = 10.0) -> dict[str, Any] | None:
@@ -131,6 +152,10 @@ class Proxy:
         return self.recv_id(msg_id, timeout)
 
     def initialize(self) -> None:
+        if self.modern:
+            reply = self.request("server/discover", {})
+            assert reply["result"]["supportedVersions"] == ["2026-07-28"], reply
+            return
         reply = self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                             "clientInfo": {"name": "test", "version": "1"}})
         assert "result" in reply, reply

@@ -92,7 +92,7 @@ def test_dump_writes_one_ascii_line():
 def test_blocked_is_a_result_the_model_can_read():
     assert wire.blocked("UNKNOWN_TOOL", "No tool.") == {
         "content": [{"type": "text", "text": "Blocked by Latch: UNKNOWN_TOOL. No tool."}],
-        "isError": True,
+        "isError": True, "resultType": "complete",
     }
 
 

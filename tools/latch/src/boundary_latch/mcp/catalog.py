@@ -8,11 +8,13 @@ from typing import Any
 
 from ..reasons import Code
 from . import wire
-from .tools import build_spec, fits, version
+from .tools import build_spec, fits, uses_reserved, version
 
 logger = logging.getLogger("boundary_latch.mcp")
 
 MAX_PAGES = 1000
+# How much of a server's error text goes into the log.
+ERROR_TEXT = 200
 
 
 @dataclass
@@ -27,18 +29,16 @@ class Changed:
 class ToolCatalog:
     """The Proxy's tool list. It expects the attributes Proxy sets in __init__."""
 
-    async def ensure_tools(self) -> None:
+    async def ensure_tools(self, fresh: bool = False) -> None:
+        """Fetch the server's list when there is none, or always when fresh is set."""
         async with self._tools_lock:
-            if self._tools_known:
+            if self._tools_known and not fresh:
                 return
             tools: list[dict[str, Any]] = []
             cursor = None
             for _ in range(MAX_PAGES):
                 params = {} if cursor is None else {"cursor": cursor}
-                reply = await self.request("tools/list", params)
-                page = reply.get("result")
-                if not isinstance(page, dict) or not isinstance(page.get("tools"), list):
-                    raise TypeError("the server's tools/list answer has no tools list")
+                page = self._page(await self.request("tools/list", params))
                 tools += [tool for tool in page["tools"] if isinstance(tool, dict)]
                 cursor = page.get("nextCursor")
                 if not isinstance(cursor, str):
@@ -46,7 +46,25 @@ class ToolCatalog:
             else:
                 raise ValueError("the server's tools/list did not end")
             self.learn(tools)
+            self._list_fields = {key: value for key, value in page.items()
+                                 if key not in ("tools", "nextCursor")}
             self._tools_known = True
+
+    @staticmethod
+    def _page(reply: dict[str, Any]) -> dict[str, Any]:
+        """One tools/list page, or an error that says what the server answered."""
+        error = reply.get("error")
+        if error is not None:
+            code = error.get("code") if isinstance(error, dict) else None
+            text = error.get("message") if isinstance(error, dict) else None
+            text = " ".join(str(text).split())[:ERROR_TEXT]
+            raise ValueError(f"the server answered tools/list with error {code!r}: {text}")
+        page = reply.get("result")
+        if not isinstance(page, dict) or not isinstance(page.get("tools"), list):
+            raise TypeError("the server's tools/list answer has no tools list")
+        if page.get("resultType", wire.COMPLETE) != wire.COMPLETE:
+            raise ValueError("the server's tools/list answer is not complete")
+        return page
 
     def learn(self, tools: list[dict[str, Any]]) -> None:
         """Pin new tools, find changed ones, and register what the client may call."""
@@ -54,7 +72,7 @@ class ToolCatalog:
         listed: set[str] = set()
         for tool in tools:
             name = tool.get("name")
-            if not fits(name) or name not in self.latch.policy.tools:
+            if not fits(name) or name not in self.latch.policy.tools or uses_reserved(tool):
                 self._hide(name)
                 continue
             if name in listed:
@@ -110,8 +128,8 @@ class ToolCatalog:
         label = repr(name)[:80]
         if label not in self._hidden_logged:
             self._hidden_logged.add(label)
-            logger.warning("hid tool %s: the policy does not name it, or the name does not fit",
-                           label)
+            logger.warning("hid tool %s: the policy does not name it, the name does not fit, "
+                           "or its inputSchema uses a reserved name", label)
 
     def accept(self, name: str, shown_hash: str) -> bool:
         """A person accepts the changed definition they saw. False when it is gone or newer."""
@@ -130,11 +148,17 @@ class ToolCatalog:
         return True
 
     async def answer_list(self, msg_id: Any) -> None:
+        """Fetch the server's list again, so the pins check what the server has now.
+
+        The answer keeps the other top level fields of the server's last page, such as
+        ttlMs, cacheScope and _meta, and leaves out nextCursor.
+        """
         try:
-            await self.ensure_tools()
+            await self.ensure_tools(fresh=True)
         except Exception as exc:  # noqa: BLE001 the client gets an error, never a partial list
             logger.warning("could not list the server's tools: %s", exc)
             self.to_client(wire.error(msg_id, wire.INTERNAL_ERROR, "could not list tools"))
             return
         tools = [self.served[name] for name in self._order if name in self.served]
-        self.to_client(wire.result(msg_id, {"tools": tools}))
+        self.to_client(wire.result(msg_id, {**self._list_fields, "tools": tools,
+                                            "resultType": wire.COMPLETE}))

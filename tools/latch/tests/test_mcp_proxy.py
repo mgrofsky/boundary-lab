@@ -42,30 +42,51 @@ def test_an_allowed_call_returns_the_server_result_unchanged(proxy):
         sort_keys=True)}]}
 
 
-def test_the_server_sees_exactly_the_checked_arguments_and_nothing_else(proxy):
+def test_the_server_sees_exactly_the_checked_arguments_and_the_client_meta(proxy):
     proxy.call("files.read-text", {"my-arg": 1, "class": "c"})
     proxy.request("tools/call", {"name": "echo", "arguments": {"text": "x"},
-                                 "_meta": {"progressToken": "p"}, "other": 1})
+                                 "_meta": {"progressToken": "p"}})
     sent = [m["params"] for m in proxy.server_calls()]
     assert sent == [{"name": "files.read-text", "arguments": {"my-arg": 1, "class": "c"}},
-                    {"name": "echo", "arguments": {"text": "x"}}]
+                    {"name": "echo", "arguments": {"text": "x"},
+                     "_meta": {"progressToken": "p"}}]
+
+
+@pytest.mark.parametrize(("params", "named"), [
+    ({"other": 1}, "other"),
+    ({"other": 1, "task": {}}, "other, task"),
+    ({"_meta": "x"}, "_meta"),
+    ({"inputResponses": []}, "inputResponses"),
+    ({"requestState": 5}, "requestState"),
+    ({"arguments": {"text": "x", "$requestState": "s"}}, "$requestState"),
+    ({"arguments": {"text": "x", "$inputResponses": {}}}, "$inputResponses"),
+])
+def test_a_tools_call_with_params_the_proxy_does_not_check_is_refused(proxy, params, named):
+    reply = proxy.request("tools/call", {"name": "echo", "arguments": {"text": "x"}, **params})
+    assert reply["error"]["code"] == -32602
+    assert named in reply["error"]["message"]
+    assert proxy.server_calls() == []
 
 
 def test_tools_list_hides_tools_the_policy_does_not_name(proxy):
     reply = proxy.request("tools/list", {})
     names = [tool["name"] for tool in reply["result"]["tools"]]
     assert names == ["echo", "fail", "rpc_error", "sleep", "mutate", "crash", "ask_roots",
-                     "files.read-text", "guarded", "pay"]
+                     "files.read-text", "guarded", "pay", "ask_input"]
     assert "nextCursor" not in reply["result"]
+    assert reply["result"]["resultType"] == "complete"
     proxy.request("tools/list", {})
     err = proxy.stderr()
     assert err.count("'secret'") == 1 and err.count("'bad name'") == 1
+    # The policy names it, but its inputSchema uses a name the proxy keeps for itself.
+    assert err.count("'reserved'") == 1
+    assert blocked_code(proxy.call("reserved", {})) == "UNKNOWN_TOOL"
 
 
 def test_the_proxy_follows_every_page_of_the_server_list(proxy):
     proxy.call("echo", {"text": "x"})
     lists = [m for m in proxy.server_log() if m.get("method") == "tools/list"]
-    assert [m["params"].get("cursor") for m in lists] == [None, "3", "6", "9", "12"]
+    assert [m["params"].get("cursor") for m in lists] == [None, "3", "6", "9", "12", "15"]
 
 
 @pytest.mark.parametrize("tool", ["secret", "bad name", "missing"])
@@ -602,7 +623,9 @@ def test_print_policy_flow_writes_labels_and_the_server_hints(tmp_path):
                      str(tmp_path / "log"))
     assert result.returncode == 0, result.stderr
     assert '[flow]\nall_three = "approve"' in result.stdout
-    assert result.stdout.count('labels = ["untrusted", "sensitive", "external"]') == 14
+    assert result.stdout.count('labels = ["untrusted", "sensitive", "external"]') == 15
+    assert "[tools.reserved]" not in result.stdout
+    assert "left out tool 'reserved': its inputSchema uses $inputResponses" in result.stderr
     assert "# The server says: readOnlyHint=true, openWorldHint=true." in result.stdout
     path = tmp_path / "starter.toml"
     path.write_text(result.stdout)

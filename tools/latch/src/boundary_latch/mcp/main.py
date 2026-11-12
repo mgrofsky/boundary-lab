@@ -30,6 +30,7 @@ PROTOCOL = "2025-06-18"
 SKIP_REASONS = {
     "name": "the name does not fit Latch's pattern",
     "duplicate": "the server listed this name before, and only the first is written",
+    "reserved": "its inputSchema uses $inputResponses or $requestState, which the proxy keeps",
 }
 
 

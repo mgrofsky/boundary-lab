@@ -14,7 +14,8 @@ def state():
     return {
         "pending": [{"operation_id": QUOTE, "tool": PAYLOAD, "summary": PAYLOAD,
                      "arguments": {PAYLOAD: QUOTE}, "waited": 3, "flow_reason": PAYLOAD,
-                     "digest": QUOTE}],
+                     "digest": QUOTE, "input_responses": {PAYLOAD: {"x": QUOTE}},
+                     "request_state": QUOTE + PAYLOAD}],
         "changed": [{"tool": QUOTE, "hash": QUOTE,
                      "old": {"name": PAYLOAD, "description": QUOTE},
                      "new": {"name": PAYLOAD, "description": PAYLOAD}}],
@@ -27,6 +28,7 @@ def test_markup_in_every_field_is_escaped():
     assert QUOTE not in html
     assert "<script>alert" not in html
     assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    assert "<h3>Input responses</h3>" in html and "<h3>Request state</h3>" in html
 
 
 def test_the_only_script_is_the_refresh_with_the_nonce_and_only_when_nothing_is_shown():

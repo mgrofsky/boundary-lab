@@ -15,6 +15,10 @@ from ..models import Handler, ToolSpec
 from .wire import canonical
 
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
+# Where an input round goes in the arguments Latch checks: params key -> reserved name.
+# The names start with $, so a tool's own property is unlikely to use them by accident.
+# A tool whose inputSchema uses one is hidden.
+RESERVED = {"inputResponses": "$inputResponses", "requestState": "$requestState"}
 BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 COMMENT_LIMIT = 100
 
@@ -94,6 +98,21 @@ def old_hashes(tool: dict[str, Any]) -> set[str]:
     return {old_version(tool), version(tool)[:OLD_PIN_LENGTH]}
 
 
+def uses_reserved(tool: dict[str, Any]) -> bool:
+    """True when the tool's inputSchema names a reserved argument, in properties or required."""
+    schema = tool.get("inputSchema")
+    if not isinstance(schema, dict):
+        return False
+    names: set[str] = set()
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        names |= {str(name) for name in properties}
+    required = schema.get("required")
+    if isinstance(required, list):
+        names |= {name for name in required if isinstance(name, str)}
+    return bool(names & set(RESERVED.values()))
+
+
 def _safe_field(name: str) -> bool:
     return (name.isidentifier() and not keyword.iskeyword(name) and not name.startswith("_")
             and not name.startswith("model_") and not hasattr(BaseModel, name))
@@ -123,6 +142,12 @@ def args_model(input_schema: Any) -> type[BaseModel]:
             fields[field_name] = (Any, Field(alias=name))
         else:
             fields[field_name] = (Any, Field(default=MISSING, alias=name))
+    # The input round of a 2026-07-28 call, checked like any argument.
+    for index, alias in enumerate(RESERVED.values()):
+        field_name = f"input_round_{index}"
+        while field_name in taken or field_name in fields:
+            field_name = "x" + field_name
+        fields[field_name] = (Any, Field(default=MISSING, alias=alias))
     return create_model("ToolArgs", __base__=McpArgs, **fields)
 
 
@@ -198,7 +223,7 @@ def hints(tool: dict[str, Any]) -> str:
 
 def starter_policy(tools: list[dict[str, Any]], flow: bool = False
                    ) -> tuple[str, list[tuple[str, str]]]:
-    """The policy text, and the tools left out with why: "name" or "duplicate".
+    """The policy text, and the tools left out with why: "name", "reserved" or "duplicate".
 
     A name that does not fit Latch's pattern is left out, and so is a name already
     written, since TOML refuses a table defined twice. With flow, the [flow] rule is
@@ -214,6 +239,9 @@ def starter_policy(tools: list[dict[str, Any]], flow: bool = False
         name = tool.get("name")
         if not fits(name):
             skipped.append((str(name), "name"))
+            continue
+        if uses_reserved(tool):
+            skipped.append((name, "reserved"))
             continue
         if name in written:
             skipped.append((name, "duplicate"))
