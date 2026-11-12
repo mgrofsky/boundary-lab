@@ -202,6 +202,10 @@ def handle(message: dict) -> None:
                 sys.stdout.write(raw + "\n")
                 sys.stdout.flush()
         send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+    elif method == "test/hang_list":
+        # From now on, never answer tools/list.
+        state["hang_list"] = True
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "test/close":
         # Close stdout and keep running, so the proxy reads the end of its output.
         log({"pid": os.getpid()})
@@ -218,6 +222,8 @@ def handle(message: dict) -> None:
         send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "resources/list":
         listed(msg_id, {"resources": [], "echo_id": msg_id})
+    elif method == "tools/list" and state.get("hang_list"):
+        return
     elif method == "tools/list":
         start = int((message.get("params") or {}).get("cursor") or 0)
         page = tools()[start:start + PAGE_SIZE]

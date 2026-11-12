@@ -63,6 +63,10 @@ class ChildGone(Exception):
     """The server exited before it answered."""
 
 
+class ProxyTimeout(Exception):
+    """The server did not answer a request of the proxy's own in time."""
+
+
 @dataclass
 class Settings:
     user: str = "agent"
@@ -163,14 +167,24 @@ class Proxy(ToolCatalog):
         return {**params, "_meta": dict(self._protocol)}
 
     async def request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Send a request of the proxy's own to the child and wait for the answer."""
+        """Send a request of the proxy's own to the child and wait for the answer.
+
+        It waits at most --tool-timeout seconds, so a server that never answers cannot
+        hold the tool list lock forever. On timeout the server is told to cancel.
+        """
         child_id = self._new_id()
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._to_child[child_id] = ("proxy", future)
         try:
             self.to_child({"jsonrpc": "2.0", "id": child_id, "method": method,
                            "params": self.with_protocol(params)})
-            return await future
+            return await asyncio.wait_for(future, self.settings.tool_timeout)
+        except TimeoutError:
+            with contextlib.suppress(ChildGone):
+                self.to_child({"jsonrpc": "2.0", "method": "notifications/cancelled",
+                               "params": self.with_protocol(
+                                   {"requestId": child_id, "reason": "timed out"})})
+            raise ProxyTimeout(f"the server did not answer {method} in time") from None
         finally:
             self._to_child.pop(child_id, None)
 
@@ -390,6 +404,9 @@ class Proxy(ToolCatalog):
     async def answer_call(self, call: Call, params: Any) -> None:
         try:
             reply = await self.run_call(call, params)
+        except ProxyTimeout as exc:
+            logger.warning("refused a tools/call: %s", exc)
+            reply = ("result", wire.text_result(PROXY_ERROR))
         except Exception:
             logger.exception("refused a tools/call after an error in the proxy")
             reply = ("result", wire.text_result(PROXY_ERROR))

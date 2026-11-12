@@ -476,3 +476,28 @@ def test_with_no_change_the_list_is_fetched_once():
 
     asyncio.run(main())
     assert asked == ["tools/list"]
+
+
+# A server that never answers the proxy's own tools/list
+
+
+@pytest.mark.parametrize("proto", [False, True])
+def test_a_list_the_server_never_answers_times_out(tmp_path, proto):
+    import time
+
+    proxy = Proxy(tmp_path, "--approval-port", "-1", "--tool-timeout", "1", modern=proto)
+    try:
+        proxy.request("test/hang_list", {})
+        started = time.monotonic()
+        listed = proxy.request("tools/list", {}, timeout=10)
+        assert listed["error"] == {"code": -32603, "message": "could not list tools"}
+        called = proxy.call("echo", {"text": "x"}, timeout=10)
+        assert called["result"]["content"][0]["text"].startswith("Blocked by Latch: PROXY_ERROR.")
+        assert time.monotonic() - started < 8
+        assert proxy.server_calls() == []
+        assert "result" in proxy.request("ping", {})
+        cancels = [m for m in proxy.server_log() if m.get("method") == "notifications/cancelled"]
+        assert len(cancels) >= 2
+        assert "Traceback" not in proxy.stderr()
+    finally:
+        proxy.close()
