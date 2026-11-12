@@ -36,6 +36,7 @@
 - A policy field can name a field's alias as well as its name.
 - A copied path that named a field by its alias was dropped, so the call ran as if nothing was copied. Latch now keeps every copied path as given. A path that matches no field also counts as a copied value, for `copied_arguments` and for the flow rule.
 - `boundary-latch mcp --print-policy` wrote a policy that did not parse when the server listed one tool name twice. It now writes the first and says on stderr which one it left out.
+- The approval page wrote each request line to the log with its token. It now cuts the query string and removes the token from every log line. The token is logged once, in the startup line with the page address.
 - `approval.mode = "over_amount"` let a negative amount run without approval. A negative amount now needs approval, whatever the threshold.
 
 ## 0.3.0

@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import json
 import logging
+import re
 import secrets
 import threading
 import time
@@ -43,6 +44,17 @@ def flow_note(reason: Any) -> str:
     if not reason:
         return ""
     return f'<p class="flow"><strong>Flow rule:</strong> {escape(str(reason))}</p>'
+
+
+QUERY = re.compile(r"\?[^\s'\"]*")
+
+
+def scrub(text: str, token: str) -> str:
+    """A log line with every query string cut off and the token itself removed."""
+    text = QUERY.sub("", text)
+    for secret in {token, quote(token)}:
+        text = text.replace(secret, "[token]")
+    return text
 
 
 def pretty(value: Any) -> str:
@@ -150,7 +162,7 @@ class ApprovalPage:
             sys_version = ""
 
             def log_message(self, fmt: str, *args: Any) -> None:
-                logger.info("approval page: " + fmt, *args)
+                logger.info("approval page: %s", scrub(fmt % args, page.token))
 
             def _send(self, status: int, body: str = "", ctype: str = "text/plain",
                       extra: dict[str, str] | None = None, nonce: str = "") -> None:
