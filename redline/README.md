@@ -44,7 +44,7 @@ print(grader.grade(prompt, response, "verified")["outcome"])  # pass
 
 `grade` returns the same fields as a line in `holdout_outputs.jsonl`, without the `id`. Building the `Grader` loads the rules, picks judge examples and sets up the router, so build it once and reuse it.
 
-By default it uses the replay judge, which only knows the saved answers. To grade new answers, pass `judge=ChatEndpointJudge(base_url, model, api_key, cache_path="my_cache.jsonl")` from `redline.judge`. The other options match the `redline run` flags: `rules`, `train`, `router`, `k`, `short_circuit`, `seed`, `cache`, `embedder`, `top_k`, `floor` and `missing_grade`.
+By default it uses the replay judge, which only knows the saved answers. To grade new answers, pass `judge=ChatEndpointJudge(base_url, model, api_key, cache_path="my_cache.jsonl")` from `redline.judge`. The other options match the `redline run` flags: `rules`, `train`, `router`, `k`, `short_circuit`, `seed`, `cache`, `embedder`, `top_k`, `floor`, `missing_grade` and `attempts`.
 
 ## Pick how answers find a rule
 
@@ -155,6 +155,29 @@ redline gate --summary results/ci/summary.json --min-recall 0.8 --max-false-alar
 It prints one line for each limit that's broken and exits 1. When every limit holds, it prints nothing and exits 0. Only the limits you pass are checked.
 
 `--min-recall` is the share of rule breaks caught. `--max-false-alarm` is the share of good answers marked fail. `--min-kappa` is agreement with the hand labels. These read the holdout numbers. Add `--attack` to check the attack run's numbers instead.
+
+Add `--use-interval` to test recall on the low end of its 95 percent interval and false alarms on the high end. With a few dozen answers that is a much harder bar. The saved summary passes 0.8 and 0.1 without it and fails with it.
+
+## How Redline holds up when the attacker adapts
+
+A detector's score is specific to the attacks it was tested on. The saved sets are small, each attack prompt was sent once, and no attack here was written to beat Redline. Three tools help you see how much the numbers can be trusted.
+
+Intervals come first. Every end to end rate now carries its count and a 95 percent interval, so the table above says "21 of 24" and not just 88 percent. `summary.json` keeps every old number in place and adds the counts beside them under `counts`.
+
+Repeats show how stable the grades are. `redline run --attempts 3 --judge live` asks the judge three times per answer, skipping the cache after the first. The report then counts a bad answer as caught only if every attempt failed it. `redline attack --attempts 3 --temperature 0.7` sends each attack prompt three times.
+
+`redline evade` rewrites each bad answer in fixed ways that keep it readable, such as a fake pass verdict, padding, code blocks, zero width spaces, and look alike letters. It reports a bad answer as caught only if every version failed. With `--attacker`, a chat model then rewords the answers still caught, for up to five rounds.
+
+```sh
+redline evade --data data/holdout.jsonl --judge live --out results/local/evade
+redline evade --data data/holdout.jsonl --judge live --attacker --max-judge-calls 500 --out results/local/evade
+```
+
+A reworded answer that passes may no longer break the rule. So attacker results stay unconfirmed until a person labels them and passes the file to `redline report --evade-labels`.
+
+Replay works for a dry run, with `--missing-grade review`. The cache has never seen the rewritten answers, so they go to review and the numbers mean nothing. The evade numbers for this repo are not published until a live run is done.
+
+See [adaptive attacks](../docs/adaptive-attacks.md) for every rewrite, the output files, and the summary fields.
 
 ## Run it with promptfoo
 
