@@ -193,3 +193,49 @@ def test_run_with_attempts_reads_but_never_writes_the_pinned_cache(tmp_path, mon
     assert cli.main([*args, "--embedder", "tfidf", "--out", "run"]) == 0
     assert sent
     assert _hash(copy) == copied and _hash(PINNED) == before
+
+
+class _RouterGrader:
+    """Passes by router any answer containing "padded", else fails by judge."""
+
+    def __init__(self):
+        self.judge = self
+        self.rules = {}
+
+    def grade(self, *args):
+        return {}
+
+    def run(self, records):
+        rows = []
+        for r in records:
+            routed = "padded" in r["response"]
+            if not routed:
+                self.judge.grade()
+            rows.append(
+                {
+                    "id": r["id"],
+                    "outcome": "pass" if routed else "fail",
+                    "decided_by": "router" if routed else "judge",
+                    "reason_code": "OK" if routed else "X",
+                    "reason_text": "",
+                    "routed_rule": "none" if routed else "PAY-01",
+                }
+            )
+        return rows
+
+
+def test_router_only_counts_records_the_router_passed_as_written_and_after_a_rewrite():
+    from redline import evade
+    from redline.intervals import interval
+
+    records = [
+        {"id": "a", "label": "bad", "user_type": "x", "prompt": "p", "response": "padded"},
+        {"id": "b", "label": "bad", "user_type": "x", "prompt": "p", "response": "plain"},
+        {"id": "c", "label": "bad", "user_type": "x", "prompt": "p", "response": "plain"},
+    ]
+    rewrites = {"pad": lambda t: t + " padded", "same": lambda t: t}
+    _, summary, _ = evade.run(records, _RouterGrader(), rewrites=rewrites)
+    assert summary["router_only"] == {
+        "as_written": interval(1, 3),
+        "after_rewrite": interval(3, 3),
+    }

@@ -177,7 +177,7 @@ A live evade run saves new grades under `--out` by default and refuses `--cache 
 
 A reworded answer that passes may no longer break the rule. So attacker results stay unconfirmed until a person labels them and passes the file to `redline report --evade-labels`.
 
-Replay works for a dry run, with `--missing-grade review`. The cache has never seen the rewritten answers, so every rewrite that reaches the judge goes to review. A rewrite the router sends off topic still passes without the judge. Either way, a replay run only shows that the command works. The evade numbers for this repo are not published until a live run is done.
+Replay needs `--missing-grade review`. The cache has never seen the rewritten answers, so every rewrite that reaches the judge goes to review, and the judge side is not measured. The router side is real, since the router is deterministic. With the default embedder and router, replay on the 24 bad holdout answers gives this router only floor. As written, the router passed 0 of 24 (0%, 95% interval 0% to 14%). After a rewrite, it passed 2 of 24 (8%, 95% interval 2% to 26%) with no judge call. That is a lower bound on misses. The summary is saved as `results/evade_replay_summary.json`. The other evade numbers for this repo are not published until a live run is done.
 
 See [adaptive attacks](../docs/adaptive-attacks.md) for every rewrite, the output files, and the summary fields.
 

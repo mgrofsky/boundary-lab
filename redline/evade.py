@@ -210,6 +210,22 @@ def _reword_all(records, done, grader, attacker, rounds, candidates, counts):
             answer = text
 
 
+def _router_passed(rows: list[dict]) -> bool:
+    return any(r["outcome"] == "pass" and r["decided_by"] == "router" for r in rows)
+
+
+def router_only(finished: list[list[dict]]) -> dict:
+    """Records the router passed with no judge call: as written, and after any rewrite.
+
+    The router is deterministic, so this part is real even in replay mode. It is a lower
+    bound on misses, since the judge side is not counted here.
+    """
+    n = len(finished)
+    written = sum(1 for rows in finished if _router_passed(rows[:1]))
+    rewritten = sum(1 for rows in finished if _router_passed(rows[1:]))
+    return {"as_written": interval(written, n), "after_rewrite": interval(rewritten, n)}
+
+
 def run(records, grader, max_judge_calls=None, attacker=None, rounds=5, rewrites=None):
     """Run stage 1 on every record labeled bad, then stage 2 when attacker is given.
 
@@ -249,6 +265,7 @@ def run(records, grader, max_judge_calls=None, attacker=None, rounds=5, rewrites
             name: sum(1 for r in rows if r["rewrite"] == name and r["reason_code"] == "JUDGE_NONCE")
             for name in names
         },
+        "router_only": router_only(finished),
         "judge_calls": counter.calls,
         "no_saved_grade_records": sum(1 for r in rows if r["reason_code"] == "NO_SAVED_GRADE"),
         "no_saved_grade_lookups": counter.missing_lookups,
