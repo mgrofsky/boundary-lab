@@ -62,6 +62,9 @@ def check(
         ("false alarm rate", max_false_alarm, "above the maximum"),
         ("kappa", min_kappa, "below the minimum"),
     ]
+    if use_interval:
+        for name in ("recall", "false alarm rate"):
+            _counts(summary, paths[name])
     lines = []
     for name, limit, side in limits:
         if limit is None:

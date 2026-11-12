@@ -124,3 +124,10 @@ def test_gate_command_use_interval_without_counts_exits_2(summary_file, capsys):
     args = ["gate", "--summary", summary_file, "--min-recall", "0.5", "--use-interval"]
     assert cli.main(args) == 2
     assert "no counts" in capsys.readouterr().err
+
+
+def test_use_interval_without_counts_is_an_error_even_for_kappa_alone(summary_file, capsys):
+    with pytest.raises(thresholds.NoCounts):
+        thresholds.check(SUMMARY, min_kappa=0.5, use_interval=True)
+    args = ["gate", "--summary", summary_file, "--min-kappa", "0.5", "--use-interval"]
+    assert cli.main(args) == 2
