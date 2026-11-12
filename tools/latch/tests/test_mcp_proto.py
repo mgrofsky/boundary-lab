@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from .mcp_helpers import META, Proxy, http, text_of, wait_for
+from .mcp_helpers import FAKE, META, Proxy, http, text_of, wait_for
 from .test_mcp_proxy import blocked_code, calls_to, pending_ids, post
 
 CAPTURE = Path(__file__).parents[3] / ".hermes" / "spec" / "claude_code_wire_capture.log"
@@ -179,3 +179,75 @@ def test_the_approval_page_shows_the_input_round_under_its_own_headings(tmp_path
         assert reply["result"]["resultType"] == "input_required"
     finally:
         proxy.close()
+
+
+def print_policy(tmp_path, *server_args):
+    result = subprocess.run(
+        [sys.executable, "-m", "boundary_latch", "mcp", "--print-policy", "--",
+         sys.executable, str(FAKE), str(tmp_path / "log"), *server_args],
+        capture_output=True, text=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stderr
+    path = tmp_path / "starter.toml"
+    path.write_text(result.stdout)
+    checked = subprocess.run([sys.executable, "-m", "boundary_latch", "check", str(path)],
+                             capture_output=True, text=True, check=False)
+    assert checked.returncode == 0, checked.stderr
+    log = [json.loads(line) for line in (tmp_path / "log").read_text().splitlines()]
+    return result.stdout, log
+
+
+def test_print_policy_speaks_2026_07_28_to_a_modern_server(tmp_path):
+    text, log = print_policy(tmp_path, "--modern")
+    assert "[tools.ask_input]" in text and "[tools.reserved]" not in text
+    discover = log[0]
+    assert discover["method"] == "server/discover"
+    meta = discover["params"]["_meta"]
+    assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+    assert meta["io.modelcontextprotocol/clientInfo"]["name"] == "boundary-latch"
+    assert "initialize" not in [m.get("method") for m in log]
+    pages = [m for m in log if m.get("method") == "tools/list"]
+    assert len(pages) == 6
+    assert all(m["params"]["_meta"] == meta for m in pages)
+
+
+def test_print_policy_falls_back_to_initialize_when_discover_fails(tmp_path):
+    _, log = print_policy(tmp_path)
+    methods = [m.get("method") for m in log]
+    assert methods[:3] == ["server/discover", "initialize", "notifications/initialized"]
+    assert all("_meta" not in m.get("params", {}) for m in log if m.get("method") == "tools/list")
+
+
+def test_print_policy_falls_back_when_discover_gets_no_answer(tmp_path, monkeypatch):
+    import asyncio
+
+    from boundary_latch.mcp import main
+
+    monkeypatch.setattr(main, "PROBE_SECONDS", 0.5)
+    log_file = tmp_path / "log"
+    tools = asyncio.run(main.list_tools([sys.executable, str(FAKE), str(log_file),
+                                         "--quiet-discover"]))
+    assert "echo" in [tool["name"] for tool in tools]
+    log = [json.loads(line) for line in log_file.read_text().splitlines()]
+    assert [m.get("method") for m in log][:2] == ["server/discover", "initialize"]
+
+
+@pytest.mark.parametrize(("answer", "chosen"), [
+    ({"result": {"supportedVersions": ["2026-07-28", "2099-01-01"]}}, "2026-07-28"),
+    ({"error": {"code": -32022, "message": "m",
+                "data": {"supported": ["2026-07-28"], "requested": "x"}}}, "2026-07-28"),
+    ({"error": {"code": -32601, "message": "unknown"}}, None),
+    ({"error": {"code": -32022, "message": "m", "data": {}}}, None),
+    ({"result": {"supportedVersions": "2026-07-28"}}, None),
+    (None, None),
+])
+def test_the_discover_answer_picks_the_version(answer, chosen):
+    from boundary_latch.mcp.main import discovered_version
+
+    assert discovered_version(answer) == chosen
+
+
+def test_a_modern_server_with_no_shared_version_is_an_error():
+    from boundary_latch.mcp.main import discovered_version
+
+    with pytest.raises(ValueError, match="2099-01-01"):
+        discovered_version({"result": {"supportedVersions": ["2099-01-01"]}})

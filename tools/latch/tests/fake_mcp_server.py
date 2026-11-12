@@ -1,6 +1,6 @@
 """A small MCP stdio server for the proxy tests. Standard library only.
 
-Usage: python fake_mcp_server.py LOG_FILE [--modern]
+Usage: python fake_mcp_server.py LOG_FILE [--modern] [--quiet-discover]
 
 Every message it receives is appended to LOG_FILE as one JSON line.
 
@@ -18,6 +18,8 @@ import time
 
 LOG = sys.argv[1] if len(sys.argv) > 1 else os.devnull
 MODERN = "--modern" in sys.argv[2:]
+# An older server that never answers server/discover, to test the probe's timeout.
+QUIET_DISCOVER = "--quiet-discover" in sys.argv[2:]
 VERSION = "2026-07-28"
 PROTOCOL = "io.modelcontextprotocol/protocolVersion"
 CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
@@ -172,17 +174,19 @@ def handle(message: dict) -> None:
         return
     if MODERN and not modern_ok(message):
         return
-    if method == "server/discover":
+    if QUIET_DISCOVER and method == "server/discover":
+        return
+    if MODERN and method == "server/discover":
         send({"jsonrpc": "2.0", "id": msg_id, "result": {
             "supportedVersions": [VERSION],
             "capabilities": {"tools": {"listChanged": True}},
             "ttlMs": 0, "cacheScope": "private", "_meta": SERVER_INFO}})
-    elif method == "subscriptions/listen":
+    elif MODERN and method == "subscriptions/listen":
         wanted = (message.get("params") or {}).get("notifications") or {}
         listens[msg_id] = wanted
         send({"jsonrpc": "2.0", "method": "notifications/subscriptions/acknowledged",
               "params": {"notifications": wanted, "_meta": {SUBSCRIPTION: msg_id}}})
-    elif method == "tasks/get":
+    elif MODERN and method == "tasks/get":
         send({"jsonrpc": "2.0", "id": msg_id, "result": {
             "taskId": (message.get("params") or {}).get("taskId"), "status": "completed"}})
     elif method == "initialize":

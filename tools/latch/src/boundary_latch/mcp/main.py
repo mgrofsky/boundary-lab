@@ -26,7 +26,13 @@ from .tools import starter_policy
 logger = logging.getLogger("boundary_latch.mcp")
 
 LIST_SECONDS = 30.0
+# The initialize handshake version, for a server of the older era.
 PROTOCOL = "2025-06-18"
+# Versions of the 2026-07-28 form this build speaks, oldest first.
+MODERN_VERSIONS = ("2026-07-28",)
+# How long the server/discover probe waits before it treats the server as older.
+PROBE_SECONDS = 5.0
+UNSUPPORTED_VERSION = -32022
 SKIP_REASONS = {
     "name": "the name does not fit Latch's pattern",
     "duplicate": "the server listed this name before, and only the first is written",
@@ -202,15 +208,56 @@ def print_policy(command: list[str], flow: bool = False) -> int:
     return 0
 
 
+def modern_meta(version: str) -> dict[str, Any]:
+    """The protocol fields boundary-latch sends on its own 2026-07-28 requests."""
+    return {
+        "io.modelcontextprotocol/protocolVersion": version,
+        "io.modelcontextprotocol/clientInfo": {"name": "boundary-latch", "version": __version__},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+
+def discovered_version(answer: dict[str, Any] | None) -> str | None:
+    """The newest version both sides know, or None when the server is of the older era.
+
+    A server/discover result lists supportedVersions. An UnsupportedProtocolVersion
+    error lists data.supported; the spec says that server is modern too, so the probe
+    must not fall back to initialize. Any other answer, or none, means an older
+    server. A modern server that shares no version is an error.
+    """
+    if not isinstance(answer, dict):
+        return None
+    supported: Any = None
+    result, error = answer.get("result"), answer.get("error")
+    if isinstance(result, dict):
+        supported = result.get("supportedVersions")
+    elif isinstance(error, dict) and error.get("code") == UNSUPPORTED_VERSION:
+        data = error.get("data")
+        supported = data.get("supported") if isinstance(data, dict) else None
+    if not isinstance(supported, list):
+        return None
+    shared = sorted(set(MODERN_VERSIONS) & {v for v in supported if isinstance(v, str)})
+    if not shared:
+        offered = ", ".join(str(v) for v in supported)[:200]
+        raise ValueError(f"the server supports {offered}, and this build speaks "
+                         f"{', '.join(MODERN_VERSIONS)}")
+    return shared[-1]
+
+
 async def list_tools(command: list[str]) -> list[dict[str, Any]]:
-    """Start the server, do the MCP handshake, and read every page of tools/list."""
+    """Start the server, agree on the protocol, and read every page of tools/list.
+
+    It probes with server/discover first. A server that answers it gets the
+    2026-07-28 form, with the protocol fields on every request. A server that
+    refuses it or stays silent gets the initialize handshake of the older era.
+    """
     child = await asyncio.create_subprocess_exec(
         *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         limit=LINE_LIMIT,
     )
     assert child.stdin is not None and child.stdout is not None
 
-    async def ask(msg_id: int, method: str, params: dict[str, Any]) -> Any:
+    async def answer(msg_id: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
         child.stdin.write(wire.dump({"jsonrpc": "2.0", "id": msg_id, "method": method,
                                      "params": params}))
         await child.stdin.drain()
@@ -224,21 +271,40 @@ async def list_tools(command: list[str]) -> list[dict[str, Any]]:
                 continue
             if isinstance(message, dict) and message.get("id") == msg_id \
                     and "method" not in message:
-                if "error" in message:
-                    raise ValueError(f"{method} failed")
-                return message.get("result")
+                return message
+
+    async def ask(msg_id: int, method: str, params: dict[str, Any]) -> Any:
+        message = await answer(msg_id, method, params)
+        if "error" in message:
+            raise ValueError(f"{method} failed")
+        return message.get("result")
+
+    async def probe() -> str | None:
+        try:
+            reply = await asyncio.wait_for(
+                answer(1, "server/discover", {"_meta": modern_meta(MODERN_VERSIONS[-1])}),
+                PROBE_SECONDS)
+        except TimeoutError:
+            return None
+        return discovered_version(reply)
 
     async def talk() -> list[dict[str, Any]]:
-        await ask(1, "initialize", {
-            "protocolVersion": PROTOCOL, "capabilities": {},
-            "clientInfo": {"name": "boundary-latch", "version": __version__},
-        })
-        child.stdin.write(wire.dump({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        version = await probe()
+        extra: dict[str, Any] = {}
+        if version is None:
+            await ask(2, "initialize", {
+                "protocolVersion": PROTOCOL, "capabilities": {},
+                "clientInfo": {"name": "boundary-latch", "version": __version__},
+            })
+            child.stdin.write(wire.dump({"jsonrpc": "2.0",
+                                         "method": "notifications/initialized"}))
+        else:
+            extra = {"_meta": modern_meta(version)}
         tools: list[dict[str, Any]] = []
         cursor = None
         for page in range(MAX_PAGES):
             params = {} if cursor is None else {"cursor": cursor}
-            result = await ask(2 + page, "tools/list", params)
+            result = await ask(3 + page, "tools/list", {**params, **extra})
             if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
                 raise TypeError("tools/list has no tools list")
             tools += [tool for tool in result["tools"] if isinstance(tool, dict)]
