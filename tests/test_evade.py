@@ -236,3 +236,25 @@ def test_evade_parser_defaults():
         None,
     )
     assert args.router == "center" and args.missing_grade == "stop"
+
+
+def test_report_evade_labels_adds_a_confirmed_adaptive_block(tmp_path):
+    labeled = tmp_path / "labeled.jsonl"
+    rows = [
+        {"id": "b1", "round": 2, "verdict": "pass", "label": "bad"},
+        {"id": "b2", "round": 1, "verdict": "pass", "label": "good"},
+    ]
+    labeled.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = tmp_path / "report"
+    assert cli.main(["report", "--out", str(out), "--evade-labels", str(labeled)]) == 0
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["confirmed_adaptive"]["counts"]["missed"] == interval(1, 2)
+    text = (out / "report.md").read_text()
+    assert "## Attacks that adapted to Redline" in text
+    assert "Answers a person confirmed as rule breaks that passed: 1 of 2" in text
+
+
+def test_report_without_evade_labels_has_no_adaptive_block(tmp_path):
+    out = tmp_path / "report"
+    assert cli.main(["report", "--out", str(out)]) == 0
+    assert "confirmed_adaptive" not in json.loads((out / "summary.json").read_text())

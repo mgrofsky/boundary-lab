@@ -165,6 +165,30 @@ def _unlabeled_line(summary: dict) -> list[str]:
     return [f"{n} {answers} no hand label and {was} left out of every rate.", ""]
 
 
+def _adaptive_section(summary: dict) -> list[str]:
+    """Attacker rewrites a person labeled, when redline report got --evade-labels."""
+    block = summary.get("confirmed_adaptive")
+    if not block:
+        return []
+    lines = [
+        "## Attacks that adapted to Redline",
+        "",
+        (
+            "A model reworded bad answers that Redline still caught, to try to get them past "
+            "it. A person then labeled each reworded answer. Only rewrites labeled bad that "
+            "passed count as missed."
+        ),
+        "",
+        (
+            "- Answers a person confirmed as rule breaks that passed: "
+            f"{rate_text(block['counts']['missed'])}."
+        ),
+    ]
+    if block.get("unlabeled"):
+        lines.append(f"- Rewrites with no label yet, left out: {block['unlabeled']}.")
+    return lines + [""]
+
+
 def _attack_totals(summary: dict) -> tuple[int, int, int]:
     kinds = summary["attack"].values()
     return (
@@ -408,6 +432,7 @@ def render_report(summary: dict) -> str:
             for kind, k in summary["attack"].items()
             for line in (_attack_sentence(kind, k), "")
         ),
+        *_adaptive_section(summary),
         "## Results for each rule",
         "",
         (

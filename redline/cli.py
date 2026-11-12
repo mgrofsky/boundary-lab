@@ -252,6 +252,10 @@ def cmd_report(args) -> int:
         args.cache,
         run_meta,
     )
+    if args.evade_labels:
+        from redline import evade
+
+        summary["confirmed_adaptive"] = evade.confirmed(read_jsonl(args.evade_labels))
     out_dir = Path(args.out)
     report.write_summary(summary, out_dir / "summary.json")
     report.write_report(summary, out_dir / "report.md")
@@ -491,6 +495,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache",
         default="data/judge_cache.jsonl",
         help="saved judge grades to identify in the report",
+    )
+    report.add_argument(
+        "--evade-labels",
+        default=None,
+        help="evade candidates with a person's good or bad label; bad ones that passed "
+        "count as missed",
     )
     report.set_defaults(func=cmd_report)
 
