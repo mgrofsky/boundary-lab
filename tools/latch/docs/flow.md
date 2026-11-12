@@ -119,3 +119,5 @@ The approval page shows the reason above the arguments. A call that the rule gat
 - Labels are the policy author's claim. Latch does not look inside a tool to check them.
 - A new run ID clears the labels. Your app must not start a new run just to get past the rule. Keep one run ID for one conversation.
 - The rule sees tool calls, plus what you pass to `mark_run` and `copied`. Text that reaches the model another way is invisible to it.
+- Through the MCP proxy, each proxy process is one run with a new run id. Labels do not carry across a restart, or between two proxied servers, while the model's context does. Run the tools that must see each other's labels behind one proxy.
+- Server instructions and other text outside tool definitions reach the model through the proxy unpinned. The rule cannot label them.

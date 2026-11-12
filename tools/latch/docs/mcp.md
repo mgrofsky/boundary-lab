@@ -188,3 +188,5 @@ This turns on `[flow]` with `all_three = "approve"` and gives every tool all thr
 - The proxy does not detect copied values yet, so `copied_arguments` has no effect here.
 - Use one proxy per database file.
 - Only stdio servers are supported.
+- Each proxy process starts a new run id. Flow labels do not carry across a restart of the proxy, or between two proxied servers, while the model's context does. A model that read untrusted text through one server can act through another with no label set.
+- Only tool definitions are pinned. Server instructions, resource and prompt text, and any other text outside a tool definition pass through unpinned and unchecked.
