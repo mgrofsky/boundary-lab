@@ -16,6 +16,7 @@ class Code(StrEnum):
     ACCESS_HOOK_FAILED = "ACCESS_HOOK_FAILED"
     DESCRIBE_FAILED = "DESCRIBE_FAILED"
     COPIED_ARGUMENTS = "COPIED_ARGUMENTS"
+    FLOW_BLOCKED = "FLOW_BLOCKED"
     RUN_LIMIT = "RUN_LIMIT"
     RUN_EXPIRED = "RUN_EXPIRED"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
@@ -61,6 +62,10 @@ EXPLANATIONS: dict[Code, str] = {
     Code.COPIED_ARGUMENTS: (
         "One or more argument values were copied from text the model read, "
         "and this tool's policy blocks that."
+    ),
+    Code.FLOW_BLOCKED: (
+        "This run has read untrusted input and private data and can act outside. "
+        "The policy blocks the call that would complete that chain."
     ),
     Code.RUN_LIMIT: "This run has reached its tool request limit.",
     Code.RUN_EXPIRED: "This run has reached its time limit. Start a new run.",
