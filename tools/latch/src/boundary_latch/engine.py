@@ -117,12 +117,24 @@ class Latch:
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._tools:
             raise ConfigError(f"tool {spec.name} is already registered")
+        self._set_tool(spec)
+
+    def _set_tool(self, spec: ToolSpec) -> None:
+        """Add a tool or replace one with the same name.
+
+        The MCP proxy uses this when a person accepts a changed tool definition.
+        An operation prepared for the old version then returns OPERATION_CONFLICT.
+        """
         if spec.name not in self.policy.tools:
             raise ConfigError(f"tool {spec.name} has no policy entry")
         cfg = spec.args_model.model_config
         if cfg.get("extra") != "forbid":
             raise ConfigError(f"args model for {spec.name} must set extra='forbid'")
         self._tools[spec.name] = spec
+
+    def _drop_tool(self, name: str) -> None:
+        """Forget a tool, so a call to it returns UNKNOWN_TOOL."""
+        self._tools.pop(name, None)
 
     def tool_specs(self) -> list[ToolSpec]:
         return list(self._tools.values())
