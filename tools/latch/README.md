@@ -47,7 +47,7 @@ To work on Latch itself, from this folder:
 
     boundary-latch demo
 
-Nine scenarios run one at a time. Each step shows who asked for what, the reason code, and what changed in the sample support system for Northwind, a made-up company. Sam and Priya are support agents, and Jordan is a supervisor. These are example users.
+Ten scenarios run one at a time. Each step shows who asked for what, the reason code, and what changed in the sample support system for Northwind, a made-up company. Sam and Priya are support agents, and Jordan is a supervisor. These are example users.
 
 For the same scenarios in a browser:
 

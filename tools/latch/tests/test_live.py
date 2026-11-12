@@ -228,10 +228,10 @@ def test_from_env_reads_the_three_variables(monkeypatch):
     assert (cfg.model, cfg.api_key, cfg.max_requests) == ("small", "k", 10)
 
 
-def test_tool_schemas_are_the_three_tools(session):
+def test_tool_schemas_are_the_four_tools(session):
     schemas = live.tool_schemas(session.latch)
     names = [s["function"]["name"] for s in schemas]
-    assert names == ["lookup_account", "send_message", "issue_refund"]
+    assert names == ["lookup_note", "lookup_account", "send_message", "issue_refund"]
     assert not any("approve" in name for name in names)
     for schema in schemas:
         assert schema["type"] == "function"

@@ -71,7 +71,7 @@ def test_profiles_list_sample_identities_and_tools(session):
     assert names == ["sam", "priya", "jordan"]
     assert all("example user" in p["label"] for p in data["profiles"])
     tools = {t["name"]: t for t in data["tools"]}
-    assert set(tools) == {"lookup_account", "send_message", "issue_refund"}
+    assert set(tools) == {"lookup_note", "lookup_account", "send_message", "issue_refund"}
     assert "amount_minor" in tools[REFUND]["parameters"]["properties"]
 
 

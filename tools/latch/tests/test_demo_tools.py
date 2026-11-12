@@ -35,6 +35,7 @@ def test_profiles_are_labeled_sample_identities():
 
 def test_registered_tools(latch):
     assert [spec.name for spec in latch.tool_specs()] == [
+        "lookup_note",
         "lookup_account",
         "send_message",
         "issue_refund",
@@ -126,3 +127,17 @@ def test_backend_access_rules(nw):
     assert nw.can_see("jordan", "A2")
     assert not nw.can_see("mallory", "A1")
     assert not nw.can_see("sam", "A9")
+
+
+def test_a_note_is_text_the_customer_wrote_and_marks_the_run_untrusted(latch):
+    prepared = latch.prepare(sam(), "lookup_note", {"account_id": "A1"}, "n1")
+    result = latch.execute(prepared, sam())
+    assert result.code == Code.EXECUTED
+    assert result.value["written_by"] == "customer"
+    assert "untrusted" in latch.store.run_labels("northwind", "run1")
+
+
+def test_a_note_on_another_customers_account_is_refused(latch):
+    assert latch.prepare(sam(), "lookup_note", {"account_id": "A2"}, "n1").code == (
+        Code.ACCESS_DENIED
+    )

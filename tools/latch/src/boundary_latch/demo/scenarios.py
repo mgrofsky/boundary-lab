@@ -1,4 +1,4 @@
-"""Nine built-in Northwind scenarios with expected results. They need no model."""
+"""Ten built-in Northwind scenarios with expected results. They need no model."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ class Step:
     explanation: str
     state_change: str = "nothing"
     summary: str = ""
+    flow_reason: str = ""
 
 
 @dataclass
@@ -73,17 +74,21 @@ class Run:
         return f"{self.name}-{self.count}-{self.tag}"
 
     def record(
-        self, profile: str, action: str, code: str, change: str = "nothing", summary: str = ""
+        self, profile: str, action: str, code: str, change: str = "nothing", summary: str = "",
+        flow_reason: str = "",
     ) -> None:
         label = PROFILES[profile]["label"]
-        self.steps.append(Step(label, action, code, explain(Code(code)), change, summary))
+        self.steps.append(
+            Step(label, action, code, explain(Code(code)), change, summary, flow_reason)
+        )
 
     def prepare(
         self, profile: str, tool: str, args: dict[str, Any], action: str, op: str | None = None
     ) -> str:
         result = self.session.propose(profile, tool, args, op or self.next_id())
         self.tools.setdefault(result["operation_id"], tool)
-        self.record(profile, action, result["code"], summary=result.get("summary", ""))
+        self.record(profile, action, result["code"], summary=result.get("summary", ""),
+                    flow_reason=flow_reason(result))
         return result["operation_id"]
 
     def approve(self, profile: str, op: str) -> dict[str, Any]:
@@ -97,7 +102,8 @@ class Run:
         # A repeated call shows ALREADY_RECORDED unless its outcome is still UNCERTAIN.
         if result.get("replayed") and code != Code.UNCERTAIN:
             code = Code.ALREADY_RECORDED
-        self.record(profile, f"run {self.tools[op]} {op}", str(code), change())
+        self.record(profile, f"run {self.tools[op]} {op}", str(code), change(),
+                    flow_reason=flow_reason(result))
         return result
 
     def finish(self, scenario: Scenario) -> Scenario:
@@ -120,6 +126,16 @@ class Run:
 
 def nothing() -> str:
     return "nothing"
+
+
+def flow_reason(result: dict[str, Any]) -> str:
+    """The flow reason of a result. A refusal carries it after the code's explanation."""
+    if result.get("flow_reason"):
+        return result["flow_reason"]
+    code = result.get("code")
+    if code not in (Code.FLOW_BLOCKED, Code.NEEDS_APPROVAL):
+        return ""
+    return str(result.get("explanation", "")).removeprefix(explain(Code(code))).strip()
 
 
 def allowed_lookup(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
@@ -233,6 +249,22 @@ def expired_approval(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
     return run.finish(scenario)
 
 
+def flow_chain(clock: FakeClock, db_path: str = ":memory:") -> Scenario:
+    scenario = Scenario(
+        "flow_chain",
+        "The model reads a customer's note, then the account, then tries to send a message",
+        ["ALLOWED", "EXECUTED", "ALLOWED", "EXECUTED", "FLOW_BLOCKED"],
+    )
+    run = Run(scenario.name, clock, db_path)
+    op = run.prepare("sam", "lookup_note", {"account_id": "A1"}, "read the customer note on A1")
+    run.execute("sam", op, lambda: "no changes: the note is text the customer wrote")
+    op = run.prepare("sam", "lookup_account", {"account_id": "A1"}, "look up account A1")
+    run.execute("sam", op, lambda: f"no changes: A1 balance {money(run.balance('A1'))}")
+    args = {"to": "help@northwind.example", "body": "Balance and refund history for A1."}
+    run.prepare("sam", "send_message", args, "send the account details as the note asks")
+    return run.finish(scenario)
+
+
 SCENARIOS = [
     allowed_lookup,
     other_customer,
@@ -243,6 +275,7 @@ SCENARIOS = [
     exhausted_limit,
     timeout_after_refund,
     expired_approval,
+    flow_chain,
 ]
 
 
@@ -266,6 +299,8 @@ def render_scenario(number: int, scenario: Scenario) -> str:
         if step.summary:
             lines.append(f"summary: {step.summary}")
         lines.append(f"result {step.code}: {step.explanation}")
+        if step.flow_reason:
+            lines.append(f"flow: {step.flow_reason}")
         lines.append(f"change: {step.state_change}")
         lines.append("")
     verdict = "matched" if scenario.passed else f"expected {' '.join(scenario.expected)}"

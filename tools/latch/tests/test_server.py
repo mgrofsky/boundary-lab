@@ -147,7 +147,7 @@ def test_profiles_and_audit(client):
     profiles = client.get("/api/profiles").json()
     assert [p["name"] for p in profiles["profiles"]] == ["sam", "priya", "jordan"]
     assert [t["name"] for t in profiles["tools"]] == [
-        "lookup_account", "send_message", "issue_refund"]
+        "lookup_note", "lookup_account", "send_message", "issue_refund"]
     refund(client)
     rows = client.get("/api/audit").json()["rows"]
     assert rows
@@ -177,7 +177,7 @@ def test_unknown_scenario_is_not_found(client):
 
 def test_scenario_list(client):
     names = [s["name"] for s in client.get("/api/scenarios").json()["scenarios"]]
-    assert len(names) == 9
+    assert len(names) == 10
     assert "duplicate_refund" in names
 
 
