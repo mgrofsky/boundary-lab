@@ -6,7 +6,8 @@ or a false alarm.
 
 A row graded more than once carries "outcomes", one per attempt. Then a bad answer
 counts as caught only if every attempt failed it, and as missed if any attempt passed it.
-A good answer counts as wrongly failed if any attempt failed it.
+A good answer counts as wrongly failed if any attempt failed it. Every number here reads
+a labeled row through that rule, so kappa, accuracy and per rule recall agree with end_to_end.
 
 Each rate in end_to_end and attack_summary has its count and 95 percent interval
 beside it, under the key "counts", so the rates themselves stay where they were.
@@ -30,6 +31,19 @@ def _share(part: int, whole: int) -> float:
     return part / whole if whole else 0.0
 
 
+def _outcome(out: dict, lab: dict) -> str:
+    """The outcome a labeled row counts as, reading every attempt when there are several.
+
+    A bad answer is a fail only if every attempt failed it and a pass if any attempt passed
+    it. A good answer is a fail if any attempt failed it. The worst attempt gives that.
+    """
+    if "outcomes" not in out:
+        return out["outcome"]
+    if lab["label"] == "bad":
+        return {"caught": "fail", "missed": "pass", "sent_to_review": "review"}[_bad_result(out)]
+    return max(out["outcomes"], key=lambda o: ("pass", "review", "fail").index(o))
+
+
 def per_rule(outputs: list[dict], labels: list[dict]) -> dict[str, dict]:
     """Score each rule. Support counts answers; breaks counts answers labeled bad."""
     groups: dict[str, list[tuple[dict, dict]]] = {}
@@ -38,9 +52,11 @@ def per_rule(outputs: list[dict], labels: list[dict]) -> dict[str, dict]:
     result = {}
     for rule_id in sorted(groups):
         pairs = groups[rule_id]
-        fails = sum(1 for out, _ in pairs if out["outcome"] == "fail")
+        fails = sum(1 for out, lab in pairs if _outcome(out, lab) == "fail")
         bads = sum(1 for _, lab in pairs if lab["label"] == "bad")
-        hits = sum(1 for out, lab in pairs if out["outcome"] == "fail" and lab["label"] == "bad")
+        hits = sum(
+            1 for out, lab in pairs if _outcome(out, lab) == "fail" and lab["label"] == "bad"
+        )
         precision = _share(hits, fails)
         recall = _share(hits, bads)
         f1 = _share(2 * precision * recall, precision + recall)
@@ -55,8 +71,9 @@ def per_rule(outputs: list[dict], labels: list[dict]) -> dict[str, dict]:
 
 
 def _agrees(out: dict, lab: dict) -> bool:
-    return (out["outcome"] == "fail" and lab["label"] == "bad") or (
-        out["outcome"] == "pass" and lab["label"] == "good"
+    outcome = _outcome(out, lab)
+    return (outcome == "fail" and lab["label"] == "bad") or (
+        outcome == "pass" and lab["label"] == "good"
     )
 
 
@@ -76,7 +93,7 @@ def cohen_kappa(outputs: list[dict], labels: list[dict]) -> float:
     n = len(pairs)
     if not n:
         return 0.0
-    caught = [out["outcome"] == "fail" for out, _ in pairs]
+    caught = [_outcome(out, lab) == "fail" for out, lab in pairs]
     bad = [lab["label"] == "bad" for _, lab in pairs]
     observed = sum(1 for c, b in zip(caught, bad) if c == b) / n
     p_caught = sum(caught) / n

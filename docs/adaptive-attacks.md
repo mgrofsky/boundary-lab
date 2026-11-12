@@ -41,7 +41,7 @@ A model at temperature 0 can still give different answers to the same request. O
 
 Each output row keeps its usual fields, filled from the worst attempt: fail, then review, then pass. It also gets `attempts` and `outcomes`, the list of outcomes in order.
 
-When rows carry `outcomes`, the report counts them strictly. A bad answer is caught only if every attempt failed it. It is missed if any attempt passed it. Otherwise it is sent to review. A good answer is wrongly failed if any attempt failed it. The summary adds `flip_rate`, the share of judged answers whose attempts did not all agree, with its count and interval.
+When rows carry `outcomes`, the report counts them strictly. A bad answer is caught only if every attempt failed it. It is missed if any attempt passed it. Otherwise it is sent to review. A good answer is wrongly failed if any attempt failed it. Accuracy, kappa and per rule recall use the same rule, so every number tells the same story. The summary adds `flip_rate`, the share of judged answers whose attempts did not all agree, with its count and interval.
 
 `redline attack --attempts 3 --temperature 0.7` sends each prompt three times. Rows gain `attempt`, counted from 1. Attempt 1 keeps the prompt's id and later ones end in `#2`, `#3`. Those later answers have no hand label yet. The report leaves any attack answer without a good or bad label out of every rate and prints how many it left out.
 
