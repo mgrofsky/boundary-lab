@@ -12,6 +12,9 @@ This release makes the numbers say how far they can be trusted. The answer sets 
 - `redline run --attempts N` judges each answer N times with a live judge. Later attempts skip the cache. Rows gain `attempts` and `outcomes`, and the report counts a bad answer as caught only if every attempt failed it. The summary gains `flip_rate`.
 - `redline attack --attempts N --temperature T` sends each prompt N times. Later answers get ids ending `#2`, `#3`.
 - `redline evade` grades each bad answer after a set of fixed rewrites in `redline/mutate.py`, and with `--attacker` asks a chat model to reword the answers still caught. `--max-judge-calls` stops a run cleanly.
+- `evade_summary.json` gains `router_only`, the records the router passed with no judge call, as written and after a rewrite. `results/evade_replay_summary.json` saves that floor from a replay run.
+- A live `redline evade` saves grades under `--out` by default and refuses `--cache data/judge_cache.jsonl`. `redline run --attempts` reads that file but never writes it.
+- Each kind under `attack` gains `sent_to_review`, so its buckets match `attack_end_to_end`.
 - `redline report --evade-labels` counts labeled attacker rewrites that passed as missed, in a `confirmed_adaptive` block.
 - `Grader` takes `attempts`. `ChatEndpointJudge.without_cache` returns a judge on the same endpoint that saves nothing.
 - The guide [adaptive attacks](../docs/adaptive-attacks.md).

@@ -47,11 +47,17 @@ def test_a_good_answer_failed_once_counts_as_failed_everywhere():
     assert metrics.accuracy(outs, labs) == 0.5
 
 
-def test_gate_min_kappa_fails_when_attempts_disagree():
+def test_gate_min_kappa_fails_when_attempts_disagree(tmp_path, capsys):
+    from redline import cli
+
     summary = report.build_summary(DISAGREE_OUT, DISAGREE_LAB, [], [], [], "m", {})
     assert thresholds.check(summary, min_kappa=0.5) == [
         "kappa on holdout is 0.000, below the minimum of 0.500"
     ]
+    path = tmp_path / "summary.json"
+    report.write_summary(summary, path)
+    assert cli.main(["gate", "--summary", str(path), "--min-kappa", "0.5"]) == 1
+    assert "kappa on holdout is 0.000" in capsys.readouterr().out
 
 
 def test_confirmed_adaptive_leaves_out_only_records_whose_pass_is_unlabeled():
@@ -305,3 +311,12 @@ def test_gate_use_interval_with_counts_missing_ci95_exits_2(tmp_path, capsys):
     args = ["gate", "--summary", str(path), "--min-recall", "0.5", "--use-interval"]
     assert cli.main(args) == 2
     assert "ci95" in capsys.readouterr().err
+
+
+def test_the_repo_cache_counts_as_pinned_from_any_folder(tmp_path, monkeypatch):
+    from redline import cli
+
+    monkeypatch.chdir(tmp_path)
+    assert cli.is_pinned_cache(PINNED)
+    assert not cli.is_pinned_cache(tmp_path / "judge_cache.jsonl")
+    assert not cli.is_pinned_cache(None)
