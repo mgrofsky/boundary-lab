@@ -196,9 +196,14 @@ class Proxy(ToolCatalog):
         self.to_child({**message, "id": child_id})
 
     def keep_protocol(self, params: Any) -> None:
-        """Keep the protocol fields of a client request the proxy accepted."""
+        """Keep the protocol fields of a client request the proxy accepted.
+
+        One odd request must not change every later request the proxy makes, so a
+        set of fields is kept only when it looks right, and it replaces the old set
+        as a whole.
+        """
         fields = wire.protocol_fields(params)
-        if fields:
+        if fields and wire.sound_protocol(fields):
             self._protocol = fields
 
     def _refused_task(self, message: dict[str, Any], kind: str) -> bool:

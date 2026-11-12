@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 PARSE_ERROR = -32700
@@ -143,6 +144,21 @@ def protocol_fields(params: Any) -> dict[str, Any]:
     if not isinstance(meta, dict):
         return {}
     return {key: meta[key] for key in PROTOCOL_KEYS if key in meta}
+
+
+VERSION_TEXT = re.compile(r"[A-Za-z0-9.-]{1,32}")
+
+
+def sound_protocol(fields: dict[str, Any]) -> bool:
+    """True when the protocol fields are fit to put on the proxy's own requests.
+
+    The version is a string of at most 32 letters, digits, dots and hyphens. The
+    client's name and capabilities, when present, are objects.
+    """
+    version = fields.get(PROTOCOL_KEYS[0])
+    if not isinstance(version, str) or VERSION_TEXT.fullmatch(version) is None:
+        return False
+    return all(isinstance(fields[key], dict) for key in PROTOCOL_KEYS[1:] if key in fields)
 
 
 # How much text from the client or the server one log line or printed line may hold.

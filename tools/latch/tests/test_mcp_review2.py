@@ -64,3 +64,55 @@ def test_a_refused_tasks_request_does_not_set_the_protocol_fields(modern):
     [listed, *_] = [m for m in modern.server_log() if m.get("method") == "tools/list"]
     assert listed["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
     assert json.dumps(listed).count("9999") == 0
+
+
+# The protocol fields the proxy keeps
+
+VERSION = "io.modelcontextprotocol/protocolVersion"
+INFO = "io.modelcontextprotocol/clientInfo"
+CAPS = "io.modelcontextprotocol/clientCapabilities"
+GOOD = {VERSION: "2026-07-28", INFO: {"name": "c"}, CAPS: {}}
+
+
+def unit_proxy():
+    from boundary_latch.mcp.pins import Pins
+
+    from .test_mcp_units import make_proxy
+
+    return make_proxy(Pins())
+
+
+@pytest.mark.parametrize("meta", [
+    {VERSION: "x" * 33, CAPS: {}},
+    {VERSION: "2026 07 28", CAPS: {}},
+    {VERSION: "2026-07-28\x1b[0m", CAPS: {}},
+    {VERSION: "2026_07_28", CAPS: {}},
+    {VERSION: "", CAPS: {}},
+    {VERSION: 20260728, CAPS: {}},
+    {CAPS: {}, INFO: {}},
+    {VERSION: "2026-07-28", INFO: "c"},
+    {VERSION: "2026-07-28", CAPS: []},
+])
+def test_odd_protocol_fields_are_not_kept(meta):
+    proxy = unit_proxy()
+    proxy.keep_protocol({"_meta": GOOD})
+    proxy.keep_protocol({"_meta": meta})
+    assert proxy._protocol == GOOD
+
+
+def test_the_kept_fields_are_replaced_as_a_whole():
+    proxy = unit_proxy()
+    proxy.keep_protocol({"_meta": GOOD})
+    proxy.keep_protocol({"_meta": {VERSION: "v2.1", "other": 1}})
+    assert proxy._protocol == {VERSION: "v2.1"}
+    assert proxy.with_protocol({"a": 1}) == {"a": 1, "_meta": {VERSION: "v2.1"}}
+
+
+def test_a_call_refused_for_its_params_does_not_set_the_protocol_fields(modern):
+    odd = {VERSION: "1999-01-01", CAPS: {}}
+    reply = modern.request("tools/call", {"name": "echo", "arguments": {"text": "x"},
+                                          "other": 1, "_meta": odd})
+    assert reply["error"]["code"] == -32602
+    modern.request("tools/list", {"_meta": {}})
+    listed = [m for m in modern.server_log() if m.get("method") == "tools/list"]
+    assert listed and all(m["params"]["_meta"][VERSION] == "2026-07-28" for m in listed)
