@@ -57,10 +57,40 @@ def _in_chunks(records, fn, label):
     return out
 
 
-def cmd_run(args) -> int:
-    from redline import api, pipeline
+def _grader(args, attempts: int = 1):
+    """Build the Grader that run and evade use, from their shared options."""
+    from redline import api
     from redline.judge import ChatEndpointJudge
     from redline.router import ShortCircuit
+
+    judge = None
+    if args.judge == "live":
+        load_env_file()
+        base_url, model, api_key = _env("REDLINE_JUDGE")
+        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache)
+
+    short_circuit = False
+    if args.short_circuit:
+        short_circuit = ShortCircuit(args.purity, args.min_members, args.margin)
+    return api.Grader(
+        rules=args.rules,
+        train=args.train,
+        judge=judge,
+        router=args.router,
+        k=args.k,
+        short_circuit=short_circuit,
+        seed=args.seed,
+        cache=args.cache,
+        embedder=args.embedder,
+        top_k=args.top_k,
+        floor=args.floor,
+        missing_grade=args.missing_grade,
+        attempts=attempts,
+    )
+
+
+def cmd_run(args) -> int:
+    from redline import pipeline
 
     if args.attempts < 1:
         print("redline: --attempts must be at least 1", file=sys.stderr)
@@ -76,30 +106,7 @@ def cmd_run(args) -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    judge = None
-    if args.judge == "live":
-        load_env_file()
-        base_url, model, api_key = _env("REDLINE_JUDGE")
-        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache)
-
-    short_circuit = False
-    if args.short_circuit:
-        short_circuit = ShortCircuit(args.purity, args.min_members, args.margin)
-    grader = api.Grader(
-        rules=args.rules,
-        train=args.train,
-        judge=judge,
-        router=args.router,
-        k=args.k,
-        short_circuit=short_circuit,
-        seed=args.seed,
-        cache=args.cache,
-        embedder=args.embedder,
-        top_k=args.top_k,
-        floor=args.floor,
-        missing_grade=args.missing_grade,
-        attempts=args.attempts,
-    )
+    grader = _grader(args, args.attempts)
     router = grader.router
     for record in records:
         try:
@@ -162,6 +169,55 @@ def cmd_attack(args) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl(out_path, responses)
     print(f"wrote {out_path}", file=sys.stderr)
+    return 0
+
+
+def cmd_evade(args) -> int:
+    from redline import evade
+
+    if args.rounds < 1:
+        print("redline: --rounds must be at least 1", file=sys.stderr)
+        return 2
+    attacker = None
+    if args.attacker:
+        load_env_file()
+        base_url, model, api_key = _env("REDLINE_ATTACKER")
+        attacker = evade.Attacker(base_url, model, api_key)
+    records = read_jsonl(args.data)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    grader = _grader(args)
+    for record in records:
+        try:
+            grader.check_user_type(record["user_type"], record.get("id"))
+        except ValueError as exc:
+            raise SystemExit(f"redline: {exc}") from None
+
+    rows, summary, candidates = evade.run(
+        records,
+        grader,
+        max_judge_calls=args.max_judge_calls,
+        attacker=attacker,
+        rounds=args.rounds,
+    )
+    summary = {
+        "data": Path(args.data).as_posix(),
+        "judge": args.judge,
+        "router": grader.router.name,
+        "embedder": grader.embedder_name,
+        "top_k": args.top_k,
+        "missing_grade": args.missing_grade,
+        **summary,
+    }
+    written = [out_dir / "evade_outputs.jsonl", out_dir / "evade_summary.json"]
+    write_jsonl(written[0], rows)
+    written[1].write_text(json.dumps(summary, indent=2) + "\n")
+    if attacker is not None:
+        written.append(out_dir / "evade_candidates.jsonl")
+        write_jsonl(written[2], candidates)
+    if summary["stopped"]:
+        print(f"redline: {summary['stopped']}", file=sys.stderr)
+    print(f"wrote {', '.join(str(p) for p in written)}", file=sys.stderr)
     return 0
 
 
@@ -253,6 +309,74 @@ def cmd_gate(args) -> int:
     return 1 if lines else 0
 
 
+def _grading_options(parser) -> None:
+    """Options for the rules, router and judge, shared by run and evade."""
+    parser.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
+    parser.add_argument(
+        "--cache", default="data/judge_cache.jsonl", help="file of saved judge grades"
+    )
+    parser.add_argument(
+        "--rules", default="policy/rules.yaml", help="YAML file containing your rules"
+    )
+    parser.add_argument(
+        "--router",
+        choices=["center", "kmeans"],
+        default="center",
+        help="match one center per rule or group similar examples with k-means",
+    )
+    parser.add_argument(
+        "--k", type=int, default=12, help="number of groups for k-means (default: 12)"
+    )
+    parser.add_argument(
+        "--short-circuit", action="store_true", help="let the router pass or fail some answers"
+    )
+    parser.add_argument(
+        "--purity",
+        type=float,
+        default=1.0,
+        help="k-means shortcut: share of labels that must agree (default: 1.0, or all)",
+    )
+    parser.add_argument(
+        "--min-members",
+        type=int,
+        default=5,
+        help="fewest examples needed in a shortcut group (default: 5)",
+    )
+    parser.add_argument(
+        "--margin",
+        type=float,
+        default=0.10,
+        help="center shortcut: required gap between good and bad match scores (default: 0.10)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="random seed for repeatable k-means runs"
+    )
+    parser.add_argument(
+        "--embedder",
+        choices=["minilm", "tfidf"],
+        default="minilm",
+        help="minilm, the default model, or tfidf, which needs no download but routes worse",
+    )
+    parser.add_argument(
+        "--missing-grade",
+        choices=["stop", "review"],
+        default="stop",
+        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
+    )
+    parser.add_argument(
+        "--floor",
+        type=float,
+        default=None,
+        help="with --top-k, skip extra rules whose match score is below this (default: none)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="redline",
@@ -273,62 +397,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--out", default="results/", help="folder for the output files (default: results/)"
     )
-    run.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
-    run.add_argument("--cache", default="data/judge_cache.jsonl", help="file of saved judge grades")
-    run.add_argument("--rules", default="policy/rules.yaml", help="YAML file containing your rules")
-    run.add_argument(
-        "--router",
-        choices=["center", "kmeans"],
-        default="center",
-        help="match one center per rule or group similar examples with k-means",
-    )
-    run.add_argument("--k", type=int, default=12, help="number of groups for k-means (default: 12)")
-    run.add_argument(
-        "--short-circuit", action="store_true", help="let the router pass or fail some answers"
-    )
-    run.add_argument(
-        "--purity",
-        type=float,
-        default=1.0,
-        help="k-means shortcut: share of labels that must agree (default: 1.0, or all)",
-    )
-    run.add_argument(
-        "--min-members",
-        type=int,
-        default=5,
-        help="fewest examples needed in a shortcut group (default: 5)",
-    )
-    run.add_argument(
-        "--margin",
-        type=float,
-        default=0.10,
-        help="center shortcut: required gap between good and bad match scores (default: 0.10)",
-    )
-    run.add_argument("--seed", type=int, default=0, help="random seed for repeatable k-means runs")
-    run.add_argument(
-        "--embedder",
-        choices=["minilm", "tfidf"],
-        default="minilm",
-        help="minilm, the default model, or tfidf, which needs no download but routes worse",
-    )
-    run.add_argument(
-        "--missing-grade",
-        choices=["stop", "review"],
-        default="stop",
-        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
-    )
-    run.add_argument(
-        "--top-k",
-        type=int,
-        default=1,
-        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
-    )
-    run.add_argument(
-        "--floor",
-        type=float,
-        default=None,
-        help="with --top-k, skip extra rules whose match score is below this (default: none)",
-    )
+    _grading_options(run)
     run.add_argument(
         "--attempts",
         type=int,
@@ -357,6 +426,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="sampling temperature for the chatbot; above 0 lets repeats differ (default: 0)",
     )
     attack.set_defaults(func=cmd_attack)
+
+    evade = sub.add_parser(
+        "evade",
+        help="rewrite bad answers to see which slip past the checks",
+        description=(
+            "Grade each answer labeled bad as written and after each fixed rewrite. With "
+            "--attacker, a chat model then rewords the answers still caught. In replay mode "
+            "the rewritten answers have no saved grades, so pass --missing-grade review."
+        ),
+    )
+    evade.add_argument("--data", required=True, help="labeled answers; only bad ones are used")
+    evade.add_argument("--out", required=True, help="folder for the evade output files")
+    evade.add_argument(
+        "--judge",
+        choices=["live", "replay"],
+        default="replay",
+        help="call a judge model (live) or read saved grades (replay, needs "
+        "--missing-grade review) (default: replay)",
+    )
+    evade.add_argument(
+        "--rounds",
+        type=int,
+        default=5,
+        help="with --attacker, most rewording rounds per answer (default: 5)",
+    )
+    evade.add_argument(
+        "--attacker",
+        action="store_true",
+        help="also ask a chat model, set by REDLINE_ATTACKER_*, to reword the answers",
+    )
+    evade.add_argument(
+        "--max-judge-calls",
+        type=int,
+        default=None,
+        help="stop cleanly after this many judge calls and write what is done (default: none)",
+    )
+    _grading_options(evade)
+    evade.set_defaults(func=cmd_evade)
 
     report = sub.add_parser("report", help="write the summary and the report")
     report.add_argument(
