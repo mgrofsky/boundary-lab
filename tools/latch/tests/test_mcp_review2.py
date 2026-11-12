@@ -427,3 +427,52 @@ def test_a_bool_response_id_never_answers_a_proxy_request():
         return future.done()
 
     assert asyncio.run(main()) is False
+
+
+# The tool list after a change that arrives during a fetch
+
+ECHO = {"name": "echo", "inputSchema": {"type": "object", "properties": {}}}
+
+
+def counting_proxy(change_on=()):
+    """A unit proxy whose tools/list answers at once. A list_changed comes in on the pages named."""
+    proxy = unit_proxy()
+    asked = []
+
+    async def request(method, params):
+        asked.append(method)
+        if len(asked) in change_on:
+            proxy.on_child_line(b'{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}')
+        return {"jsonrpc": "2.0", "id": 1, "result": {"tools": [ECHO]}}
+
+    proxy.request = request
+    return proxy, asked
+
+
+def test_a_change_during_the_fetch_keeps_the_list_stale():
+    import asyncio
+
+    proxy, asked = counting_proxy(change_on=(1,))
+
+    async def main():
+        await proxy.ensure_tools()
+        assert proxy._tools_known is False
+        await proxy.ensure_tools()
+        assert proxy._tools_known is True
+        await proxy.ensure_tools()
+
+    asyncio.run(main())
+    assert asked == ["tools/list", "tools/list"]
+
+
+def test_with_no_change_the_list_is_fetched_once():
+    import asyncio
+
+    proxy, asked = counting_proxy()
+
+    async def main():
+        await proxy.ensure_tools()
+        await proxy.ensure_tools()
+
+    asyncio.run(main())
+    assert asked == ["tools/list"]

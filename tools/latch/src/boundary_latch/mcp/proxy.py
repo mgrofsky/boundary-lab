@@ -111,6 +111,9 @@ class Proxy(ToolCatalog):
         self._to_child: dict[int, tuple[str, Any]] = {}
         self._calls: dict[tuple[str, Any], Call] = {}
         self._tools_known = False
+        # How many notifications/tools/list_changed came in. A fetch compares it at its
+        # start and end, so a change during the fetch keeps the list stale.
+        self._list_changes = 0
         self._tools_lock = asyncio.Lock()
         self._order: list[str] = []
         self.served: dict[str, dict[str, Any]] = {}
@@ -325,6 +328,7 @@ class Proxy(ToolCatalog):
         method = message.get("method")
         if method == "notifications/tools/list_changed":
             self._tools_known = False
+            self._list_changes += 1
         if kind == "notification":
             if self._ended_subscription(message):
                 logger.info("dropped a server notification for a subscription that ended")

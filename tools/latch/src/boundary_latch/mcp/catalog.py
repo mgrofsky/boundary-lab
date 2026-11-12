@@ -34,6 +34,7 @@ class ToolCatalog:
         async with self._tools_lock:
             if self._tools_known and not fresh:
                 return
+            changes = self._list_changes
             tools: list[dict[str, Any]] = []
             cursor = None
             for _ in range(MAX_PAGES):
@@ -48,7 +49,9 @@ class ToolCatalog:
             self.learn(tools)
             self._list_fields = {key: value for key, value in page.items()
                                  if key not in ("tools", "nextCursor")}
-            self._tools_known = True
+            # A list_changed that came in during the fetch may name tools this list
+            # does not have yet, so the next use fetches again.
+            self._tools_known = self._list_changes == changes
 
     @staticmethod
     def _page(reply: dict[str, Any]) -> dict[str, Any]:
