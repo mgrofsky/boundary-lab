@@ -85,6 +85,15 @@ An approver finds waiting requests with `latch.pending(org_id)`. Each one carrie
 
 Every decision is saved in an audit table. Read it with `boundary-latch audit app.sqlite`, or pass `on_event` to `Latch` to get each row as it is written.
 
+## Put it in front of an MCP server
+
+`boundary-latch mcp` checks every tool call between an MCP client, such as Claude Code or Cursor, and one MCP server. The client starts the proxy instead of the server.
+
+    boundary-latch mcp --print-policy -- <server command> > policy.toml
+    boundary-latch mcp --policy policy.toml -- <server command>
+
+Calls the policy blocks never reach the server. Calls that need approval wait on a page in your browser on 127.0.0.1. The proxy also refuses a tool whose definition changed until you accept it. See [docs/mcp.md](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/mcp.md).
+
 ## What Latch does not do
 
 - It doesn't log anyone in. Your app checks who the user is.
@@ -114,6 +123,8 @@ Every decision is saved in an audit table. Read it with `boundary-latch audit ap
 - [Limits](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/limits.md): call limits, time limits, and what to do when the outcome is unclear.
 
 - [Audit](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/audit.md): the audit fields, the `audit` command, and `on_event`.
+
+- [MCP proxy](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/mcp.md): check every tool call an MCP client makes, with an approval page and pinned tool definitions.
 
 - [Changelog](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/CHANGELOG.md): what changed in each release.
 

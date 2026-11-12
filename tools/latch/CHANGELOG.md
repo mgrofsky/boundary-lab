@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- `boundary-latch mcp` is a stdio proxy between an MCP client and one MCP server. Every `tools/call` goes through Latch `prepare` and `execute`. See docs/mcp.md.
+- The proxy hides tools the policy does not name, and a call to one returns `UNKNOWN_TOOL`.
+- The proxy parses every client message and writes it again, so the server sees exactly what Latch checked. Invalid JSON, batches, and a `tools/call` with a repeated key get a JSON-RPC error and are not forwarded.
+- A blocked call is a result with `isError` true and the text `Blocked by Latch: CODE. explanation`, so the model can read why.
+- An approval page on 127.0.0.1 lists waiting calls and changed tools. It needs a random key, refuses other `Host` headers, takes decisions by POST only, and escapes everything it shows.
+- Pinned tool definitions. A tool whose name, description, or `inputSchema` changes after it was first seen returns the new code `TOOL_CHANGED` until a person accepts it. `--pin FILE` keeps the pins between runs.
+- `boundary-latch mcp --print-policy` prints a starter policy for a server's tools, with approval on for every tool.
+- Audit rows with event `tool_changed` and `tool_accepted`.
+
+### Changed
+
+- `ToolSpec.name` now accepts the names MCP servers use: a letter, then up to 63 letters, digits, underscores, dots, or hyphens. Upper case letters, dots, and hyphens are new. These names are stored with SQL parameters and shown as text, so they stay safe in the audit, the `audit` command, and the demo page.
+
+### Fixed
+
+- An `over_amount` policy could skip approval when the amount was a bool or NaN, since `True > 5000` and `NaN > 5000` are both false. `prepare` now refuses an amount that is not a finite number with `INVALID_ARGUMENTS`. That covers a bool, a string, a missing value, NaN, and infinity.
+- A missing `amount_field` or `recipient_field` on the arguments model raised `AttributeError` from `prepare`. It now fails closed: `INVALID_ARGUMENTS` for the amount, `RECIPIENT_NOT_ALLOWED` for the recipient.
+- `recipient_field` now needs a string value. A list or other value is refused with `RECIPIENT_NOT_ALLOWED`.
+- A policy field can name a field's alias as well as its name.
+
 ## 0.3.0
 
 ### Breaking changes

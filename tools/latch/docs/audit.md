@@ -35,7 +35,7 @@ The dict from `on_event` and each line of `--json` hold the same fields.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | schema | integer | The field layout version. It is 1. |
-| event | string | `prepare`, `approve`, `deny`, `cancel`, or `execute` |
+| event | string | `prepare`, `approve`, `deny`, `cancel`, or `execute`. The MCP proxy also writes `tool_changed` and `tool_accepted`. |
 | code | string | The reason code, such as `ALLOWED` or `RUN_LIMIT` |
 | org_id | string | The organization |
 | run_id | string or null | The run the operation belongs to |
