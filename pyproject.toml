@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "redline"
-version = "0.2.0"
+version = "0.3.0"
 description = "Check chatbot answers against your rules and see what the checks catch or miss"
 readme = "redline/README.md"
 license = { text = "AGPL-3.0-only" }
