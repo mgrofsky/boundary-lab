@@ -202,6 +202,10 @@ def handle(message: dict) -> None:
                 sys.stdout.write(raw + "\n")
                 sys.stdout.flush()
         send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+    elif method == "test/list_extra":
+        # Put these fields on every later tools/list result.
+        state["list_extra"] = (message.get("params") or {}).get("fields", {})
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "test/hang_list":
         # From now on, never answer tools/list.
         state["hang_list"] = True
@@ -230,6 +234,10 @@ def handle(message: dict) -> None:
         result = {"tools": page}
         if start + PAGE_SIZE < len(tools()):
             result["nextCursor"] = str(start + PAGE_SIZE)
+        if "list_extra" in state:
+            result = {**state["list_extra"], **result}
+            send({"jsonrpc": "2.0", "id": msg_id, "result": result})
+            return
         listed(msg_id, result)
     elif method == "tools/call":
         threading.Thread(target=call_tool, args=(msg_id, message.get("params") or {}),

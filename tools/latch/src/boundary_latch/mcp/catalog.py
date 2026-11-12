@@ -26,6 +26,28 @@ class Changed:
     old: dict[str, Any] | None = field(default=None)
 
 
+SERVER_INFO = "io.modelcontextprotocol/serverInfo"
+
+
+def list_fields(page: dict[str, Any]) -> dict[str, Any]:
+    """The fields of the server's last tools/list page that the client gets, beside tools.
+
+    Only these pass: ttlMs as an int of 0 or more, cacheScope as "public" or
+    "private", and _meta holding only the server's info object. A server cannot put
+    other text beside the tools, where a client might trust it.
+    """
+    fields: dict[str, Any] = {}
+    ttl = page.get("ttlMs")
+    if isinstance(ttl, int) and not isinstance(ttl, bool) and ttl >= 0:
+        fields["ttlMs"] = ttl
+    if page.get("cacheScope") in ("public", "private"):
+        fields["cacheScope"] = page["cacheScope"]
+    meta = page.get("_meta")
+    if isinstance(meta, dict) and isinstance(meta.get(SERVER_INFO), dict):
+        fields["_meta"] = {SERVER_INFO: meta[SERVER_INFO]}
+    return fields
+
+
 class ToolCatalog:
     """The Proxy's tool list. It expects the attributes Proxy sets in __init__."""
 
@@ -47,8 +69,7 @@ class ToolCatalog:
             else:
                 raise ValueError("the server's tools/list did not end")
             self.learn(tools)
-            self._list_fields = {key: value for key, value in page.items()
-                                 if key not in ("tools", "nextCursor")}
+            self._list_fields = list_fields(page)
             # A list_changed that came in during the fetch may name tools this list
             # does not have yet, so the next use fetches again.
             self._tools_known = self._list_changes == changes
@@ -153,8 +174,8 @@ class ToolCatalog:
     async def answer_list(self, msg_id: Any) -> None:
         """Fetch the server's list again, so the pins check what the server has now.
 
-        The answer keeps the other top level fields of the server's last page, such as
-        ttlMs, cacheScope and _meta, and leaves out nextCursor.
+        The answer is the served tools, resultType "complete", and the few fields of
+        the server's last page that list_fields lets through.
         """
         try:
             await self.ensure_tools(fresh=True)

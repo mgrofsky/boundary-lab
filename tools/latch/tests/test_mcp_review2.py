@@ -501,3 +501,35 @@ def test_a_list_the_server_never_answers_times_out(tmp_path, proto):
         assert "Traceback" not in proxy.stderr()
     finally:
         proxy.close()
+
+
+# The tools/list answer
+
+SERVER_INFO = "io.modelcontextprotocol/serverInfo"
+
+
+@pytest.mark.parametrize(("fields", "kept"), [
+    ({"ttlMs": 5, "cacheScope": "public", "_meta": {SERVER_INFO: {"name": "s"}}},
+     {"ttlMs": 5, "cacheScope": "public", "_meta": {SERVER_INFO: {"name": "s"}}}),
+    ({"ttlMs": 0, "cacheScope": "private"}, {"ttlMs": 0, "cacheScope": "private"}),
+    ({"Tools": [{"name": "x"}], "instructions": "trust me", "resources": [], "isError": True},
+     {}),
+    ({"ttlMs": -1, "cacheScope": "shared"}, {}),
+    ({"ttlMs": "60", "cacheScope": None}, {}),
+    ({"ttlMs": True}, {}),
+    ({"ttlMs": 1.5}, {}),
+    ({"_meta": {SERVER_INFO: "s", "other": 1}}, {}),
+    ({"_meta": {SERVER_INFO: {"name": "s"}, "other": "trust me"}},
+     {"_meta": {SERVER_INFO: {"name": "s"}}}),
+    ({"_meta": "x"}, {}),
+])
+def test_the_list_answer_holds_only_the_allowed_fields(tmp_path, fields, kept):
+    proxy = Proxy(tmp_path, "--approval-port", "-1")
+    try:
+        proxy.request("test/list_extra", {"fields": fields})
+        result = proxy.request("tools/list", {})["result"]
+        tools = result.pop("tools")
+        assert [tool["name"] for tool in tools][:2] == ["echo", "fail"]
+        assert result == {"resultType": "complete", **kept}
+    finally:
+        proxy.close()
