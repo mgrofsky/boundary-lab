@@ -6,8 +6,11 @@ import hashlib
 import inspect
 import json
 import logging
+import math
+import numbers
 import time
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +38,9 @@ SUMMARY_LIMIT = 300
 REFERENCE_LIMIT = 128
 ERROR_LIMIT = 200
 
+# Returned by field_value when the arguments have no value for a policy field.
+NO_VALUE = object()
+
 RESERVE_CODES = {
     "approval_missing": Code.APPROVAL_REQUIRED,
     "approval_expired": Code.APPROVAL_EXPIRED,
@@ -42,6 +48,36 @@ RESERVE_CODES = {
     "run_limit": Code.RUN_LIMIT,
     "hash_mismatch": Code.OPERATION_CONFLICT,
 }
+
+
+def field_value(args: BaseModel, name: str) -> Any:
+    """The value of the argument a policy names, or NO_VALUE when there is none.
+
+    The name matches a field's name first, then a field's alias, so a model
+    whose fields use aliases still works.
+    """
+    fields = type(args).model_fields
+    if name in fields:
+        return getattr(args, name)
+    for key, field in fields.items():
+        if field.alias == name:
+            return getattr(args, key)
+    return NO_VALUE
+
+
+def amount_value(args: BaseModel, name: str) -> Any:
+    """The amount as a finite number, or None when it is missing or not a number.
+
+    A bool is not an amount, and neither is NaN or infinity, since each would
+    compare in a way that could skip the approval the policy asks for.
+    """
+    value = field_value(args, name)
+    if isinstance(value, bool) or not isinstance(value, numbers.Real | Decimal):
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except (TypeError, ValueError, ArithmeticError):
+        return None
 
 
 def error_text(exc: BaseException) -> str:
@@ -132,6 +168,11 @@ class Latch:
         try:
             args = spec.args_model.model_validate(arguments)
         except ValidationError:
+            return self._deny_prepare(ctx, tool, operation_id, Code.INVALID_ARGUMENTS, now)
+
+        if tp.approval.mode == "over_amount" and amount_value(
+            args, tp.approval.amount_field
+        ) is None:
             return self._deny_prepare(ctx, tool, operation_id, Code.INVALID_ARGUMENTS, now)
 
         paths = self._copied_fields(spec, requested)
@@ -573,8 +614,10 @@ class Latch:
         if tp.copied_arguments == "deny" and copied:
             return Code.COPIED_ARGUMENTS
         recipients = tp.allowed_recipients or []
-        if tp.recipient_field is not None and getattr(args, tp.recipient_field) not in recipients:
-            return Code.RECIPIENT_NOT_ALLOWED
+        if tp.recipient_field is not None:
+            recipient = field_value(args, tp.recipient_field)
+            if not isinstance(recipient, str) or recipient not in recipients:
+                return Code.RECIPIENT_NOT_ALLOWED
         if spec.access_hook is not None:
             try:
                 ok = spec.access_hook(ctx, args.model_dump())
@@ -630,7 +673,9 @@ class Latch:
         if tp.approval.mode == "always":
             return True
         if tp.approval.mode == "over_amount":
-            return getattr(args, tp.approval.amount_field) > tp.approval.threshold_minor
+            # A missing or non number amount needs approval, so it never skips the check.
+            amount = amount_value(args, tp.approval.amount_field)
+            return amount is None or amount > tp.approval.threshold_minor
         return False
 
     def _request_hash(
