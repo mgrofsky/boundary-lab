@@ -6,3 +6,12 @@ def test_every_code_has_a_sentence():
     for code in Code:
         text = explain(code)
         assert text.endswith(".") and len(text.split()) <= 25
+
+
+def test_tool_changed_has_an_explanation():
+    from boundary_latch.reasons import Code, explain
+
+    assert explain(Code.TOOL_CHANGED) == (
+        "This tool's definition changed after it was first seen. "
+        "A person must accept the new definition."
+    )

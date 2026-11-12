@@ -39,7 +39,7 @@ Handler = (
 
 class ToolSpec(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
-    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    name: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
     version: str = Field(min_length=1, max_length=32)
     args_model: type[BaseModel]
     handler: Handler
