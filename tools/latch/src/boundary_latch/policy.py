@@ -10,6 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .errors import ConfigError
 
+# untrusted: the result can carry text an outsider wrote. sensitive: it reads private
+# data. external: it changes state or sends data out.
+Label = Literal["untrusted", "sensitive", "external"]
+LABELS: tuple[str, ...] = ("untrusted", "sensitive", "external")
+
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -37,6 +42,8 @@ class ToolPolicy(Strict):
     recipient_field: str | None = None
     approval: Approval = Approval()
     copied_arguments: Literal["allow", "deny", "approve"] = "allow"
+    # What the tool does, for the flow rule. None means the policy does not say.
+    labels: list[Label] | None = None
 
     @model_validator(mode="after")
     def check_pairs(self):
@@ -46,7 +53,15 @@ class ToolPolicy(Strict):
             raise ValueError("a tool that can need approval needs approve_permission")
         if self.copied_arguments == "approve" and not self.approve_permission:
             raise ValueError('copied_arguments = "approve" needs approve_permission')
+        if self.labels is not None and len(set(self.labels)) != len(self.labels):
+            raise ValueError("labels must be distinct")
         return self
+
+
+class Flow(Strict):
+    """The rule for a run that reads untrusted input, reads private data and acts outside."""
+
+    all_three: Literal["allow", "approve", "deny"] = "allow"
 
 
 class Limits(Strict):
@@ -59,11 +74,38 @@ class Limits(Strict):
 
 class Policy(Strict):
     limits: Limits = Limits()
+    flow: Flow = Flow()
     tools: dict[str, ToolPolicy]
+
+    @model_validator(mode="after")
+    def check_flow(self):
+        mode = self.flow.all_three
+        if mode == "allow":
+            return self
+        for name, tp in self.tools.items():
+            if tp.labels is None:
+                raise ValueError(
+                    f'tool {name} needs labels when all_three is "{mode}"; '
+                    "use labels = [] for a tool with none"
+                )
+            if mode == "approve" and tp.labels and not tp.approve_permission:
+                raise ValueError(
+                    f'tool {name} has labels, so all_three = "approve" needs its '
+                    "approve_permission"
+                )
+        return self
 
     @property
     def digest(self) -> str:
-        body = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        data = self.model_dump(mode="json")
+        # Leave out the flow keys when they are unset, so a policy that does not use
+        # the rule keeps the digest it had before, and its stored operations still match.
+        if self.flow == Flow():
+            del data["flow"]
+        for tool in data["tools"].values():
+            if tool["labels"] is None:
+                del tool["labels"]
+        body = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(body.encode()).hexdigest()
 
 
