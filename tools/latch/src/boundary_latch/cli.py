@@ -12,7 +12,7 @@ from .demo.terminal import DEFAULT_DB
 from .demo.terminal import add_arguments as add_demo_arguments
 from .errors import ConfigError, StorageError
 from .events import format_line, to_event
-from .policy import load_policy
+from .policy import LABELS, load_policy
 from .store import read_audit
 
 POLL_SECONDS = 1
@@ -29,6 +29,13 @@ def check(path: str) -> int:
         print(f"policy rejected: could not read {path}: {exc.strerror}", file=sys.stderr)
         return 1
     print(f"policy ok, {len(policy.tools)} tools, policy hash {policy.digest[:12]}")
+    mode = policy.flow.all_three
+    if mode != "allow":
+        counts = ", ".join(
+            f"{label} {sum(label in (tp.labels or ()) for tp in policy.tools.values())}"
+            for label in LABELS
+        )
+        print(f'flow rule: all_three = "{mode}"; tools with each label: {counts}')
     return 0
 
 
