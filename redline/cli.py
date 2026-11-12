@@ -52,7 +52,8 @@ def _in_chunks(records, fn, label):
     out = []
     for start in range(0, len(records), CHUNK):
         out.extend(fn(records[start : start + CHUNK]))
-        print(f"{label}: {len(out)} of {len(records)}", file=sys.stderr)
+        done = min(start + CHUNK, len(records))
+        print(f"{label}: {done} of {len(records)}", file=sys.stderr)
     return out
 
 
@@ -146,12 +147,17 @@ def cmd_run(args) -> int:
 def cmd_attack(args) -> int:
     from redline.target import Target, run_attacks
 
+    if args.attempts < 1:
+        print("redline: --attempts must be at least 1", file=sys.stderr)
+        return 2
     load_env_file()
     base_url, model, api_key = _env("REDLINE_TARGET")
     system_prompt = Path(args.system).read_text()
-    target = Target(base_url, model, api_key, system_prompt)
+    target = Target(base_url, model, api_key, system_prompt, temperature=args.temperature)
     prompts = read_jsonl(args.prompts)
-    responses = _in_chunks(prompts, lambda batch: run_attacks(batch, target), "answered")
+    responses = _in_chunks(
+        prompts, lambda batch: run_attacks(batch, target, args.attempts), "answered"
+    )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl(out_path, responses)
@@ -337,6 +343,18 @@ def build_parser() -> argparse.ArgumentParser:
     attack.add_argument("--out", required=True, help="file to write the chatbot's answers to")
     attack.add_argument(
         "--system", default="policy/target_system_prompt.txt", help="instructions for the chatbot"
+    )
+    attack.add_argument(
+        "--attempts",
+        type=int,
+        default=1,
+        help="send each prompt this many times; later answers get ids ending #2, #3 (default: 1)",
+    )
+    attack.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="sampling temperature for the chatbot; above 0 lets repeats differ (default: 0)",
     )
     attack.set_defaults(func=cmd_attack)
 
