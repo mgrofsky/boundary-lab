@@ -53,6 +53,10 @@ META_KEYS = frozenset({
 
 # How many input requests from the server the proxy keeps. The oldest is dropped first.
 INPUT_RECORDS = 1000
+# How long the proxy waits for the server to exit after its output ends.
+EOF_GRACE = 1.0
+PROXY_ERROR = ("Blocked by Latch: PROXY_ERROR. The proxy hit an error while handling this "
+               "call. If the call already reached the server, its outcome is unknown.")
 
 
 class ChildGone(Exception):
@@ -301,8 +305,9 @@ class Proxy(ToolCatalog):
             logger.warning("dropped a line from the server that is not a JSON-RPC message")
             return
         if kind == "response":
-            target = self._to_child.pop(message["id"], None) if isinstance(
-                message["id"], int) else None
+            child_id = message["id"]
+            proxy_id = isinstance(child_id, int) and not isinstance(child_id, bool)
+            target = self._to_child.pop(child_id, None) if proxy_id else None
             if target is None:
                 logger.warning("dropped a server response with an unknown id")
                 return
@@ -311,7 +316,7 @@ class Proxy(ToolCatalog):
                 if not value.done():
                     value.set_result(message)
                 return
-            if message["id"] in self._listens:
+            if self._open_listen(message["id"]):
                 # A subscription that ended: its result names the subscription too.
                 message = self._client_subscription(message, "result")
                 del self._listens[message["id"]]
@@ -329,17 +334,22 @@ class Proxy(ToolCatalog):
                 message = self._cancelled_listen(message)
         self.to_client(message)
 
+    def _open_listen(self, value: Any) -> bool:
+        """True when value is the proxy's id of an open listen. Only an int can be one."""
+        return isinstance(value, int) and not isinstance(value, bool) and value in self._listens
+
     def _ended_subscription(self, message: dict[str, Any]) -> bool:
-        """True for a notification tagged with a subscription that is no longer open.
+        """True for a notification tagged with a subscription that is not open.
 
         Every id the server sees is the proxy's, so the client could not match it. The
-        client has cancelled that subscription and would ignore it anyway.
+        client has cancelled that subscription and would ignore it anyway. An id that
+        is not an int was never the proxy's.
         """
         params = message.get("params")
         meta = params.get("_meta") if isinstance(params, dict) else None
         if not isinstance(meta, dict) or SUBSCRIPTION not in meta:
             return False
-        return meta[SUBSCRIPTION] not in self._listens
+        return not self._open_listen(meta[SUBSCRIPTION])
 
     def _client_subscription(self, message: dict[str, Any], part: str) -> dict[str, Any]:
         """Put the client's listen id where the server put the proxy's.
@@ -350,9 +360,7 @@ class Proxy(ToolCatalog):
         body = message.get(part)
         meta = body.get("_meta") if isinstance(body, dict) else None
         sub_id = meta.get(SUBSCRIPTION) if isinstance(meta, dict) else None
-        if not isinstance(sub_id, int) or isinstance(sub_id, bool):
-            return message
-        if sub_id not in self._listens:
+        if not self._open_listen(sub_id):
             return message
         meta = {**meta, SUBSCRIPTION: self._listens[sub_id]}
         return {**message, part: {**body, "_meta": meta}}
@@ -361,7 +369,7 @@ class Proxy(ToolCatalog):
         """A server that ends a subscription cancels its listen request by the proxy's id."""
         params = message.get("params")
         request_id = params.get("requestId") if isinstance(params, dict) else None
-        if not isinstance(request_id, int) or request_id not in self._listens:
+        if not self._open_listen(request_id):
             return message
         client_id = self._listens.pop(request_id)
         self._to_child.pop(request_id, None)
@@ -380,10 +388,7 @@ class Proxy(ToolCatalog):
             reply = await self.run_call(call, params)
         except Exception:
             logger.exception("refused a tools/call after an error in the proxy")
-            reply = ("result", wire.text_result(
-                "Blocked by Latch: PROXY_ERROR. The proxy hit an error while handling this "
-                "call. If the call already reached the server, its outcome is unknown."
-            ))
+            reply = ("result", wire.text_result(PROXY_ERROR))
         finally:
             self._calls.pop(wire.id_key(call.msg_id), None)
         if call.cancelled:
@@ -765,6 +770,8 @@ class Proxy(ToolCatalog):
                                      return_when=asyncio.FIRST_COMPLETED)
         if child_reader in done:
             client_reader.cancel()
+            if not await self._child_exited(child_reader):
+                return await self._stop_after_reader()
             self.child_gone()
             await self._settle()
             code = await self.child.wait()
@@ -774,6 +781,36 @@ class Proxy(ToolCatalog):
         for task in list(self._tasks):
             task.cancel()
         return 0
+
+    async def _child_exited(self, reader: asyncio.Task) -> bool:
+        """After the reader ended: True when the server exited, as a crash or a close does.
+
+        The reader may also have ended with an error, or the server may have closed its
+        output and still run. Then nothing more can come back from it.
+        """
+        error = None if reader.cancelled() else reader.exception()
+        if error is not None:
+            logger.error("stopped reading the server after an error in the proxy: %s",
+                         type(error).__name__)
+            return False
+        try:
+            await asyncio.wait_for(self.child.wait(), EOF_GRACE)
+        except TimeoutError:
+            logger.error("the server closed its output but still runs, so the proxy stops it")
+            return False
+        return True
+
+    async def _stop_after_reader(self) -> int:
+        """Answer every call in flight with PROXY_ERROR, stop the server, and exit 1."""
+        for call in list(self._calls.values()):
+            if not call.cancelled:
+                call.cancelled = True
+                self.to_client(wire.result(call.msg_id, wire.text_result(PROXY_ERROR)))
+        self.child_gone()
+        await self.stop_child()
+        for task in list(self._tasks):
+            task.cancel()
+        return 1
 
     async def _settle(self) -> None:
         """Let calls that were waiting on the server write their answers."""
@@ -806,7 +843,11 @@ class Proxy(ToolCatalog):
                 continue
             if not line:
                 return
-            self.on_child_line(line)
+            try:
+                self.on_child_line(line)
+            except Exception as exc:  # noqa: BLE001 one bad line must never stop the proxy
+                logger.warning("dropped a line from the server after an error in the proxy: %s",
+                               type(exc).__name__)
             await self._drain()
 
     async def _read_client(self, queue: asyncio.Queue) -> None:

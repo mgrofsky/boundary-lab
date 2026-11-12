@@ -332,3 +332,98 @@ def test_the_round_key_leaves_out_the_input_round():
     proxy = unit_proxy()
     assert proxy.round_key("t", {"a": 1, "$requestState": "s", "$inputResponses": {}}) == \
         proxy.round_key("t", {"a": 1})
+
+
+# Messages from the child never stop the proxy
+
+SUB = "io.modelcontextprotocol/subscriptionId"
+
+
+@pytest.mark.parametrize("proto", [False, True])
+def test_odd_subscription_ids_from_the_server_are_dropped(tmp_path, proto):
+    proxy = Proxy(tmp_path, "--approval-port", "-1", modern=proto)
+    try:
+        lines = [json.dumps({"jsonrpc": "2.0", "method": "notifications/message",
+                             "params": {"_meta": {SUB: odd}}})
+                 for odd in ([1], {"a": 1}, 1.0, "1", True)]
+        lines.append(json.dumps({"jsonrpc": "2.0", "method": "notifications/cancelled",
+                                 "params": {"requestId": [1]}}))
+        assert "result" in proxy.request("test/emit", {"lines": lines})
+        assert "result" in proxy.request("ping", {})
+        assert proxy.call("echo", {"text": "after"})["result"].get("isError") is not True
+        seen = [m for m in list(proxy.lines.queue) if m.get("method") == "notifications/message"]
+        assert seen == []
+    finally:
+        assert proxy.close() == 0
+
+
+def test_the_server_closing_its_output_while_alive_stops_it_and_the_proxy(tmp_path):
+    import os
+    import time
+
+    proxy = Proxy(tmp_path, "--approval-port", "-1")
+    proxy.send({"jsonrpc": "2.0", "id": 61, "method": "tools/call",
+                "params": {"name": "sleep", "arguments": {"seconds": 30}}})
+    wait_for(lambda: proxy.server_calls())
+    proxy.send({"jsonrpc": "2.0", "id": 62, "method": "test/close", "params": {}})
+    reply = proxy.recv_id(61)
+    assert reply["result"]["content"][0]["text"].startswith("Blocked by Latch: PROXY_ERROR.")
+    assert proxy.proc.wait(20) != 0
+    pid = wait_for(lambda: [m["pid"] for m in proxy.server_log() if "pid" in m])[0]
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("the server is still running")
+    proxy.close()
+
+
+def test_an_error_on_one_server_line_drops_that_line_only():
+    import asyncio
+
+    proxy = unit_proxy()
+    seen = []
+
+    def handle(line):
+        if b"bad" in line:
+            raise TypeError("\x1b[31m from the server")
+        seen.append(line)
+
+    proxy.on_child_line = handle
+
+    class Child:
+        stdout = None
+        stdin = None
+
+    async def main():
+        reader = asyncio.StreamReader()
+        for line in (b"bad\n", b"good\n"):
+            reader.feed_data(line)
+        reader.feed_eof()
+        proxy.child = Child()
+        proxy.child.stdout = reader
+        await proxy._read_child()
+
+    asyncio.run(main())
+    assert seen == [b"good\n"]
+
+
+def test_a_bool_response_id_never_answers_a_proxy_request():
+    import asyncio
+
+    proxy = unit_proxy()
+
+    async def main():
+        future = asyncio.get_running_loop().create_future()
+        proxy._to_child[1] = ("proxy", future)
+        proxy._listens[1] = "client"
+        proxy.on_child_line(b'{"jsonrpc":"2.0","id":true,"result":{}}')
+        proxy.on_child_line(b'{"jsonrpc":"2.0","method":"n","params":{"_meta":{"' +
+                            SUB.encode() + b'":true}}}')
+        return future.done()
+
+    assert asyncio.run(main()) is False

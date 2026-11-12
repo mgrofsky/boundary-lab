@@ -195,6 +195,20 @@ def handle(message: dict) -> None:
     elif MODERN and method == "tasks/get":
         send({"jsonrpc": "2.0", "id": msg_id, "result": {
             "taskId": (message.get("params") or {}).get("taskId"), "status": "completed"}})
+    elif method == "test/emit":
+        # Write the given lines as they are, then answer. For tests of odd server output.
+        for raw in (message.get("params") or {}).get("lines", []):
+            with lock:
+                sys.stdout.write(raw + "\n")
+                sys.stdout.flush()
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+    elif method == "test/close":
+        # Close stdout and keep running, so the proxy reads the end of its output.
+        log({"pid": os.getpid()})
+        with lock:
+            sys.stdout.close()
+            os.close(1)
+        time.sleep(60)
     elif method == "initialize":
         send({"jsonrpc": "2.0", "id": msg_id, "result": {
             "protocolVersion": message["params"].get("protocolVersion", "2025-06-18"),
