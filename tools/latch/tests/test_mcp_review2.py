@@ -533,3 +533,64 @@ def test_the_list_answer_holds_only_the_allowed_fields(tmp_path, fields, kept):
         assert result == {"resultType": "complete", **kept}
     finally:
         proxy.close()
+
+
+# Text from the server never reaches a terminal raw
+
+ESC = "\x1b"
+
+
+def test_a_list_error_from_the_server_is_logged_safely(tmp_path):
+    proxy = Proxy(tmp_path, "--approval-port", "-1")
+    try:
+        proxy.request("test/list_error", {"error": {"code": ESC + "[2J", "message":
+                                                    ESC + "[31mred\nsecond line" + "x" * 400}})
+        assert proxy.request("tools/list", {})["error"]["code"] == -32603
+        err = proxy.stderr()
+        assert "red?second line" in err or "red second line" in err
+        assert ESC not in err and "x" * 250 not in err
+    finally:
+        proxy.close()
+
+
+def test_hidden_odd_tool_names_are_logged_safely(tmp_path):
+    proxy = Proxy(tmp_path, "--approval-port", "-1", server_args=("--odd-names",))
+    try:
+        proxy.request("tools/list", {})
+        err = proxy.stderr()
+        assert "evil" in err and ESC not in err
+        assert all(ESC.encode() not in line for line in proxy.raw)
+    finally:
+        proxy.close()
+
+
+def test_print_policy_never_prints_escape_codes(tmp_path):
+    import subprocess
+    import sys
+
+    from .mcp_helpers import FAKE
+
+    done = subprocess.run(
+        [sys.executable, "-m", "boundary_latch", "mcp", "--print-policy", "--",
+         sys.executable, str(FAKE), str(tmp_path / "log"), "--odd-names"],
+        capture_output=True, text=True, timeout=60, check=True)
+    assert ESC not in done.stdout and ESC not in done.stderr
+    assert "evil" in done.stderr and "dup" not in done.stdout
+    assert "# [2J[31mtext next" in done.stdout or "text next" in done.stdout
+
+
+def test_the_supported_versions_of_a_server_are_printed_safely():
+    from boundary_latch.mcp.main import discovered_version
+
+    with pytest.raises(ValueError) as caught:
+        discovered_version({"result": {"supportedVersions": [ESC + "[31m2099", "y" * 400]}})
+    assert ESC not in str(caught.value) and "y" * 250 not in str(caught.value)
+
+
+def test_the_log_format_never_writes_a_control_character(capsys):
+    import logging
+
+    from boundary_latch.mcp.main import SafeFormatter
+
+    record = logging.LogRecord("x", logging.INFO, "f", 1, "a %s b", (ESC + "[2J\r\x07",), None)
+    assert SafeFormatter("%(message)s").format(record) == "a ?[2J?? b"

@@ -13,8 +13,6 @@ from .tools import build_spec, fits, uses_reserved, version
 logger = logging.getLogger("boundary_latch.mcp")
 
 MAX_PAGES = 1000
-# How much of a server's error text goes into the log.
-ERROR_TEXT = 200
 
 
 @dataclass
@@ -81,8 +79,8 @@ class ToolCatalog:
         if error is not None:
             code = error.get("code") if isinstance(error, dict) else None
             text = error.get("message") if isinstance(error, dict) else None
-            text = " ".join(str(text).split())[:ERROR_TEXT]
-            raise ValueError(f"the server answered tools/list with error {code!r}: {text}")
+            raise ValueError(f"the server answered tools/list with error "
+                             f"{wire.printable(repr(code)[:80])}: {wire.printable(text)}")
         page = reply.get("result")
         if not isinstance(page, dict) or not isinstance(page.get("tools"), list):
             raise TypeError("the server's tools/list answer has no tools list")
@@ -132,7 +130,7 @@ class ToolCatalog:
                 summary=f"pinned {pin['hash']}, server now has {new_hash}",
             )
             logger.warning("tool %s changed after it was first seen; calls are refused until "
-                           "a person accepts it on the approval page", name)
+                           "a person accepts it on the approval page", wire.printable(name))
         if old is None:
             # No pinned definition to show, so the client does not see the tool.
             self.served.pop(name, None)
@@ -149,7 +147,7 @@ class ToolCatalog:
             self.latch._set_tool(build_spec(tool, self.handler, self.settings.tool_timeout))
 
     def _hide(self, name: Any) -> None:
-        label = repr(name)[:80]
+        label = wire.printable(repr(name)[:80])
         if label not in self._hidden_logged:
             self._hidden_logged.add(label)
             logger.warning("hid tool %s: the policy does not name it, the name does not fit, "
@@ -180,7 +178,7 @@ class ToolCatalog:
         try:
             await self.ensure_tools(fresh=True)
         except Exception as exc:  # noqa: BLE001 the client gets an error, never a partial list
-            logger.warning("could not list the server's tools: %s", exc)
+            logger.warning("could not list the server's tools: %s", wire.printable(str(exc)))
             self.to_client(wire.error(msg_id, wire.INTERNAL_ERROR, "could not list tools"))
             return
         tools = [self.served[name] for name in self._order if name in self.served]

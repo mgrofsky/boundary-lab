@@ -20,6 +20,9 @@ LOG = sys.argv[1] if len(sys.argv) > 1 else os.devnull
 MODERN = "--modern" in sys.argv[2:]
 # An older server that never answers server/discover, to test the probe's timeout.
 QUIET_DISCOVER = "--quiet-discover" in sys.argv[2:]
+# Adds tools whose names and text hold terminal escape codes.
+ODD_NAMES = "--odd-names" in sys.argv[2:]
+ESC = "\x1b[2J\x1b[31m"
 VERSION = "2026-07-28"
 PROTOCOL = "io.modelcontextprotocol/protocolVersion"
 CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
@@ -77,7 +80,11 @@ def tools() -> list[dict]:
          "inputSchema": {"type": "object", "properties": {"$requestState": {}}}},
         {"name": "secret", "description": "Not in any policy.", "inputSchema": plain},
         {"name": "bad name", "description": "Name with a space.", "inputSchema": plain},
-    ]
+    ] + ([
+        {"name": ESC + "evil", "description": "Hidden.", "inputSchema": plain},
+        {"name": "echo", "description": ESC + "dup", "inputSchema": plain},
+        {"name": "odd_text", "description": ESC + "text\nnext", "inputSchema": plain},
+    ] if ODD_NAMES else [])
 
 
 def send(message: dict) -> None:
@@ -206,6 +213,10 @@ def handle(message: dict) -> None:
         # Put these fields on every later tools/list result.
         state["list_extra"] = (message.get("params") or {}).get("fields", {})
         send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+    elif method == "test/list_error":
+        # From now on, answer tools/list with this error.
+        state["list_error"] = (message.get("params") or {}).get("error")
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "test/hang_list":
         # From now on, never answer tools/list.
         state["hang_list"] = True
@@ -228,6 +239,8 @@ def handle(message: dict) -> None:
         listed(msg_id, {"resources": [], "echo_id": msg_id})
     elif method == "tools/list" and state.get("hang_list"):
         return
+    elif method == "tools/list" and state.get("list_error"):
+        send({"jsonrpc": "2.0", "id": msg_id, "error": state["list_error"]})
     elif method == "tools/list":
         start = int((message.get("params") or {}).get("cursor") or 0)
         page = tools()[start:start + PAGE_SIZE]

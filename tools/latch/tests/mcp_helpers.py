@@ -81,7 +81,7 @@ class Proxy:
     """One proxy process, with helpers to talk JSON-RPC to it."""
 
     def __init__(self, tmp: Path, *options: str, policy: str = POLICY, init: bool = True,
-                 modern: bool = False):
+                 modern: bool = False, server_args: tuple[str, ...] = ()):
         self.tmp = tmp
         self.modern = modern
         self.log = tmp / "server.log"
@@ -92,7 +92,7 @@ class Proxy:
         command = [sys.executable, "-m", "boundary_latch", "mcp", "--policy", str(self.policy),
                    "--no-open", "--approver", "person", *options,
                    "--", sys.executable, str(FAKE), str(self.log),
-                   *(["--modern"] if modern else [])]
+                   *(["--modern"] if modern else []), *server_args]
         self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=self.err)
         self.lines: queue.Queue = queue.Queue()

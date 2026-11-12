@@ -96,9 +96,21 @@ def check_policy(policy: Policy) -> str | None:
     return None
 
 
+class SafeFormatter(logging.Formatter):
+    """A last guard for the terminal: no control character but a newline is written.
+
+    Text from the server is made safe where it is logged, with wire.printable. This
+    also covers a traceback that quotes it.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        return "".join(ch if ch.isprintable() or ch == "\n" else "?" for ch in text)
+
+
 def setup_logging() -> None:
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("latch mcp: %(message)s"))
+    handler.setFormatter(SafeFormatter("latch mcp: %(message)s"))
     root = logging.getLogger("boundary_latch")
     root.addHandler(handler)
     root.setLevel(logging.INFO)
@@ -198,11 +210,11 @@ def print_policy(command: list[str], flow: bool = False) -> int:
     try:
         tools = asyncio.run(list_tools(command))
     except (OSError, ValueError, TypeError, TimeoutError) as exc:
-        logger.error("could not list the server's tools: %s", exc)
+        logger.error("could not list the server's tools: %s", wire.printable(str(exc)))
         return 1
     text, skipped = starter_policy(tools, flow=flow)
     for name, why in skipped:
-        logger.warning("left out tool %r: %s", name[:80], SKIP_REASONS[why])
+        logger.warning("left out tool %s: %s", wire.printable(repr(name)[:80]), SKIP_REASONS[why])
     sys.stdout.write(text)
     sys.stdout.flush()
     return 0
@@ -238,7 +250,7 @@ def discovered_version(answer: dict[str, Any] | None) -> str | None:
         return None
     shared = sorted(set(MODERN_VERSIONS) & {v for v in supported if isinstance(v, str)})
     if not shared:
-        offered = ", ".join(str(v) for v in supported)[:200]
+        offered = wire.printable(", ".join(str(v) for v in supported))
         raise ValueError(f"the server supports {offered}, and this build speaks "
                          f"{', '.join(MODERN_VERSIONS)}")
     return shared[-1]
