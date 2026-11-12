@@ -21,6 +21,14 @@
 - `boundary-latch check` prints the flow mode and how many tools carry each label.
 - `boundary-latch mcp --print-policy --flow` writes a starter policy with the rule on and every label on every tool.
 - The demo has a `lookup_note` tool and a tenth scenario, `flow_chain`, that shows the rule.
+- The MCP proxy works with MCP 2026-07-28 clients and servers as well as the older `initialize` form. It keeps the client's protocol fields from `_meta` and puts them on its own requests. See "Protocol versions" in docs/mcp.md.
+- Input rounds. When a client sends a `tools/call` again with `inputResponses` and `requestState`, the proxy checks them as arguments named `$inputResponses` and `$requestState`, so the request hash, the summary, and the approval page cover them. Each round is its own operation. A server tool whose `inputSchema` uses either name is hidden.
+- Every `tools/list` fetches the server's list again, and the answer keeps the other fields of the server's last page, such as `ttlMs` and `cacheScope`, without `nextCursor`.
+- Results the proxy writes itself carry `resultType` `"complete"`.
+- The client's `tools/call` `_meta` goes to the server. It is not part of the request hash. Any `params` key other than `name`, `arguments`, `_meta`, `inputResponses`, and `requestState` gets a `-32602` error that names it.
+- `subscriptions/listen` passes through. The proxy maps the subscription id on the server's notifications back to the client's request id, and forgets a listen the client cancels.
+- `tasks/update` is refused with `-32601`, since input to a running task is not checked yet. `tasks/get` and `tasks/cancel` pass through.
+- `boundary-latch mcp --print-policy` probes with `server/discover` and falls back to `initialize` when the server does not answer it.
 
 ### Changed
 
@@ -29,6 +37,7 @@
 - `ToolSpec.name` now accepts the names MCP servers use: a letter, then up to 63 letters, digits, underscores, dots, or hyphens. Upper case letters, dots, and hyphens are new. These names are stored with SQL parameters and shown as text, so they stay safe in the audit, the `audit` command, and the demo page.
 
 ### Fixed
+- A message from the MCP server with both `method` and `result` or `error`, or with both `result` and `error`, was treated as a request or response. It is now dropped and logged.
 
 - An `over_amount` policy could skip approval when the amount was a bool or NaN, since `True > 5000` and `NaN > 5000` are both false. `prepare` now refuses an amount that is not a finite number with `INVALID_ARGUMENTS`. That covers a bool, a string, a missing value, NaN, and infinity.
 - A missing `amount_field` or `recipient_field` on the arguments model raised `AttributeError` from `prepare`. It now fails closed: `INVALID_ARGUMENTS` for the amount, `RECIPIENT_NOT_ALLOWED` for the recipient.
