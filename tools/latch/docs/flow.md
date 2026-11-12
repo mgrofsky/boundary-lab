@@ -99,7 +99,7 @@ A copied value is text an outsider may have written, so it counts as `untrusted`
 
     prepared = latch.prepare(ctx, "send_message", args, operation_id=op, copied=report)
 
-Dye, another Boundary Lab project, finds copied values. Latch keeps only the paths that name this tool's fields. When any remain, Latch checks the call as if the run already held `untrusted`, with the source "copied value in <tool>". It does this at `prepare` and again inside the reserve transaction.
+Dye, another Boundary Lab project, finds copied values. A path may name a field by its name or its alias. A path that matches no field still counts, so a name Latch does not know fails closed. When the call carries any copied path, Latch checks the call as if the run already held `untrusted`, with the source "copied value in <tool>". It does this at `prepare` and again inside the reserve transaction.
 
 - A run that read private data calls an `external` tool with a copied argument. The call is gated. In `deny` mode it gets `FLOW_BLOCKED`. In `approve` mode it waits, and the reason names the copied value.
 - A tool with no labels is still never gated, even with a copied argument. The run gains `untrusted` when that call is reserved, so later `external` calls are gated.

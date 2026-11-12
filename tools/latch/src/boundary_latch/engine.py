@@ -768,9 +768,14 @@ class Latch:
 
     @staticmethod
     def _copied_fields(spec: ToolSpec, paths: frozenset[str]) -> frozenset[str]:
-        """Keep the paths whose top level field names a field of this tool's arguments."""
-        fields = spec.args_model.model_fields
-        return frozenset(p for p in paths if p.split(".")[0].split("[")[0] in fields)
+        """The copied paths this call carries, each kept as the caller wrote it.
+
+        A path's top level name may be a field's name or its alias, as with
+        field_value. A path that matches no field is kept too, so a name Latch does
+        not know still counts as a copied value. That fails closed.
+        """
+        del spec
+        return paths
 
     def _copied_denied(self, prepared: PreparedAction) -> bool:
         spec = self._tools.get(prepared.tool)

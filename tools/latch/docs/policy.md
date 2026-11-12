@@ -63,7 +63,7 @@ A copied value is an argument value the model copied from text it read, such as 
 
     prepared = latch.prepare(ctx, "issue_refund", args, operation_id=action_id, copied=report)
 
-`copied` takes paths like `"account_id"` or `"items[0].sku"`, or any object with a `.copied` attribute holding them. Latch keeps only the paths whose top level field belongs to this tool. The paths are saved with the operation, and `execute` checks them again.
+`copied` takes paths like `"account_id"` or `"items[0].sku"`, or any object with a `.copied` attribute holding them. A path's top level name may be a field's name or its alias. Latch keeps every path, even one that matches no field, so an unknown name still counts as a copied value. The paths are saved with the operation, and `execute` checks them again.
 
 - `allow`: copied values change nothing. This is the default.
 - `deny`: any copied field blocks the call with `COPIED_ARGUMENTS`.

@@ -233,10 +233,10 @@ def test_a_copied_value_gives_the_run_the_untrusted_label_when_reserved(clock):
     )
 
 
-def test_a_copied_path_for_another_tool_adds_nothing(clock):
+def test_a_copied_path_that_matches_no_field_still_marks_the_run(clock):
     engine, _ = build(clock, "deny")
     run(engine, "plain", "p1", copied=["not_a_field"])
-    assert engine.store.run_labels("acme", "run1") == {}
+    assert engine.store.run_labels("acme", "run1")["untrusted"]["tool"] == "plain"
 
 
 def test_an_unlabelled_tool_with_a_copied_value_still_marks_the_run(clock):

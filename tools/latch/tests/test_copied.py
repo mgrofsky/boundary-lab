@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from boundary_latch.engine import Latch
 from boundary_latch.errors import ConfigError
@@ -90,11 +90,44 @@ def test_nested_paths_count_by_their_top_level_field(deny_latch):
     assert result.code == Code.COPIED_ARGUMENTS
 
 
-def test_paths_for_other_fields_are_dropped(deny_latch):
-    engine, _ = deny_latch
+def test_paths_that_match_no_field_are_kept(deny_latch):
+    engine, handlers = deny_latch
     result = engine.prepare(make_ctx(), "refund", REFUND_ARGS, "op1", copied=["to", "items[0].sku"])
+    assert isinstance(result, Decision)
+    assert result.code == Code.COPIED_ARGUMENTS
+    assert handlers["refund"].call_count == 0
+
+
+def test_paths_that_match_no_field_are_stored_and_need_approval(approve_latch):
+    engine, _ = approve_latch
+    result = engine.prepare(make_ctx(), "lookup_account", LOOKUP_ARGS, "op1",
+                            copied=["nowhere[0].x"])
     assert isinstance(result, PreparedAction)
-    assert result.copied == frozenset()
+    assert result.copied == frozenset({"nowhere[0].x"})
+    assert result.needs_approval is True
+
+
+class AliasArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+    account: str = Field(alias="account-id")
+
+
+def test_a_path_given_by_a_field_alias_counts(clock):
+    engine = Latch(parse_policy(DENY_POLICY.replace(
+        "[tools.task]", '[tools.alias_tool]\nrequire_permission = "refunds:create"\n'
+        'copied_arguments = "deny"\n\n[tools.task]')), SQLiteStore(), clock=clock)
+    handler = MagicMock(return_value="ran")
+    engine.register(ToolSpec(name="alias_tool", version="1", args_model=AliasArgs,
+                             handler=handler))
+    ctx = make_ctx(permissions={"refunds:create"})
+    result = engine.prepare(ctx, "alias_tool", {"account-id": "A1"}, "op1",
+                            copied=["account-id"])
+    assert isinstance(result, Decision)
+    assert result.code == Code.COPIED_ARGUMENTS
+    by_name = engine.prepare(ctx, "alias_tool", {"account-id": "A1"}, "op2",
+                             copied=["account"])
+    assert by_name.code == Code.COPIED_ARGUMENTS
+    assert handler.call_count == 0
 
 
 def test_an_object_with_a_copied_attribute_is_accepted(deny_latch):

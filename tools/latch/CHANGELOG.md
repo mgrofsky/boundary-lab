@@ -34,6 +34,7 @@
 - A missing `amount_field` or `recipient_field` on the arguments model raised `AttributeError` from `prepare`. It now fails closed: `INVALID_ARGUMENTS` for the amount, `RECIPIENT_NOT_ALLOWED` for the recipient.
 - `recipient_field` now needs a string value. A list or other value is refused with `RECIPIENT_NOT_ALLOWED`.
 - A policy field can name a field's alias as well as its name.
+- A copied path that named a field by its alias was dropped, so the call ran as if nothing was copied. Latch now keeps every copied path as given. A path that matches no field also counts as a copied value, for `copied_arguments` and for the flow rule.
 - `approval.mode = "over_amount"` let a negative amount run without approval. A negative amount now needs approval, whatever the threshold.
 
 ## 0.3.0
