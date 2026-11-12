@@ -145,6 +145,20 @@ def protocol_fields(params: Any) -> dict[str, Any]:
     return {key: meta[key] for key in PROTOCOL_KEYS if key in meta}
 
 
+# How much text from the client or the server one log line or printed line may hold.
+PRINT_LIMIT = 200
+
+
+def printable(text: Any) -> str:
+    """Text from the server or the client, safe for a person's terminal.
+
+    Every character that is not printable, such as an escape code or a newline,
+    becomes "?", and the text is cut at 200 characters.
+    """
+    text = text if isinstance(text, str) else str(text)
+    return "".join(ch if ch.isprintable() else "?" for ch in text[:PRINT_LIMIT])
+
+
 def text_result(text: str) -> dict[str, Any]:
     """A tools/call result the model can read, marked as an error.
 

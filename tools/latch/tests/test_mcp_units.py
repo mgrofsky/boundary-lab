@@ -430,3 +430,18 @@ def test_a_tool_that_uses_a_reserved_name_is_hidden(schema, hidden):
     proxy = make_proxy(Pins())
     proxy.learn([{**tool, "name": "echo"}])
     assert ("echo" in proxy.served) is not hidden
+
+
+@pytest.mark.parametrize(("text", "shown"), [
+    ("plain", "plain"),
+    ("\x1b[31mred\x1b[0m", "?[31mred?[0m"),
+    ("a\nb\rc\td", "a?b?c?d"),
+    (chr(0x202E) + "abc", "?abc"),
+    (["x"], "['x']"),
+])
+def test_printable_keeps_printable_characters_only(text, shown):
+    assert wire.printable(text) == shown
+
+
+def test_printable_cuts_at_200_characters():
+    assert wire.printable("x" * 500) == "x" * 200

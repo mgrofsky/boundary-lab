@@ -35,6 +35,8 @@ FLOW_ROUNDS = 3
 SUBSCRIPTION = "io.modelcontextprotocol/subscriptionId"
 PAGE_KEYS = {"inputResponses": "input_responses", "requestState": "request_state"}
 TASK_UPDATE = "Blocked by Latch: input to a running task is not checked yet"
+# The only tasks methods that pass through. Every other tasks/ method is refused.
+TASK_METHODS = frozenset({"tasks/get", "tasks/cancel"})
 # The params keys of a tools/call the proxy understands. Any other key is refused.
 CALL_KEYS = frozenset({"name", "arguments", "_meta", "inputResponses", "requestState"})
 # decide() answers this when the form's digest does not match the operation now.
@@ -162,12 +164,10 @@ class Proxy(ToolCatalog):
     def on_client(self, message: dict[str, Any]) -> None:
         kind = wire.kind(message)
         method = message.get("method")
-        if kind == "request":
-            fields = wire.protocol_fields(message.get("params"))
-            if fields:
-                self._protocol = fields
         if kind == "response":
             self.to_child(message)
+            return
+        if self._refused_task(message, kind):
             return
         if method in ("tools/call", "tools/list"):
             if kind == "notification":
@@ -175,6 +175,7 @@ class Proxy(ToolCatalog):
                 return
             msg_id = message["id"]
             if method == "tools/list":
+                self.keep_protocol(message.get("params"))
                 self._spawn(self.answer_list(msg_id))
                 return
             call = Call(msg_id=msg_id)
@@ -187,17 +188,40 @@ class Proxy(ToolCatalog):
                 return
             self.to_child(message)
             return
-        if method == "tasks/update":
-            # Input to a task that already ran through Latch would reach the server with
-            # nothing checked, so it is refused until Latch can check it.
-            logger.warning("refused tasks/update: input to a running task is not checked yet")
-            self.to_client(wire.error(message["id"], wire.METHOD_NOT_FOUND, TASK_UPDATE))
-            return
+        self.keep_protocol(message.get("params"))
         child_id = self._new_id()
         self._to_child[child_id] = ("client", message["id"])
         if method == "subscriptions/listen":
             self._listens[child_id] = message["id"]
         self.to_child({**message, "id": child_id})
+
+    def keep_protocol(self, params: Any) -> None:
+        """Keep the protocol fields of a client request the proxy accepted."""
+        fields = wire.protocol_fields(params)
+        if fields:
+            self._protocol = fields
+
+    def _refused_task(self, message: dict[str, Any], kind: str) -> bool:
+        """Refuse a tasks method that is not on the allow list. True when it was refused.
+
+        tasks/get and tasks/cancel pass through. Any other tasks method, such as
+        tasks/update, could feed input into a call that already ran through Latch with
+        nothing checked. So could a get or cancel that carries an input round.
+        """
+        method = message.get("method")
+        if not isinstance(method, str) or not method.startswith("tasks/"):
+            return False
+        params = message.get("params")
+        carries = isinstance(params, dict) and any(key in params for key in PAGE_KEYS)
+        if method in TASK_METHODS and not carries:
+            return False
+        name = wire.printable(repr(method)[:80])
+        if kind == "notification":
+            logger.warning("dropped a %s notification: tasks input is not checked yet", name)
+            return True
+        logger.warning("refused %s: input to a running task is not checked yet", name)
+        self.to_client(wire.error(message["id"], wire.METHOD_NOT_FOUND, TASK_UPDATE))
+        return True
 
     def on_cancelled(self, message: dict[str, Any]) -> None:
         params = message.get("params")
@@ -392,6 +416,7 @@ class Proxy(ToolCatalog):
         if isinstance(checked, str):
             return "error", {"code": wire.INVALID_PARAMS, "message": checked}
         name, arguments, meta = checked
+        self.keep_protocol(params)
         await self.ensure_tools()
         key = wire.canonical([name, arguments])
         op_id = self._open_ops.get(key)
