@@ -8,7 +8,9 @@ import json
 import logging
 import secrets
 import threading
+import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -28,6 +30,7 @@ pre { background: #f4f4f4; padding: 8px; overflow-x: auto; white-space: pre-wrap
 form { display: inline-block; margin-right: 8px; }
 button { font: inherit; padding: 4px 14px; }
 .muted { color: #666; }
+.flow { border-left: 4px solid #b26b00; padding-left: 8px; }
 @media (prefers-color-scheme: dark) {
   body { color: #eee; background: #1b1b1d; } pre { background: #2a2a2d; }
   .item { border-color: #444; } .muted { color: #aaa; }
@@ -35,12 +38,23 @@ button { font: inherit; padding: 4px 14px; }
 """
 
 
+def flow_note(reason: Any) -> str:
+    """The flow reason as its own paragraph, or nothing when the rule did not apply."""
+    if not reason:
+        return ""
+    return f'<p class="flow"><strong>Flow rule:</strong> {escape(str(reason))}</p>'
+
+
 def pretty(value: Any) -> str:
     return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True)
 
 
-def render(state: dict[str, Any], token: str, nonce: str) -> str:
-    """The page as HTML. Every value from the model or the server is escaped."""
+def render(state: dict[str, Any], token: str, nonce: str, now: float | None = None) -> str:
+    """The page as HTML. Every value from the model or the server is escaped.
+
+    The page reloads by itself only while nothing is shown, so an item never moves
+    under the pointer. Otherwise it has a Refresh link and the time it was drawn.
+    """
     def form(action: str, label: str, fields: dict[str, str]) -> str:
         hidden = "".join(
             f'<input type="hidden" name="{escape(k, quote=True)}" value="{escape(v, quote=True)}">'
@@ -65,7 +79,8 @@ def render(state: dict[str, Any], token: str, nonce: str) -> str:
             f"<p><strong>{escape(str(item['tool']))}</strong> "
             f'<span class="muted">waited {int(item["waited"])} s, operation {escape(op)}</span></p>'
             f"<p>{escape(str(item['summary']))}</p>"
-            f"<pre>{escape(pretty(item['arguments']))}</pre>"
+            + flow_note(item.get("flow_reason"))
+            + f"<pre>{escape(pretty(item['arguments']))}</pre>"
             + form("approve", "Approve", {"operation_id": op})
             + form("deny", "Deny", {"operation_id": op})
             + "</div>"
@@ -86,10 +101,17 @@ def render(state: dict[str, Any], token: str, nonce: str) -> str:
                    {"tool": str(item["tool"]), "hash": str(item["hash"])})
             + "</div>"
         )
-    parts.append(
-        f'<script nonce="{escape(nonce, quote=True)}">'
-        "setTimeout(function () { location.reload(); }, 2000);</script>"
-    )
+    if state["pending"] or state["changed"]:
+        drawn = datetime.fromtimestamp(time.time() if now is None else now, UTC)
+        parts.append(
+            f'<p class="muted"><a href="/?token={escape(quote(token), quote=True)}">Refresh</a>'
+            f" Drawn at {drawn:%Y-%m-%d %H:%M:%S} UTC.</p>"
+        )
+    else:
+        parts.append(
+            f'<script nonce="{escape(nonce, quote=True)}">'
+            "setTimeout(function () { location.reload(); }, 2000);</script>"
+        )
     parts.append("</body></html>")
     return "".join(parts)
 
