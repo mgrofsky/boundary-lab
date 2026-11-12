@@ -405,3 +405,28 @@ def test_two_definitions_that_share_a_short_prefix_are_still_a_change(monkeypatc
     assert not proxy.accept("echo", version(second)[:12])
     assert proxy.accept("echo", version(second))
     assert proxy.served["echo"] == second
+
+
+def test_every_args_model_takes_the_input_round_under_reserved_names():
+    model = args_model({"properties": {"input_round_0": {}, "x": {}}})
+    checked = model.model_validate({"x": 1, "$inputResponses": {"a": {}}, "$requestState": "s"})
+    assert checked.model_dump() == {"x": 1, "$inputResponses": {"a": {}}, "$requestState": "s"}
+    assert model.model_validate({"input_round_0": 2}).model_dump() == {"input_round_0": 2}
+    with pytest.raises(ValueError):
+        model.model_validate({"inputResponses": {}})
+
+
+@pytest.mark.parametrize(("schema", "hidden"), [
+    ({"properties": {"$requestState": {}}}, True),
+    ({"properties": {}, "required": ["$inputResponses"]}, True),
+    ({"properties": {"requestState": {}}}, False),
+    (None, False),
+])
+def test_a_tool_that_uses_a_reserved_name_is_hidden(schema, hidden):
+    from boundary_latch.mcp.tools import uses_reserved
+
+    tool = {"name": "t", "inputSchema": schema}
+    assert uses_reserved(tool) is hidden
+    proxy = make_proxy(Pins())
+    proxy.learn([{**tool, "name": "echo"}])
+    assert ("echo" in proxy.served) is not hidden
