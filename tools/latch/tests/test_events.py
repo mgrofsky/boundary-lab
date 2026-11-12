@@ -16,7 +16,8 @@ from boundary_latch.store import SQLiteStore
 from .conftest import POLICY, LookupArgs, SendMessageArgs, account_hook, make_approver, make_ctx
 
 FIELDS = {"schema", "event", "code", "org_id", "run_id", "operation_id", "user_id", "tool",
-          "outcome", "duration_ms", "at", "reference", "summary", "copied"}
+          "outcome", "duration_ms", "at", "reference", "summary", "copied", "labels",
+          "flow_reason"}
 MESSAGE = {"to": "help@northwind.example", "body": "hello"}
 
 

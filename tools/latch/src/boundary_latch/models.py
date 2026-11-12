@@ -77,6 +77,8 @@ class PreparedAction(BaseModel):
     explanation: str
     copied: frozenset[str] = frozenset()
     summary: str = ""
+    # Set when the flow rule applies to this call: what set each label, and what it adds.
+    flow_reason: str = ""
     _args_json: str = PrivateAttr()
 
     @property
@@ -112,3 +114,4 @@ class OperationStatus(Strict):
     summary: str = ""
     copied: frozenset[str] = frozenset()
     reference: str | None = None
+    flow_reason: str = ""

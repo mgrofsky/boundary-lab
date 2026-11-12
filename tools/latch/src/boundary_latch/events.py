@@ -23,16 +23,22 @@ FIELDS = (
     "reference",
     "summary",
     "copied",
+    "labels",
+    "flow_reason",
 )
 
 
 def to_event(row: dict[str, Any]) -> dict[str, Any]:
-    """Turn one audit row into the event dict. copied becomes a list of paths or None."""
+    """Turn one audit row into the event dict.
+
+    copied becomes a list of paths or None, and labels a list of labels or None.
+    """
     event: dict[str, Any] = {"schema": SCHEMA}
     for name in FIELDS:
         event[name] = row.get(name)
-    if event["copied"] is not None:
-        event["copied"] = json.loads(event["copied"])
+    for name in ("copied", "labels"):
+        if event[name] is not None:
+            event[name] = json.loads(event[name])
     return event
 
 
@@ -47,6 +53,10 @@ def format_line(event: dict[str, Any]) -> str:
             parts.append(f"{label}={event[name]}")
     if event["copied"]:
         parts.append(f"copied={','.join(event['copied'])}")
+    if event["labels"]:
+        parts.append(f"labels={','.join(event['labels'])}")
     if event["summary"]:
         parts.append(f"summary={event['summary']}")
+    if event["flow_reason"]:
+        parts.append(f"flow={event['flow_reason']}")
     return " ".join(parts)

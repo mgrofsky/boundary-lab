@@ -54,7 +54,12 @@ def test_a_0_2_database_gets_the_new_columns(tmp_path):
     assert {"copied", "summary"} <= columns(store, "operations")
     assert {"summary", "copied", "reference"} <= columns(store, "audit")
     assert "reference" in columns(store, "approvals")
-    assert "last_at" in columns(store, "runs")
+    assert {"last_at", "labels"} <= columns(store, "runs")
+    assert "flow_reason" in columns(store, "operations")
+    assert "flow_reason" in columns(store, "approvals")
+    assert {"labels", "flow_reason"} <= columns(store, "audit")
+    assert row["flow_reason"] == ""
+    assert store.run_labels("o", "r") == {}
     # A run from 0.2.0 has no last touch, so its start time stands in.
     assert store.last_touch("o", "r") == 10.0
     store.close()
