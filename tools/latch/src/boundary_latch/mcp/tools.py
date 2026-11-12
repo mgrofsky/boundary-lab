@@ -147,7 +147,7 @@ run_idle_seconds = 3600
 
 def starter_policy(tools: list[dict[str, Any]]) -> tuple[str, list[str]]:
     """The policy text, and the names left out because Latch cannot use them."""
-    lines = [STARTER_HEAD]
+    lines = [STARTER_HEAD.rstrip("\n")]
     skipped = []
     for tool in tools:
         name = tool.get("name")
