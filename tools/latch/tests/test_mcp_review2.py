@@ -116,3 +116,33 @@ def test_a_call_refused_for_its_params_does_not_set_the_protocol_fields(modern):
     modern.request("tools/list", {"_meta": {}})
     listed = [m for m in modern.server_log() if m.get("method") == "tools/list"]
     assert listed and all(m["params"]["_meta"][VERSION] == "2026-07-28" for m in listed)
+
+
+# _meta on a tools/call
+
+ALLOWED_META = {
+    **GOOD, "io.modelcontextprotocol/logLevel": "info", "progressToken": "p",
+    "traceparent": "00-abc-def-01", "tracestate": "a=b", "baggage": "k=v",
+}
+
+
+def test_only_the_listed_meta_keys_reach_the_server(modern):
+    meta = {**ALLOWED_META, "vendor/actAs": "admin", "other": {"x": 1}}
+    for text in ("a", "b"):
+        modern.request("tools/call", {"name": "echo", "arguments": {"text": text},
+                                      "_meta": meta})
+    sent = [m["params"]["_meta"] for m in modern.server_calls()]
+    assert sent == [ALLOWED_META, ALLOWED_META]
+    err = modern.stderr()
+    assert err.count("'vendor/actAs'") == 1 and err.count("'other'") == 1
+    assert "admin" not in err
+
+
+def test_a_long_or_odd_meta_key_is_logged_safely(modern):
+    key = "\x1b[31m" + "k" * 200
+    modern.request("tools/call", {"name": "echo", "arguments": {"text": "a"},
+                                  "_meta": {**GOOD, key: 1}})
+    assert modern.server_calls()[0]["params"]["_meta"] == GOOD
+    err = modern.stderr()
+    assert "\x1b" not in err
+    assert repr(key)[:80] in err and "k" * 100 not in err

@@ -41,6 +41,13 @@ TASK_METHODS = frozenset({"tasks/get", "tasks/cancel"})
 CALL_KEYS = frozenset({"name", "arguments", "_meta", "inputResponses", "requestState"})
 # decide() answers this when the form's digest does not match the operation now.
 STALE_PAGE = "STALE_PAGE"
+# The params._meta keys of a tools/call that reach the server. They are outside the
+# request hash and the approval page, so only protocol and tracing keys pass.
+META_KEYS = frozenset({
+    "io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientInfo",
+    "io.modelcontextprotocol/clientCapabilities", "io.modelcontextprotocol/logLevel",
+    "progressToken", "traceparent", "tracestate", "baggage",
+})
 
 
 class ChildGone(Exception):
@@ -109,6 +116,8 @@ class Proxy(ToolCatalog):
         self._call_meta: dict[str, dict[str, Any] | None] = {}
         # Open subscriptions/listen requests: the proxy's id to the client's id.
         self._listens: dict[int, Any] = {}
+        # _meta key names already logged as dropped.
+        self._dropped_meta: set[str] = set()
 
     # Writing
 
@@ -416,11 +425,31 @@ class Proxy(ToolCatalog):
                 arguments = {**arguments, reserved: value}
         return params["name"], arguments, meta if "_meta" in params else None
 
+    def forwarded_meta(self, meta: dict[str, Any] | None) -> dict[str, Any] | None:
+        """The part of a call's _meta that reaches the server: the listed keys only.
+
+        _meta is outside the request hash and the approval page, and the repeat call
+        that runs supplies it. So a vendor key could change between what a person
+        approved and what runs. Every other key is dropped, and its name logged once.
+        """
+        if meta is None:
+            return None
+        for key in meta:
+            if key in META_KEYS:
+                continue
+            label = wire.printable(repr(key)[:80])
+            if label not in self._dropped_meta:
+                self._dropped_meta.add(label)
+                logger.warning("dropped _meta key %s from a tools/call: only protocol and "
+                               "tracing keys reach the server", label)
+        return {key: value for key, value in meta.items() if key in META_KEYS}
+
     async def run_call(self, call: Call, params: Any) -> tuple[str, Any]:
         checked = self.call_input(params)
         if isinstance(checked, str):
             return "error", {"code": wire.INVALID_PARAMS, "message": checked}
         name, arguments, meta = checked
+        meta = self.forwarded_meta(meta)
         self.keep_protocol(params)
         await self.ensure_tools()
         key = wire.canonical([name, arguments])
