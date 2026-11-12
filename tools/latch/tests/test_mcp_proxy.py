@@ -11,12 +11,12 @@ import pytest
 
 from boundary_latch.mcp.tools import old_version, version
 
-from .mcp_helpers import FAKE, POLICY, Proxy, http, text_of, wait_for
+from .mcp_helpers import FAKE, META, POLICY, Proxy, http, text_of, wait_for
 
 
 @pytest.fixture
-def proxy(tmp_path):
-    started = Proxy(tmp_path)
+def proxy(tmp_path, modern):
+    started = Proxy(tmp_path, modern=modern)
     yield started
     started.close()
 
@@ -35,21 +35,27 @@ def calls_to(proxy, tool):
 # Relay and tools
 
 
-def test_an_allowed_call_returns_the_server_result_unchanged(proxy):
+def complete(result, modern):
+    """A server result as the fake sends it: the 2026-07-28 form adds resultType."""
+    return {**result, "resultType": "complete"} if modern else result
+
+
+def test_an_allowed_call_returns_the_server_result_unchanged(proxy, modern):
     reply = proxy.call("echo", {"text": "hi", "extra": {"a": [1, 2, None]}})
-    assert reply["result"] == {"content": [{"type": "text", "text": json.dumps(
+    assert reply["result"] == complete({"content": [{"type": "text", "text": json.dumps(
         {"args": {"extra": {"a": [1, 2, None]}, "text": "hi"}, "tool": "echo"},
-        sort_keys=True)}]}
+        sort_keys=True)}]}, modern)
 
 
-def test_the_server_sees_exactly_the_checked_arguments_and_the_client_meta(proxy):
+def test_the_server_sees_exactly_the_checked_arguments_and_the_client_meta(proxy, modern):
     proxy.call("files.read-text", {"my-arg": 1, "class": "c"})
-    proxy.request("tools/call", {"name": "echo", "arguments": {"text": "x"},
-                                 "_meta": {"progressToken": "p"}})
+    meta = {**(META if modern else {}), "progressToken": "p"}
+    proxy.request("tools/call", {"name": "echo", "arguments": {"text": "x"}, "_meta": meta})
     sent = [m["params"] for m in proxy.server_calls()]
-    assert sent == [{"name": "files.read-text", "arguments": {"my-arg": 1, "class": "c"}},
-                    {"name": "echo", "arguments": {"text": "x"},
-                     "_meta": {"progressToken": "p"}}]
+    first = {"name": "files.read-text", "arguments": {"my-arg": 1, "class": "c"}}
+    if modern:
+        first["_meta"] = META
+    assert sent == [first, {"name": "echo", "arguments": {"text": "x"}, "_meta": meta}]
 
 
 @pytest.mark.parametrize(("params", "named"), [
@@ -108,10 +114,10 @@ def test_a_tools_call_without_a_name_gets_an_error(proxy):
     assert proxy.server_calls() == []
 
 
-def test_is_error_and_json_rpc_errors_reach_the_client_unchanged(proxy):
+def test_is_error_and_json_rpc_errors_reach_the_client_unchanged(proxy, modern):
     failed = proxy.call("fail", {})
-    assert failed["result"] == {"content": [{"type": "text", "text": "it failed"}],
-                                "isError": True}
+    assert failed["result"] == complete({"content": [{"type": "text", "text": "it failed"}],
+                                         "isError": True}, modern)
     error = proxy.call("rpc_error", {}, msg_id="mine")
     assert error == {"jsonrpc": "2.0", "id": "mine",
                      "error": {"code": -32001, "message": "nope"}}
@@ -151,13 +157,13 @@ def test_client_ids_never_collide_with_proxy_ids(proxy):
     assert len(seen) == len(set(seen))
 
 
-def test_other_requests_and_notifications_pass_through(proxy):
-    assert proxy.request("ping", msg_id="p")["result"] == {}
+def test_other_requests_and_notifications_pass_through(proxy, modern):
+    assert proxy.request("ping", msg_id="p")["result"] == complete({}, modern)
     proxy.send({"jsonrpc": "2.0", "method": "notifications/roots/list_changed"})
     proxy.request("ping")
     methods = [m.get("method") for m in proxy.server_log()]
     assert "notifications/roots/list_changed" in methods
-    assert "notifications/initialized" in methods
+    assert ("server/discover" if modern else "notifications/initialized") in methods
 
 
 def test_server_requests_reach_the_client_and_the_answer_goes_back(proxy):
@@ -221,10 +227,17 @@ def test_closing_stdin_ends_the_server_and_the_proxy(proxy):
     assert proxy.close() == 0
 
 
-def test_list_changed_reaches_the_client(proxy):
+def test_list_changed_reaches_the_client(proxy, modern):
+    if modern:
+        # The 2026-07-28 form sends list changes only on a subscriptions/listen stream.
+        proxy.send({"jsonrpc": "2.0", "id": "listen:0", "method": "subscriptions/listen",
+                    "params": {"notifications": {"toolsListChanged": True}}})
     proxy.call("mutate", {})
-    wait_for(lambda: any(m.get("method") == "notifications/tools/list_changed"
-                         for m in list(proxy.lines.queue)))
+    changed = wait_for(lambda: [m for m in list(proxy.lines.queue)
+                                if m.get("method") == "notifications/tools/list_changed"])
+    if modern:
+        assert changed[0]["params"]["_meta"] == {
+            "io.modelcontextprotocol/subscriptionId": "listen:0"}
 
 
 # Wrong types for amount and recipient
@@ -287,8 +300,8 @@ def start_call(proxy, tool, args, msg_id):
                 "params": {"name": tool, "arguments": args}})
 
 
-def test_a_call_that_needs_approval_runs_only_after_approve(tmp_path):
-    proxy = Proxy(tmp_path, "--approval-wait", "20")
+def test_a_call_that_needs_approval_runs_only_after_approve(tmp_path, modern):
+    proxy = Proxy(tmp_path, "--approval-wait", "20", modern=modern)
     try:
         start_call(proxy, "guarded", {"note": "hello"}, 7)
         ops = wait_for(lambda: pending_ids(proxy))
@@ -303,8 +316,8 @@ def test_a_call_that_needs_approval_runs_only_after_approve(tmp_path):
         proxy.close()
 
 
-def test_a_denied_call_is_blocked_and_never_forwarded(tmp_path):
-    proxy = Proxy(tmp_path, "--approval-wait", "20")
+def test_a_denied_call_is_blocked_and_never_forwarded(tmp_path, modern):
+    proxy = Proxy(tmp_path, "--approval-wait", "20", modern=modern)
     try:
         start_call(proxy, "guarded", {"note": "no"}, 8)
         ops = wait_for(lambda: pending_ids(proxy))
@@ -446,11 +459,16 @@ def changed_hash(proxy):
     return body.split('name="hash" value="')[1].split('"')[0]
 
 
-def test_a_changed_tool_is_refused_until_a_person_accepts_it(tmp_path):
-    proxy = Proxy(tmp_path, "--db", str(tmp_path / "latch.db"))
+def test_a_changed_tool_is_refused_until_a_person_accepts_it(tmp_path, modern):
+    proxy = Proxy(tmp_path, "--db", str(tmp_path / "latch.db"), modern=modern)
     try:
+        if modern:
+            proxy.send({"jsonrpc": "2.0", "id": "l", "method": "subscriptions/listen",
+                        "params": {"notifications": {"toolsListChanged": True}}})
         assert "result" in proxy.call("echo", {"text": "before"})
         proxy.call("mutate", {})
+        wait_for(lambda: [m for m in list(proxy.lines.queue)
+                          if m.get("method") == "notifications/tools/list_changed"])
         assert blocked_code(proxy.call("echo", {"text": "after"})) == "TOOL_CHANGED"
         assert [c["params"]["arguments"] for c in calls_to(proxy, "echo")] == [{"text": "before"}]
         listed = proxy.request("tools/list", {})["result"]["tools"]

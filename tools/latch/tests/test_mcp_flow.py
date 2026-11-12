@@ -49,8 +49,8 @@ def read_both(proxy):
     assert "isError" not in proxy.call("get_private_file", {"path": "key.pem"})["result"]
 
 
-def test_deny_blocks_the_third_call_and_it_never_reaches_the_server(tmp_path):
-    proxy = Proxy(tmp_path, policy=FLOW_POLICY.format(mode="deny"))
+def test_deny_blocks_the_third_call_and_it_never_reaches_the_server(tmp_path, modern):
+    proxy = Proxy(tmp_path, policy=FLOW_POLICY.format(mode="deny"), modern=modern)
     try:
         read_both(proxy)
         reply = proxy.call("create_pull_request", {"body": "key.pem contents"})
@@ -63,8 +63,9 @@ def test_deny_blocks_the_third_call_and_it_never_reaches_the_server(tmp_path):
         proxy.close()
 
 
-def test_approve_waits_shows_the_reason_and_runs_after_approve(tmp_path):
-    proxy = Proxy(tmp_path, "--approval-wait", "20", policy=FLOW_POLICY.format(mode="approve"))
+def test_approve_waits_shows_the_reason_and_runs_after_approve(tmp_path, modern):
+    proxy = Proxy(tmp_path, "--approval-wait", "20", policy=FLOW_POLICY.format(mode="approve"),
+                  modern=modern)
     try:
         read_both(proxy)
         proxy.send({"jsonrpc": "2.0", "id": 77, "method": "tools/call",
