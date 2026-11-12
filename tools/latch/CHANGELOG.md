@@ -21,14 +21,17 @@
 - `boundary-latch check` prints the flow mode and how many tools carry each label.
 - `boundary-latch mcp --print-policy --flow` writes a starter policy with the rule on and every label on every tool.
 - The demo has a `lookup_note` tool and a tenth scenario, `flow_chain`, that shows the rule.
-- The MCP proxy works with MCP 2026-07-28 clients and servers as well as the older `initialize` form. It keeps the client's protocol fields from `_meta` and puts them on its own requests. See "Protocol versions" in docs/mcp.md.
+- The MCP proxy works with MCP 2026-07-28 clients and servers as well as the older `initialize` form. It keeps the client's protocol fields from `_meta` and puts them on its own requests. It keeps them only from a request it accepted, only when they look right, and as a whole. See "Protocol versions" in docs/mcp.md.
 - Input rounds. When a client sends a `tools/call` again with `inputResponses` and `requestState`, the proxy checks them as arguments named `$inputResponses` and `$requestState`, so the request hash, the summary, and the approval page cover them. Each round is its own operation. A server tool whose `inputSchema` uses either name is hidden.
-- Every `tools/list` fetches the server's list again, and the answer keeps the other fields of the server's last page, such as `ttlMs` and `cacheScope`, without `nextCursor`.
+- A round must answer a request the server made for the same tool and arguments, with the same `requestState` and only keys it asked for. Otherwise the call is refused before `prepare` with the new code `INPUT_NOT_REQUESTED`. Each request can be answered once.
+- Every `tools/list` fetches the server's list again. The answer holds only `tools`, `resultType`, `ttlMs`, `cacheScope`, and the server's info in `_meta`. Every other field of the server's page is dropped.
 - Results the proxy writes itself carry `resultType` `"complete"`.
-- The client's `tools/call` `_meta` goes to the server. It is not part of the request hash. Any `params` key other than `name`, `arguments`, `_meta`, `inputResponses`, and `requestState` gets a `-32602` error that names it.
+- Only protocol and tracing keys of the client's `tools/call` `_meta` go to the server. Every other key is dropped, and its name is logged once. `_meta` is not part of the request hash. Any `params` key other than `name`, `arguments`, `_meta`, `inputResponses`, and `requestState` gets a `-32602` error that names it.
 - `subscriptions/listen` passes through. The proxy maps the subscription id on the server's notifications back to the client's request id, and forgets a listen the client cancels.
-- `tasks/update` is refused with `-32601`, since input to a running task is not checked yet. `tasks/get` and `tasks/cancel` pass through.
+- Only `tasks/get` and `tasks/cancel` pass through, and not when they carry an input round. Every other `tasks/` method, such as `tasks/update`, is refused with `-32601`, since input to a running task is not checked yet. Such a notification is dropped.
 - `boundary-latch mcp --print-policy` probes with `server/discover` and falls back to `initialize` when the server does not answer it.
+- The reason code `INPUT_NOT_REQUESTED`.
+- `--tool-timeout` also limits the proxy's own requests to the server, such as its `tools/list`.
 
 ### Changed
 
@@ -50,6 +53,11 @@
 - The approval form carried only the operation id, so a person could approve from a page drawn before the flow reason changed. Each form now carries a digest of the request hash, the summary, and the flow reason. A decision whose digest no longer matches is refused with "This page is out of date, refresh it."
 - In deny mode, a repeat of a waiting MCP call that came back `FLOW_BLOCKED` left the operation open and on the approval page, though it could never run. The proxy now cancels it, takes it off the page, and wakes the call that waited on it.
 - `approval.mode = "over_amount"` let a negative amount run without approval. A negative amount now needs approval, whatever the threshold.
+- A notification from the MCP server with a list as its subscription id raised an error in the proxy's reader. The proxy then answered nothing. A subscription id must now be an int, and an error on one server line drops only that line.
+- When the proxy stops reading the server while the server still runs, it answers every call in flight with `PROXY_ERROR`, stops the server, and exits with code 1.
+- A `notifications/tools/list_changed` that arrived while the proxy fetched the tool list was lost. The list now stays stale, so the next call fetches it again.
+- A server that never answered the proxy's `tools/list` made every call wait forever. The client's `tools/list` now gets an error after `--tool-timeout`, and the call gets `PROXY_ERROR`.
+- Server text that the proxy logs or prints, such as tool names, error messages, and versions, could carry terminal escape codes. It now keeps printable characters only, cut at 200 characters.
 
 ## 0.3.0
 

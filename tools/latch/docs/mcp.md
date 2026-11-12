@@ -50,7 +50,7 @@ Most hosts read an `mcpServers` map. Put the proxy where the server command was,
 | `--permissions A,B` | see below | The permissions the agent holds. |
 | `--approver NAME` | your login name | The user id of the person on the approval page. It must differ from `--user`. |
 | `--db PATH` | `:memory:` | The SQLite file for operations and audit rows. Use a file to read the rows later with `boundary-latch audit`. |
-| `--tool-timeout SECONDS` | `60` | How long one tool call may take. After that the outcome is `UNCERTAIN`. |
+| `--tool-timeout SECONDS` | `60` | How long one tool call may take. After that the outcome is `UNCERTAIN`. It also limits how long the proxy waits for its own requests, such as its `tools/list`. |
 | `--approval-wait SECONDS` | `120` | How long a call waits for a decision. `0` means it does not wait. |
 | `--approval-port N` | `0` | The approval page port. `0` picks a free port. `-1` turns the page off. |
 | `--no-open` | off | Do not open the approval page in a browser. |
@@ -71,7 +71,7 @@ One proxy process is one Latch run. Each process gets a new run id, and each `to
 
 ## What the client sees
 
-The proxy passes every message through unchanged, in both directions, except `tools/list`, `tools/call`, and `tasks/update`. That covers initialize, `server/discover`, ping, resources, prompts, sampling, elicitation, roots, progress, cancel, logging, `subscriptions/listen`, `tasks/get`, and `tasks/cancel`.
+The proxy passes every message through unchanged, in both directions, except `tools/list`, `tools/call`, and the `tasks/` methods other than `tasks/get` and `tasks/cancel`. That covers initialize, `server/discover`, ping, resources, prompts, sampling, elicitation, roots, progress, cancel, logging, `subscriptions/listen`, `tasks/get`, and `tasks/cancel`.
 
 `tools/list` shows only the server's tools that the policy names. A tool the policy does not name is hidden. A tool whose name does not fit Latch's pattern is hidden too. So is a tool whose `inputSchema` names `$inputResponses` or `$requestState`, the two argument names the proxy keeps for input rounds. Names start with a letter, then up to 63 letters, digits, underscores, dots, or hyphens. The proxy logs hidden names to stderr once. A call to a hidden tool returns `UNKNOWN_TOOL`.
 
@@ -81,7 +81,17 @@ A blocked call is a normal result with `isError` set to true and one text block:
 
 It is not a JSON-RPC error, so the model can read why and tell the person.
 
-Every `tools/list` from the client makes the proxy fetch the server's whole list again, every page. The pins then check what the server has now, so a cached list never hides a change. The answer is the filtered list plus the other top level fields of the server's last page, such as `ttlMs`, `cacheScope`, and `_meta`. `nextCursor` is left out, since the client gets every tool at once. A `tools/call` uses the list the proxy already has. It fetches the list only when there is none, or after the server sent `notifications/tools/list_changed`.
+Every `tools/list` from the client makes the proxy fetch the server's whole list again, every page. The pins then check what the server has now, so a cached list never hides a change. The answer is built from an allow list, so a server cannot put text beside the tools that a client might trust:
+
+- `tools`, the filtered and pinned list.
+- `resultType`, always `"complete"`.
+- `ttlMs`, when the server's last page has it as an int of 0 or more.
+- `cacheScope`, when the server's last page has it as `"public"` or `"private"`.
+- `_meta`, holding only `io.modelcontextprotocol/serverInfo`, when the server sent that as an object.
+
+Every other field of the server's page is dropped, such as `nextCursor`, `instructions`, or a second list of tools. A `tools/call` uses the list the proxy already has. It fetches the list only when there is none, or after the server sent `notifications/tools/list_changed`. A change that arrives while the proxy fetches the list keeps the list stale, so the next call fetches it again.
+
+The proxy waits at most `--tool-timeout` seconds for the server's answer to its own `tools/list`. After that the client's `tools/list` gets a `-32603` error, "could not list tools". A `tools/call` that needed the list gets `PROXY_ERROR`.
 
 Outcomes from the server reach the client like this:
 
@@ -97,9 +107,11 @@ Outcomes from the server reach the client like this:
 
 The proxy builds an arguments model for each tool from the top level `properties` of its `inputSchema`. A name in `required` must be present. An argument the schema does not list is refused with `INVALID_ARGUMENTS`. The proxy does not check types inside an argument; the server does its own validation.
 
-The server sees exactly the arguments Latch checked. The proxy parses each client message and writes it again from the parsed value. It never forwards the client's raw bytes. Only the tool name, the checked arguments, the input round, and `_meta` go to the server.
+The server sees exactly the arguments Latch checked. The proxy parses each client message and writes it again from the parsed value. It never forwards the client's raw bytes. Only the tool name, the checked arguments, the input round, and the allowed `_meta` keys go to the server.
 
-The client's `params._meta` goes to the server as the proxy parsed it. It is protocol metadata, such as the protocol version and a progress token. It is not part of what the tool is asked to do, so it is not in the request hash, and Latch does not check it. The only `params` keys the proxy understands are `name`, `arguments`, `_meta`, `inputResponses`, and `requestState`. A `tools/call` with any other key gets a `-32602` invalid params error that names the key, and it never reaches the server.
+Only these keys of the client's `params._meta` go to the server: `io.modelcontextprotocol/protocolVersion`, `io.modelcontextprotocol/clientInfo`, `io.modelcontextprotocol/clientCapabilities`, `io.modelcontextprotocol/logLevel`, `progressToken`, `traceparent`, `tracestate`, and `baggage`. They are protocol and tracing metadata, not part of what the tool is asked to do. So they are not in the request hash and not on the approval page, and Latch does not check them.
+
+The call that runs after an approval is the client's repeat, and it brings its own `_meta`. Any other key, such as `vendor/actAs`, could change between what a person approved and what runs. So the proxy drops every other key and logs each dropped key name once. The only `params` keys the proxy understands are `name`, `arguments`, `_meta`, `inputResponses`, and `requestState`. A `tools/call` with any other key gets a `-32602` invalid params error that names the key, and it never reaches the server.
 
 A line that is not valid JSON gets a `-32700` error. A JSON array (a batch) gets `-32600`. A `tools/call` with a repeated key anywhere in it also gets `-32600`. None of these reach the server. NaN, Infinity, and numbers too large for a float are not valid JSON here.
 
@@ -117,15 +129,30 @@ The proxy puts `inputResponses` and `requestState` into the arguments Latch chec
 - The approval page shows the two fields under their own headings, apart from the arguments.
 - An `"input_required"` result from the server is a normal result. Latch records the round as `EXECUTED`, and the client gets the result unchanged.
 
+A round must answer a request the server made, in this proxy process:
+
+- When a `tools/call` result has `resultType` `"input_required"`, the proxy keeps a record for that tool and those arguments. It holds the `requestState`, or that there was none, and the keys of `inputRequests`.
+- Arguments are compared as canonical JSON, without the input round.
+- A `tools/call` that carries `inputResponses` or `requestState` passes only when a record exists for the same tool and arguments. Its `requestState` must equal the recorded one, and both absent counts as equal. Every key of `inputResponses` must be one the server asked for.
+- Otherwise the proxy refuses the call before `prepare`, with the code `INPUT_NOT_REQUESTED`: "This call carries an answer the server did not ask for." It writes an audit row with that code.
+- A record is used up when a round that matches it is sent to the server. A new `"input_required"` result for the same tool and arguments replaces it.
+- A result whose `requestState` is not a string, or whose `inputRequests` is not an object, leaves no record. No answer to it passes.
+- The proxy keeps at most 1000 records and drops the oldest first.
+- A round that passes still goes through Latch like any call.
+
 ## Protocol versions
 
 The proxy works with clients and servers of both eras: the older form that starts with `initialize`, and MCP 2026-07-28, where every request carries the protocol version, the client's name, and its capabilities in `_meta`. The proxy does not choose an era. It follows what the messages show.
 
 - The proxy keeps the protocol fields (`io.modelcontextprotocol/protocolVersion`, `clientInfo`, and `clientCapabilities`, nothing else) from the latest client request that had them. It puts them on every request of its own, such as its `tools/list`. Before any client request has carried them, it sends none.
+- It takes them only from a request it accepted, never from one it refused. The version must be a string of at most 32 letters, digits, dots, and hyphens. `clientInfo` and `clientCapabilities`, when present, must be objects. Otherwise the request's fields are not kept. A new set replaces the old one as a whole.
 - Results the proxy writes itself carry `resultType` `"complete"`: blocked, waiting, and uncertain results, and the `tools/list` answer. Older clients ignore the field.
 - `subscriptions/listen` passes through. Its answer may never come. When the client cancels it, the proxy forgets its id. The server tags each notification on the stream with `io.modelcontextprotocol/subscriptionId`, the id of the listen request. The server only saw the proxy's id for it, so the proxy puts the client's id back. A notification for a subscription that is no longer open is dropped, since the client could not match it.
 - `notifications/tools/list_changed` makes the proxy forget its list, whatever `_meta` it carries.
 - A message from the server that is not a valid JSON-RPC shape is dropped and logged. That includes an object with both `method` and `result` or `error`, and a response with both `result` and `error`.
+- A message from the server never stops the proxy. A subscription id that is not an int was never the proxy's, so its notification is dropped. An error while the proxy handles one line from the server drops that line, and the log names only the error's type.
+- If the proxy stops reading the server while the server still runs, every call in flight gets `PROXY_ERROR`. The proxy then stops the server and exits with code 1.
+- Text from the server that the proxy logs or prints keeps printable characters only. That covers tool names, error messages, and versions. Any other character becomes `?`, and the text is cut at 200 characters. Terminal escape codes never reach your terminal through the proxy.
 
 ## Approval
 
@@ -214,7 +241,11 @@ This turns on `[flow]` with `all_three = "approve"` and gives every tool all thr
 - An agent that can run shell commands on the same machine can reach the approval page, or edit its own MCP config to skip the proxy. The proxy protects against a misled model, not against code running on your machine.
 - The proxy does not detect copied values yet, so `copied_arguments` has no effect here.
 - Use one proxy per database file.
-- A server can answer a `tools/call` with a task handle. `tasks/get` and `tasks/cancel` pass through. `tasks/update` feeds input into a call that already ran through Latch, with nothing checked, so the proxy refuses it with a `-32601` error that says "Blocked by Latch: input to a running task is not checked yet".
+- A server can answer a `tools/call` with a task handle. Latch records that as one finished call. What the task does later is not checked.
+- `tasks/get` and `tasks/cancel` pass through. Every other `tasks/` method, such as `tasks/update`, could feed input into a call that already ran through Latch, with nothing checked. The proxy refuses such a request with a `-32601` error that says "Blocked by Latch: input to a running task is not checked yet". It refuses a `tasks/get` or `tasks/cancel` that carries `inputResponses` or `requestState` the same way. It drops such a notification and logs it.
+- A server of the older form can send requests to the client, such as sampling, elicitation, and roots. The client's answers to them pass through unchecked.
+- `_meta` keys of a `tools/call` outside the list under "Arguments" are dropped. A server that needs another key does not get it.
+- The server's own stderr is not the proxy's output. It reaches your terminal as the server wrote it.
 - In MCP 2026-07-28 a server reports list changes only on a `subscriptions/listen` stream the client opened. A client that opens none still gets a fresh list on each `tools/list`, but a `tools/call` uses the list the proxy fetched last.
 - Only stdio servers are supported.
 - Each proxy process starts a new run id. Flow labels do not carry across a restart of the proxy, or between two proxied servers, while the model's context does. A model that read untrusted text through one server can act through another with no label set.
