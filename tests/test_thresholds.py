@@ -87,13 +87,17 @@ def test_use_interval_tests_recall_low_end_and_false_alarm_high_end():
     assert thresholds.check(summary, min_recall=0.8, max_false_alarm=0.1) == []
     lines = thresholds.check(summary, min_recall=0.8, max_false_alarm=0.3, use_interval=True)
     assert lines == [
-        "recall on holdout is 0.875 (95% interval 0.690 to 0.957), "
-        "its low end is below the minimum of 0.800",
+        (
+            "recall on holdout is 0.875 (95% interval 0.690 to 0.957), "
+            "its low end is below the minimum of 0.800"
+        ),
     ]
     lines = thresholds.check(summary, max_false_alarm=0.2, use_interval=True)
     assert lines == [
-        "false alarm rate on holdout is 0.094 (95% interval 0.032 to 0.242), "
-        "its high end is above the maximum of 0.200",
+        (
+            "false alarm rate on holdout is 0.094 (95% interval 0.032 to 0.242), "
+            "its high end is above the maximum of 0.200"
+        ),
     ]
 
 
