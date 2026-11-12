@@ -217,13 +217,18 @@ def cmd_gate(args) -> int:
     path = Path(args.summary)
     if not path.is_file():
         raise SystemExit(f"redline: no summary at {path}, run redline report first")
-    lines = thresholds.check(
-        json.loads(path.read_text()),
-        min_recall=args.min_recall,
-        max_false_alarm=args.max_false_alarm,
-        min_kappa=args.min_kappa,
-        attack=args.attack,
-    )
+    try:
+        lines = thresholds.check(
+            json.loads(path.read_text()),
+            min_recall=args.min_recall,
+            max_false_alarm=args.max_false_alarm,
+            min_kappa=args.min_kappa,
+            attack=args.attack,
+            use_interval=args.use_interval,
+        )
+    except thresholds.NoCounts as exc:
+        print(f"redline: {exc}", file=sys.stderr)
+        return 2
     for line in lines:
         print(line)
     return 1 if lines else 0
@@ -380,6 +385,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--attack",
         action="store_true",
         help="check the attack run's numbers instead of the holdout's",
+    )
+    gate.add_argument(
+        "--use-interval",
+        action="store_true",
+        help="test recall on the low end of its 95%% interval and false alarms on the high end",
     )
     gate.set_defaults(func=cmd_gate)
     return parser
