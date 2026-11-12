@@ -37,7 +37,7 @@ On the saved summary this fails, though the same limits pass without `--use-inte
 
 A model at temperature 0 can still give different answers to the same request. One run hides that.
 
-`redline run --attempts 3 --judge live` asks the judge three times about each answer that reaches it. The first attempt can use the cache. Later attempts skip it, reading nothing and saving nothing. The router decides once, so only judge calls repeat. Replay has one saved grade per answer, so `--attempts` with `--judge replay` stops with exit 2.
+`redline run --attempts 3 --judge live` asks the judge three times about each answer that reaches it. The first attempt can use the cache. Later attempts skip it, reading nothing and saving nothing. When the cache is the saved `data/judge_cache.jsonl`, attempt 1 reads it but adds nothing to it. The router decides once, so only judge calls repeat. Replay has one saved grade per answer, so `--attempts` with `--judge replay` stops with exit 2.
 
 Each output row keeps its usual fields, filled from the worst attempt: fail, then review, then pass. It also gets `attempts` and `outcomes`, the list of outcomes in order.
 
@@ -68,7 +68,7 @@ Every rewrite is deterministic. The ones that choose seed their choice from the 
 redline evade --data data/holdout.jsonl --judge live --out results/local/evade --cache results/local/evade/judge_cache.jsonl
 ```
 
-Give live runs their own `--cache`, so new grades stay out of the saved `data/judge_cache.jsonl`.
+A live evade run saves its grades to `judge_cache.jsonl` under `--out` unless you pass another `--cache`. It never writes the saved `data/judge_cache.jsonl`. Pointing `--cache` at that file stops with exit 2 before any judge call.
 
 This writes `evade_outputs.jsonl`, one row per answer and rewrite, and `evade_summary.json`. The summary has:
 

@@ -85,3 +85,111 @@ def test_a_stop_on_judge_calls_drops_the_partly_graded_record_everywhere():
     assert {r["id"] for r in rows} == {"b1"}
     for block in summary["by_rewrite"].values():
         assert block["counts"]["caught"]["n"] == summary["records"]
+
+
+REPO = __import__("pathlib").Path(__file__).resolve().parent.parent
+PINNED = REPO / "data" / "judge_cache.jsonl"
+
+
+def _hash(path):
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _workdir(tmp_path, monkeypatch, verdict="fail"):
+    """Work in tmp_path with a copy of the pinned cache at data/judge_cache.jsonl.
+
+    Judge and attacker share one fake transport. The judge prompt asks for JSON. Returns
+    the copy and the list of payloads sent. No judge is ever pointed at the pinned file.
+    """
+    import json
+    import shutil
+
+    from redline import judge as judge_module
+
+    (tmp_path / "data").mkdir()
+    copy = tmp_path / "data" / "judge_cache.jsonl"
+    shutil.copyfile(PINNED, copy)
+    sent = []
+
+    def send(payload):
+        sent.append(payload)
+        if "response_format" in payload:
+            nonce = payload["messages"][0]["content"].rsplit('"', 2)[-2]
+            reply = {"nonce": nonce, "verdict": verdict, "severity": 0.5}
+            return json.dumps({**reply, "reason_code": "OK", "reason_text": "x"})
+        return "<rewrite>A new wording.</rewrite>"
+
+    for who in ("JUDGE", "ATTACKER"):
+        for name in ("BASE_URL", "MODEL", "API_KEY"):
+            monkeypatch.setenv(f"REDLINE_{who}_{name}", "x")
+    monkeypatch.setattr(judge_module, "http_transport", lambda *a, **k: send)
+    monkeypatch.chdir(tmp_path)
+    return copy, sent
+
+
+def _bad_args(tmp_path, n=1, fresh=False):
+    """Data, rules and train options. With fresh, no saved grade matches any answer."""
+    import json
+
+    from redline import cli
+
+    rows = [r for r in cli.read_jsonl(REPO / "data" / "holdout.jsonl") if r["label"] == "bad"]
+    rows = rows[:n]
+    if fresh:
+        rows = [{**r, "response": r["response"] + " Unseen."} for r in rows]
+    data = tmp_path / "bad.jsonl"
+    data.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    rules, train = REPO / "policy" / "rules.yaml", REPO / "data" / "train.jsonl"
+    return ["--data", str(data), "--rules", str(rules), "--train", str(train)]
+
+
+def test_live_evade_writes_its_cache_under_out_not_the_pinned_cache(tmp_path, monkeypatch):
+    from redline import cli
+
+    before = _hash(PINNED)
+    copy, _ = _workdir(tmp_path, monkeypatch)
+    copied = _hash(copy)
+    args = ["evade", *_bad_args(tmp_path), "--judge", "live", "--embedder", "tfidf"]
+    assert cli.main([*args, "--out", "evade"]) == 0
+    assert _hash(copy) == copied and _hash(PINNED) == before
+    assert (tmp_path / "evade" / "judge_cache.jsonl").stat().st_size > 0
+
+
+def test_live_evade_with_attacker_leaves_the_pinned_cache_alone(tmp_path, monkeypatch):
+    from redline import cli
+
+    before = _hash(PINNED)
+    copy, sent = _workdir(tmp_path, monkeypatch)
+    copied = _hash(copy)
+    args = ["evade", *_bad_args(tmp_path), "--judge", "live", "--attacker", "--rounds", "2"]
+    assert cli.main([*args, "--embedder", "tfidf", "--out", "evade"]) == 0
+    assert any("response_format" not in p for p in sent)
+    assert _hash(copy) == copied and _hash(PINNED) == before
+
+
+def test_live_evade_refuses_the_pinned_cache_before_any_judge_call(tmp_path, monkeypatch, capsys):
+    from redline import cli
+
+    before = _hash(PINNED)
+    copy, sent = _workdir(tmp_path, monkeypatch)
+    copied = _hash(copy)
+    args = ["evade", *_bad_args(tmp_path), "--judge", "live"]
+    args += ["--cache", "data/judge_cache.jsonl", "--embedder", "tfidf", "--out", "evade"]
+    assert cli.main(args) == 2
+    assert "data/judge_cache.jsonl" in capsys.readouterr().err
+    assert sent == []
+    assert _hash(copy) == copied and _hash(PINNED) == before
+
+
+def test_run_with_attempts_reads_but_never_writes_the_pinned_cache(tmp_path, monkeypatch):
+    from redline import cli
+
+    before = _hash(PINNED)
+    copy, sent = _workdir(tmp_path, monkeypatch)
+    copied = _hash(copy)
+    args = ["run", *_bad_args(tmp_path, 3, fresh=True), "--judge", "live", "--attempts", "2"]
+    assert cli.main([*args, "--embedder", "tfidf", "--out", "run"]) == 0
+    assert sent
+    assert _hash(copy) == copied and _hash(PINNED) == before

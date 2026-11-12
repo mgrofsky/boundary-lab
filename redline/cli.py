@@ -57,6 +57,19 @@ def _in_chunks(records, fn, label):
     return out
 
 
+# The saved grades the published results were made from. summary.json pins its hash.
+PINNED_CACHE = "data/judge_cache.jsonl"
+
+
+def is_pinned_cache(path) -> bool:
+    """True when path is the saved judge cache in this folder or in the repo Redline came from."""
+    if not path:
+        return False
+    here = Path(path).resolve()
+    repo = Path(__file__).resolve().parent.parent / PINNED_CACHE
+    return here in (Path(PINNED_CACHE).resolve(), repo.resolve())
+
+
 def _grader(args, attempts: int = 1):
     """Build the Grader that run and evade use, from their shared options."""
     from redline import api
@@ -67,7 +80,9 @@ def _grader(args, attempts: int = 1):
     if args.judge == "live":
         load_env_file()
         base_url, model, api_key = _env("REDLINE_JUDGE")
-        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache)
+        # Repeat runs may read the saved grades but must not add to them.
+        save = not (attempts > 1 and is_pinned_cache(args.cache))
+        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache, save=save)
 
     short_circuit = False
     if args.short_circuit:
@@ -185,6 +200,17 @@ def cmd_evade(args) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.judge == "live" and is_pinned_cache(args.cache):
+        print(
+            f"redline: evade with a live judge must not write to {PINNED_CACHE}, the saved "
+            "grades the published results were made from. Leave out --cache to use a file "
+            "under --out, or pass another file.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.cache is None:
+        live = args.judge == "live"
+        args.cache = str(Path(args.out) / "judge_cache.jsonl") if live else PINNED_CACHE
     attacker = None
     if args.attacker:
         load_env_file()
@@ -320,12 +346,12 @@ def cmd_gate(args) -> int:
     return 1 if lines else 0
 
 
-def _grading_options(parser) -> None:
+def _grading_options(
+    parser, cache_default=PINNED_CACHE, cache_help="file of saved judge grades"
+) -> None:
     """Options for the rules, router and judge, shared by run and evade."""
     parser.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
-    parser.add_argument(
-        "--cache", default="data/judge_cache.jsonl", help="file of saved judge grades"
-    )
+    parser.add_argument("--cache", default=cache_default, help=cache_help)
     parser.add_argument(
         "--rules", default="policy/rules.yaml", help="YAML file containing your rules"
     )
@@ -473,7 +499,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="stop cleanly after this many judge calls and write what is done (default: none)",
     )
-    _grading_options(evade)
+    _grading_options(
+        evade,
+        cache_default=None,
+        cache_help="file of saved judge grades (default: with --judge live, judge_cache.jsonl "
+        f"under --out, never {PINNED_CACHE}; with replay, {PINNED_CACHE})",
+    )
     evade.set_defaults(func=cmd_evade)
 
     report = sub.add_parser("report", help="write the summary and the report")

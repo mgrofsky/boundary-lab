@@ -173,7 +173,7 @@ redline evade --data data/holdout.jsonl --judge live --out results/local/evade -
 redline evade --data data/holdout.jsonl --judge live --attacker --max-judge-calls 500 --out results/local/evade --cache results/local/evade/judge_cache.jsonl
 ```
 
-Pass your own `--cache` for live runs, so new grades stay out of the saved `data/judge_cache.jsonl`.
+A live evade run saves new grades under `--out` by default and refuses `--cache data/judge_cache.jsonl` with exit 2, so the saved cache keeps its pinned hash.
 
 A reworded answer that passes may no longer break the rule. So attacker results stay unconfirmed until a person labels them and passes the file to `redline report --evade-labels`.
 
