@@ -8,15 +8,20 @@ This release lets Redline start from a rules file alone, and work with [garak](h
 
 - `Grader.from_rules(rules, judge)` grades with no labeled examples. A new router ranks the rules by how close each rule's own text is to the answer. The judge gets no examples and checks every rule unless `top_k` is set, and the worst outcome wins. Each row carries `"mode": "rules_only"`.
 - `redline run --rules-only` does the same from the command line. `--train` is not read, and no cache file is touched unless `--cache` is passed.
-- `redline garak-grade REPORT.jsonl --rules RULES.yaml --out DIR` grades each output in a garak report. It writes `garak_graded.jsonl`, `garak_summary.json` with counts and 95 percent Wilson intervals, and `garak_evals.jsonl` in the shape of garak's own eval entries.
-- `redline.garak.detector.PolicyRules` is a garak detector. A rule break scores 1.0, a pass 0.0, a review 0.5 by default and an output with no text scores none. The judge settings are read from environment variables and are never parameters.
+- `redline garak-grade REPORT.jsonl --rules RULES.yaml --out DIR` grades each output in a garak report. It writes `garak_graded.jsonl`, `garak_summary.json` with counts and 95 percent Wilson intervals, and `garak_evals.jsonl` with the counting fields of garak's own eval entries. `--review-score` and `--eval-threshold` set the two values those counts depend on, and each entry records them.
+- `redline.garak.detector.PolicyRules` is a garak detector. A rule break scores 1.0, a pass 0.0, a review 0.5 by default and an output with no text scores none. The judge settings are read from environment variables and are never parameters. When it cannot load, it writes the reason to stderr on a line that starts with `redline.PolicyRules:`.
+- A judge that cannot be reached is kept apart from a judge that answered badly. The output is not evaluated: it scores none with the code `JUDGE_UNAVAILABLE`, and is never a pass or a hit. The garak paths try each request twice, stop calling the judge after three failed calls in a row, and say so on stderr. `garak-grade` counts these outputs under `judge_unavailable` and exits 1.
 - `redline.garak.probe.PromptFile` is a garak probe that sends the prompts in a file you supply.
-- `redline garak-install` writes one small file each for the detector and the probe into the installed garak package, since garak loads plugins only from there. `redline garak-uninstall` removes them. Neither changes a file that is not byte for byte the one Redline writes.
+- `redline garak-install` writes one small file each for the detector and the probe into the installed garak package, since garak loads plugins only from there. `redline garak-uninstall` removes them. Neither changes a file that Redline did not write. Each file does nothing when Redline cannot be imported, so one left behind does not stop garak. Both commands check the folders first and undo a run that fails part way.
+- A rules file can set `assistant_role`, what the judge prompt calls the assistant. The default is the old text, so every saved grade still matches. The garak paths use "an AI assistant" when the file sets none.
+- `ChatEndpointJudge` takes `tries` and `backoff`. The defaults are what they were.
 - The guide [using Redline with garak](../docs/garak.md), and a CI job that runs the garak tests against garak 0.17.1.
 
 ### Changed
 
 - Rows and results from the existing mode are unchanged. garak is not a dependency: Redline imports and runs every other command with garak absent.
+- A rules file with no rules, or one that is not valid YAML, is reported as one plain line.
+- The settings file of a rules only run leaves out `purity`, `min_members` and `margin`, which belong to the router shortcut.
 
 ## 0.3.0
 

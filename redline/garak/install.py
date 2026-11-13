@@ -31,7 +31,7 @@ SHIMS = {
 }
 # The texts earlier versions wrote, oldest first. A file that holds one is ours as well,
 # so install can bring it up to date and uninstall can remove it. When SHIMS changes,
-# add the text it replaces here. The first entry is what 0.4.0 wrote, a bare import.
+# add the text it replaces here. The first entry is the first shim, a bare import.
 EARLIER = {name: (_HEADER + _DOCS[name] + _IMPORTS[name],) for name in _DOCS}
 
 
