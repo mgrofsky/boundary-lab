@@ -1,10 +1,13 @@
 """One judge object can serve many Graders. Each Grader's role stays its own."""
 
+import copy
 import json
+import pickle
 import threading
 from pathlib import Path
 
 import httpx
+import pytest
 
 from redline import Grader, gate
 from redline.garak import grade_report, report
@@ -157,3 +160,25 @@ def test_an_outage_seen_by_one_grader_does_not_stop_another(rules_data, capsys):
     second = grade_report(FIXTURE, rules_data, judge)
     assert second["stopped"] is None and second["overall"]["judge_unavailable"] == 0
     capsys.readouterr()
+
+
+def test_a_view_can_be_copied_and_shows_what_the_judge_holds(rules_data):
+    judge = ChatEndpointJudge(None, "the-model", None, transport=_transport([]))
+    a, _ = _tenants(rules_data, judge)
+    view = copy.copy(a.judge)
+    assert (view.assistant_role, view.model, view.judge) == (ROLE_A, "the-model", judge)
+    assert copy.deepcopy(a.judge).assistant_role == ROLE_A
+    with pytest.raises(AttributeError):
+        _ = view.no_such_name
+
+
+def test_a_judge_can_still_be_copied_and_pickled(tmp_path, pay_rule):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    judge = ChatEndpointJudge(None, "m", None, transport=_transport([]), cache_path=cache)
+    live = copy.deepcopy(judge)
+    assert live.model == "m" and live._lock is not None
+    replay = pickle.loads(pickle.dumps(ReplayJudge(cache, missing="review")))
+    args = (pay_rule, {"good": [], "bad": []}, "q", "an answer", "anonymous", "stance")
+    assert replay.grade(*args)["reason_code"] == "NO_SAVED_GRADE"
+    assert replay.missing_lookups == 1

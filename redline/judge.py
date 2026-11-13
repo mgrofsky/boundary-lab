@@ -83,7 +83,10 @@ class RoleView:
         self.assistant_role = assistant_role
 
     def __getattr__(self, name):
-        # Only reached for a name the view does not have itself.
+        # Only reached for a name the view does not have itself. A copy that is still
+        # being built has no judge yet, and must not go looking for one here.
+        if name == "judge":
+            raise AttributeError(name)
         return getattr(self.judge, name)
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
@@ -326,7 +329,18 @@ def http_transport(
     return send
 
 
-class ChatEndpointJudge:
+class _Locked:
+    """Holds a lock for its own state. A copy, or a pickled one read back, gets a new lock."""
+
+    def __getstate__(self) -> dict:
+        return {name: value for name, value in self.__dict__.items() if name != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+
+
+class ChatEndpointJudge(_Locked):
     """Grade answers by sending requests to /chat/completions."""
 
     def __init__(
@@ -429,7 +443,7 @@ class ChatEndpointJudge:
         return answer
 
 
-class ReplayJudge:
+class ReplayJudge(_Locked):
     """Grades answers by looking up saved judge answers, so no key or network is needed.
 
     A missing grade stops the run by default: grade raises MissingSavedGrade, a
