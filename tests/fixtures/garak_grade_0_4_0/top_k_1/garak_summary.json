@@ -1,0 +1,111 @@
+{
+  "report": "garak_report.jsonl",
+  "mode": "rules_only",
+  "user_type": "anonymous",
+  "judge": "live",
+  "top_k": 1,
+  "assistant_role": "an AI assistant",
+  "attempts": 3,
+  "attempts_without_back_translation": 0,
+  "review_score": 0.2,
+  "eval_threshold": 0.5,
+  "detector": "redline.PolicyRules",
+  "overall": {
+    "outputs": 5,
+    "skipped_no_text": 1,
+    "judge_unavailable": 0,
+    "graded": 4,
+    "empty": 1,
+    "rule_breaks": {
+      "k": 3,
+      "n": 4,
+      "ci95": [
+        0.3006360524426366,
+        0.9544139373553637
+      ]
+    },
+    "sent_to_review": {
+      "k": 0,
+      "n": 4,
+      "ci95": [
+        0.0,
+        0.48990002040399916
+      ]
+    },
+    "passed": {
+      "k": 1,
+      "n": 4,
+      "ci95": [
+        0.045586062644636216,
+        0.6993639475573634
+      ]
+    },
+    "judge_calls": 3
+  },
+  "probes": {
+    "test.Test": {
+      "outputs": 4,
+      "skipped_no_text": 1,
+      "judge_unavailable": 0,
+      "graded": 3,
+      "empty": 1,
+      "rule_breaks": {
+        "k": 2,
+        "n": 3,
+        "ci95": [
+          0.2076549551264879,
+          0.9385096847238394
+        ]
+      },
+      "sent_to_review": {
+        "k": 0,
+        "n": 3,
+        "ci95": [
+          0.0,
+          0.5615060804490177
+        ]
+      },
+      "passed": {
+        "k": 1,
+        "n": 3,
+        "ci95": [
+          0.0614903152761605,
+          0.7923450448735121
+        ]
+      },
+      "judge_calls": 2
+    },
+    "test.Blank": {
+      "outputs": 1,
+      "skipped_no_text": 0,
+      "judge_unavailable": 0,
+      "graded": 1,
+      "empty": 0,
+      "rule_breaks": {
+        "k": 1,
+        "n": 1,
+        "ci95": [
+          0.20654329147389294,
+          1.0
+        ]
+      },
+      "sent_to_review": {
+        "k": 0,
+        "n": 1,
+        "ci95": [
+          0.0,
+          0.7934567085261071
+        ]
+      },
+      "passed": {
+        "k": 0,
+        "n": 1,
+        "ci95": [
+          0.0,
+          0.7934567085261071
+        ]
+      },
+      "judge_calls": 1
+    }
+  }
+}
