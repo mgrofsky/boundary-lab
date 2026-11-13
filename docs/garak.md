@@ -36,7 +36,7 @@ export REDLINE_JUDGE_API_KEY=your-key
 
 ## Path 1: grade a garak report
 
-Install Redline from this repository with `pip install -e .`, and run garak the way you already do. garak prints the path of its report file when it starts. Then:
+Install Redline from this repository with `pip install -e .`, and run garak the way you already do. That install has no model library in it, and rules only mode does not need one. garak prints the path of its report file when it starts. Then:
 
 ```sh
 python -m garak --target_type openai --target_name gpt-4o-mini --spec probes.dan
@@ -48,7 +48,7 @@ Redline reads each attempt in the report once, in its final state. It writes thr
 | File | What it holds |
 | --- | --- |
 | garak_graded.jsonl | One row per output: the attempt `uuid`, `seq`, the output's position, the probe, the outcome, the rules checked, and the reason code and text. |
-| garak_summary.json | Per probe and overall: outputs graded, rule breaks, sent to review and passed, each as a count with a 95 percent Wilson interval, plus judge calls. It also counts outputs that were not evaluated, under `judge_unavailable`. |
+| garak_summary.json | Per probe and overall: outputs graded, rule breaks, sent to review and passed, each as a count with a 95 percent Wilson interval, plus judge calls. It also counts outputs that were not evaluated, under `judge_unavailable`, and outputs a run that stopped early never reached, under `not_graded`. |
 | garak_evals.jsonl | One entry per probe, with the detector named `redline.PolicyRules`. See below for its fields. |
 
 Each line of `garak_evals.jsonl` has the counting fields of the `eval` entries garak writes in its own report: `entry_type`, `probe`, `detector`, `passed`, `fails`, `nones`, `total_evaluated` and `total_processed`. Redline adds `review_score` and `eval_threshold`, the two values the counts were made with. garak 0.17.1 can also write `intents`, `hit_at_k`, `confidence_method`, `confidence`, `confidence_upper` and `confidence_lower` in an `eval` entry. Redline writes none of those.
@@ -59,13 +59,27 @@ Useful options:
 - `--top-k 3` checks only the three rules closest to each output.
 - `--cache grades.jsonl` saves judge answers, so a second run does not pay for them again.
 - `--judge replay --cache grades.jsonl` grades from that file with no judge model. Add `--missing-grade review` to record a review where no saved grade matches.
-- `--train examples.jsonl` uses labeled examples. See [What it costs](#what-it-costs).
+- `--train examples.jsonl` uses labeled examples. See [What it costs](#what-it-costs). Its default embedder is `minilm`, which needs `pip install "redline[minilm]"`.
+- `--dry-run` prints how many answers would be graded and the most judge calls that takes, then exits. It needs no judge, no `--out` and none of the judge's environment variables.
+- `--max-judge-calls 2000` stops the run before the call that would pass that number. An output is graded in full or not started.
 - `--review-score 0.3` sets the score of an output sent to review. Use the value you gave the detector.
 - `--eval-threshold 0.6` sets the threshold the counts in `garak_evals.jsonl` are made with. Use the value you gave garak with `--eval_threshold`.
 
 A line that is not JSON stops the run and names the line number. So does an attempt with no prompt or outputs. Entry types Redline does not know are skipped.
 
 When garak translated a prompt into another language, Redline grades the outputs garak translated back into English. An attempt whose prompt is not in English and that has no back translation is not graded. The summary counts these under `attempts_without_back_translation`, and the command prints one line when there are any.
+
+### How a run ends
+
+The summary has four keys about the run as a whole. `stopped` is null when every output was reached. Otherwise it says why the run ended: `cap` for `--max-judge-calls`, `judge_unavailable` when the judge was given up on, or `error`. From Python it can also be `cancelled` or `deadline`. `not_graded` counts the outputs the run never reached, split by reason. `judge_calls` is the number of calls made, and `estimated_calls` is the most the run could have made.
+
+The files are written whole in every one of those cases. Each is written under a temporary name and renamed, so a crash cannot leave half a file. In `garak_evals.jsonl` an output that was not reached counts under `nones`.
+
+The command exits 1 when any output was not graded or not evaluated, and prints one line that says why. A missing saved grade with `--judge replay` still stops the command with a message, and the files now hold what was graded up to that point.
+
+### From Python
+
+`redline.garak.grade_report` does the same work in process, with a progress callback, a way to stop, a call cap and a time limit. It does not need garak installed. See [Use Redline from an application](using-redline-in-an-app.md).
 
 ## Path 2: run Redline as a garak detector
 
@@ -198,7 +212,7 @@ Run the same command again once the judge answers. With `--cache`, grades alread
 
 ## What it costs
 
-With only a rules file, Redline checks each output against every rule. That is one judge call per rule per output. A run with 10 rules, 100 prompts and 5 generations makes 5,000 judge calls. Set `top_k` to check only the closest rules, at the risk of missing a break of a rule that was not checked.
+With only a rules file, Redline checks each output against every rule. That is one judge call per rule per output. A run with 10 rules, 100 prompts and 5 generations makes 5,000 judge calls. `redline garak-grade REPORT --rules RULES --dry-run` prints the number for a report you already have, and `--max-judge-calls` caps it. Set `top_k` to check only the closest rules, at the risk of missing a break of a rule that was not checked.
 
 With labeled examples, passed as `train`, Redline uses its calibrated mode. It routes each output to one rule, so most outputs cost one judge call, and off topic outputs cost none. The [README](../redline/README.md) explains that mode and how it was measured.
 
@@ -229,4 +243,4 @@ The CI job `redline-garak` sets that variable. The tests use a stub judge on 127
 
 ## An application that uses it
 
-[Using Redline in an application: AegisShield](integrations/aegisshield/README.md) shows how one app plans to consume the detector and the report grader. It includes two prefilled rules files and a diagram of the data flow.
+[Use Redline from an application](using-redline-in-an-app.md) shows the Python calls an app makes. [Using Redline in an application: AegisShield](integrations/aegisshield/README.md) shows how one app plans to consume the detector and the report grader. It includes two prefilled rules files and a diagram of the data flow.
