@@ -18,6 +18,10 @@ ASSISTANT_ROLE = "a contact center assistant"
 GATE_CODES = ("NOT_ALLOWED_FOR_USER",)
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 BACKOFF_SECONDS = (2, 4, 8, 16, 32, 32)
+# How many times one request is sent at most, unless the caller says otherwise.
+TRIES = len(BACKOFF_SECONDS)
+# Errors that mean the judge was not reached or refused the call, so it gave no opinion.
+UNREACHABLE = (httpx.HTTPError, OSError)
 _sleep = time.sleep
 # What replay does when no saved grade matches: stop the run, or record review.
 MISSING_GRADE = ("stop", "review")
@@ -168,16 +172,26 @@ def parse_answer(raw: str, rule, nonce: str | None = None) -> dict:
     }
 
 
-def http_transport(base_url: str, api_key: str, timeout: float = 60.0):
+def http_transport(
+    base_url: str,
+    api_key: str,
+    timeout: float = 60.0,
+    tries: int = TRIES,
+    backoff: tuple = BACKOFF_SECONDS,
+):
     """Return a callable that posts a chat request and returns the reply text.
 
     It tries again on rate limits, server errors and dropped connections, waiting a little
-    longer each time. Any other error is raised at once.
+    longer each time. Any other error is raised at once. tries is how many times one
+    request is sent at most. backoff is the seconds to wait after each failed try, and
+    its last value is used again when there are more tries than values.
     """
+    if tries < 1:
+        raise ValueError(f"tries must be at least 1, got {tries}")
     url = base_url.rstrip("/") + "/chat/completions"
 
     def send(payload: dict) -> str:
-        for attempt, wait in enumerate(BACKOFF_SECONDS):
+        for attempt in range(tries):
             try:
                 resp = httpx.post(
                     url,
@@ -193,9 +207,9 @@ def http_transport(base_url: str, api_key: str, timeout: float = 60.0):
                 error = exc
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 error = exc
-            if attempt == len(BACKOFF_SECONDS) - 1:
+            if attempt == tries - 1:
                 raise error
-            _sleep(wait)
+            _sleep(backoff[min(attempt, len(backoff) - 1)])
 
     return send
 
@@ -213,16 +227,20 @@ class ChatEndpointJudge:
         json_mode=True,
         save=True,
         assistant_role=ASSISTANT_ROLE,
+        tries=TRIES,
+        backoff=BACKOFF_SECONDS,
     ):
         """save False reads saved grades from cache_path but never writes to it.
 
         assistant_role is what the prompt calls the system being graded. A Grader whose
-        rules file sets assistant_role puts that value here.
+        rules file sets assistant_role puts that value here. tries and backoff say how
+        often one request is sent and how long to wait between tries. See http_transport.
+        They are not used with a transport of your own.
         """
         self.model = model
         self.save = save
         self.assistant_role = assistant_role
-        self.transport = transport or http_transport(base_url, api_key)
+        self.transport = transport or http_transport(base_url, api_key, tries=tries, backoff=backoff)
         self.cache_path = Path(cache_path) if cache_path else None
         self.json_mode = json_mode
         self._saved = {}
@@ -266,6 +284,10 @@ class ChatEndpointJudge:
             raw = self.transport(payload)
         except Exception as exc:  # noqa: BLE001 (any failure must become review, never a pass)
             answer = _error("The judge call failed.", f"{type(exc).__name__}: {exc}")
+            if isinstance(exc, UNREACHABLE):
+                # Still a review here. A caller that wants to tell an outage from a
+                # reply it could not read looks for this mark.
+                answer["unreachable"] = True
         else:
             answer = parse_answer(raw, rule, nonce)
         if self.cache_path and answer["verdict"] in ("pass", "fail"):

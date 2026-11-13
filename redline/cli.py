@@ -89,13 +89,13 @@ def _rules_only_defaults(args) -> None:
         args.top_k = None
 
 
-def _live_judge(cache, save: bool = True):
-    """The judge model named by the REDLINE_JUDGE settings."""
+def _live_judge(cache, save: bool = True, **retry):
+    """The judge model named by the REDLINE_JUDGE settings. retry may set tries and backoff."""
     from redline.judge import ChatEndpointJudge
 
     load_env_file()
     base_url, model, api_key = _env("REDLINE_JUDGE")
-    return ChatEndpointJudge(base_url, model, api_key, cache_path=cache, save=save)
+    return ChatEndpointJudge(base_url, model, api_key, cache_path=cache, save=save, **retry)
 
 
 def _rules_only_problem(args) -> str | None:
@@ -437,7 +437,9 @@ def cmd_garak_grade(args) -> int:
             file=sys.stderr,
         )
         return 2
-    judge = _live_judge(args.cache) if args.judge == "live" else None
+    judge = None
+    if args.judge == "live":
+        judge = _live_judge(args.cache, tries=report.JUDGE_TRIES, backoff=report.JUDGE_BACKOFF)
     try:
         grader = report.build_grader(
             args.rules,
@@ -468,6 +470,16 @@ def cmd_garak_grade(args) -> int:
     }
     paths = report.write(args.out, rows, skipped, extra)
     print(f"wrote {', '.join(str(p) for p in paths)}", file=sys.stderr)
+    unavailable = sum(row["outcome"] == report.NOT_EVALUATED for row in rows)
+    if unavailable:
+        were = "output was" if unavailable == 1 else "outputs were"
+        print(
+            f"redline: warning: {unavailable} {were} not evaluated because the judge model "
+            "could not be reached. They are not passes and not hits. Run again when the "
+            "judge answers.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
