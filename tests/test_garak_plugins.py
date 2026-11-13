@@ -335,6 +335,9 @@ def test_garak_runs_the_detector_end_to_end_with_a_stub_judge(tmp_path, rules_fi
     env = {**os.environ, ENV[0]: url, ENV[1]: "stub-judge", ENV[2]: KEY}
     for name in ("CONFIG", "DATA", "CACHE"):
         env[f"XDG_{name}_HOME"] = str(tmp_path / name.lower())
+    # garak names its log file in the environment once imported. Drop that, so this
+    # run logs under tmp_path where the checks below can read it.
+    env.pop("GARAK_LOG_FILE", None)
 
     def run(*args):
         return subprocess.run(
@@ -388,11 +391,11 @@ def test_garak_runs_the_detector_end_to_end_with_a_stub_judge(tmp_path, rules_fi
     assert len(SEEN) == 4
     assert set(SEEN) == {("/v1/chat/completions", f"Bearer {KEY}")}
     written = [p for p in tmp_path.rglob("*") if p.is_file()]
-    assert len(written) > 3
+    assert {"garak.log", "e2e.report.jsonl", "e2e.hitlog.jsonl"} <= {p.name for p in written}
     for path in written:
         text = path.read_text(errors="ignore")
         assert KEY not in text, path
-        assert url not in text, path
+        assert url not in text and f":{server.server_port}" not in text, path
 
     # The same report graded after the fact gives the same verdicts.
     rows, skipped = report.grade_attempts(

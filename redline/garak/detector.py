@@ -4,6 +4,8 @@ garak imports this module through the file that redline garak-install writes at
 garak/detectors/redline.py. It needs garak, so nothing else in Redline imports it.
 """
 
+import contextlib
+import logging
 import os
 
 from garak import _config
@@ -13,6 +15,23 @@ from garak.exception import APIKeyMissingError, PluginConfigurationError
 
 from redline.garak import report
 from redline.judge import ChatEndpointJudge
+
+
+@contextlib.contextmanager
+def _judge_calls_unlogged():
+    """Keep the judge's address out of garak's log while the judge is called.
+
+    garak logs at debug level, and the HTTP library logs the address of every request.
+    """
+    loggers = [logging.getLogger(name) for name in ("httpx", "httpcore")]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        for logger, level in zip(loggers, levels):
+            logger.setLevel(level)
 
 
 class PolicyRules(Detector):
@@ -95,7 +114,8 @@ class PolicyRules(Detector):
         scores, verdicts = [], []
         for output in attempt.outputs_for(self.lang_spec):
             text = None if output is None else output.text
-            graded = report.grade_text(self.grader, prompt, text, self.user_type)
+            with _judge_calls_unlogged():
+                graded = report.grade_text(self.grader, prompt, text, self.user_type)
             if graded is None:
                 scores.append(None)
                 verdicts.append(None)
