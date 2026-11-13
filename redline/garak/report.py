@@ -19,6 +19,7 @@ LANG = "en"
 # threshold, 0.5 by default, so a review is a hit that still looks unlike a clear break.
 REVIEW_SCORE = 0.5
 EVAL_THRESHOLD = 0.5
+# seq must be there but may be null: some garak probes give an attempt no sequence number.
 NEEDED = ("uuid", "seq", "probe_classname", "prompt", "outputs")
 EMPTY = {
     "outcome": "pass",
@@ -113,7 +114,7 @@ def read_attempts(path) -> list[dict]:
             raise ReportError(f"{path}: line {number} is not JSON") from None
         if not isinstance(entry, dict) or entry.get("entry_type") != "attempt":
             continue
-        missing = [name for name in NEEDED if entry.get(name) is None]
+        missing = [n for n in NEEDED if n not in entry or (entry[n] is None and n != "seq")]
         if missing:
             raise ReportError(f"{path}: line {number}: attempt has no {', '.join(missing)}")
         try:

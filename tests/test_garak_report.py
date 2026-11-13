@@ -70,6 +70,22 @@ def test_an_attempt_missing_a_needed_field_stops_with_its_line_number(tmp_path, 
         report.read_attempts(_write(tmp_path, entries))
 
 
+def test_an_attempt_with_a_null_seq_is_read(tmp_path):
+    # Some garak probes mint attempts with no sequence number, which is written as null.
+    entries = _lines()[:4]
+    entries[3]["seq"] = None
+    [attempt] = report.read_attempts(_write(tmp_path, entries))
+    assert attempt["seq"] is None
+
+
+@pytest.mark.parametrize("field", ["uuid", "probe_classname", "prompt", "outputs"])
+def test_an_attempt_with_a_null_needed_field_stops(tmp_path, field):
+    entries = _lines()[:4]
+    entries[3][field] = None
+    with pytest.raises(report.ReportError, match=f"line 4: attempt has no {field}"):
+        report.read_attempts(_write(tmp_path, entries))
+
+
 def test_an_attempt_with_a_prompt_in_another_shape_stops(tmp_path):
     entries = _lines()[:4]
     entries[3]["prompt"] = "a bare string"
