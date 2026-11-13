@@ -70,7 +70,12 @@ def main() -> int:
         [graded] = [json.loads(line) for line in (out / "answers_outputs.jsonl").read_text().splitlines()]
         assert graded["mode"] == "rules_only" and graded["outcome"] == "review", graded
         # The calibrated mode defaults to minilm, so here it stops with one plain line.
-        calibrated = redline(*shared, "--train", str(cache), *replay)
+        # The train file holds one row for no rule, which fits any rules file.
+        train = Path(folder) / "train.jsonl"
+        row = {"id": "t1", "rule_id": "none", "user_type": "anonymous", "label": "good"}
+        row.update(prompt="hello", response="hi there", reason_code="OK")
+        train.write_text(json.dumps(row) + "\n")
+        calibrated = redline(*shared, "--train", str(train), *replay)
         assert calibrated.returncode == 2, calibrated
         assert calibrated.stderr.strip().count("\n") == 0, calibrated
         assert HINT in calibrated.stderr, calibrated

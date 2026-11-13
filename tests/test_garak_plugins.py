@@ -477,7 +477,10 @@ def test_a_missing_minilm_extra_is_a_configuration_error_that_says_what_to_insta
     # With a train file the detector uses the minilm embedder, which is an extra.
     monkeypatch.setitem(sys.modules, "sentence_transformers", None)
     train = tmp_path / "train.jsonl"
-    train.write_text("")
+    # A row for no rule fits any rules file.
+    row = {"id": "t1", "rule_id": "none", "user_type": "anonymous", "label": "good"}
+    row.update(prompt="hello", response="hi there", reason_code="OK")
+    train.write_text(json.dumps(row) + "\n")
     with pytest.raises(PluginConfigurationError, match="boundary-redline") as caught:
         PolicyRules(config_root=_config_root(rules=str(rules_file), train=str(train)))
     [line] = capsys.readouterr().err.splitlines()
