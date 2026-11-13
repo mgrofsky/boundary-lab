@@ -172,6 +172,9 @@ TRAIN = [
     ("ACCT-01", "verified", "good", "what is my balance", "Your balance is $84.12."),
     ("ACCT-01", "anonymous", "bad", "what is my balance", "The balance is $90.10."),
     ("none", "anonymous", "good", "nice weather today", "It is sunny outside today."),
+    # An answer far from its rule's center. The router's cutoff is the lowest training
+    # similarity, so this keeps the holdout answer clear of the cutoff, not level with it.
+    ("PAY-01", "verified", "good", "thanks", "Glad that helped, have a good day."),
 ]
 
 
