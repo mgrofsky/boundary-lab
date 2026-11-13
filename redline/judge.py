@@ -25,6 +25,23 @@ UNREACHABLE = (httpx.HTTPError, OSError)
 _sleep = time.sleep
 # What replay does when no saved grade matches: stop the run, or record review.
 MISSING_GRADE = ("stop", "review")
+# The format of a saved grades file. A line with no version is version 1.
+SAVED_GRADES_VERSION = 1
+
+__all__ = [
+    "SAVED_GRADES_VERSION",
+    "ChatEndpointJudge",
+    "FakeJudge",
+    "Judge",
+    "ReplayJudge",
+    "build_prompt",
+    "http_transport",
+    "parse_answer",
+    "prompt_key",
+    "read_saved_grades",
+    "select",
+    "valid_codes",
+]
 
 
 class Judge(Protocol):
@@ -108,6 +125,27 @@ Reply with only a JSON object with these keys:
 
 def prompt_key(prompt_text: str) -> str:
     return hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+
+
+def read_saved_grades(path) -> list[dict]:
+    """Read a saved grades file: one JSON object per line. Blank lines are skipped.
+
+    Each entry has key and answer, and newer ones have model, rule_id and version. A
+    line written by a later format than this code knows raises ValueError.
+    """
+    entries = []
+    for number, line in enumerate(Path(path).read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        version = entry.get("version", 1)
+        if version != SAVED_GRADES_VERSION:
+            raise ValueError(
+                f"{path}: line {number} is saved grades format version {version}, and this "
+                f"Redline reads version {SAVED_GRADES_VERSION}"
+            )
+        entries.append(entry)
+    return entries
 
 
 def _error(reason_text: str, raw: str) -> dict:
@@ -229,26 +267,28 @@ class ChatEndpointJudge:
         assistant_role=ASSISTANT_ROLE,
         tries=TRIES,
         backoff=BACKOFF_SECONDS,
+        timeout=60.0,
     ):
         """save False reads saved grades from cache_path but never writes to it.
 
         assistant_role is what the prompt calls the system being graded. A Grader whose
         rules file sets assistant_role puts that value here. tries and backoff say how
-        often one request is sent and how long to wait between tries. See http_transport.
-        They are not used with a transport of your own.
+        often one request is sent and how long to wait between tries. timeout is the
+        seconds one request may take. See http_transport. None of the three is used
+        with a transport of your own. Every request asks for temperature 0.
         """
         self.model = model
         self.save = save
         self.assistant_role = assistant_role
-        self.transport = transport or http_transport(base_url, api_key, tries=tries, backoff=backoff)
+        self.transport = transport or http_transport(
+            base_url, api_key, timeout=timeout, tries=tries, backoff=backoff
+        )
         self.cache_path = Path(cache_path) if cache_path else None
         self.json_mode = json_mode
         self._saved = {}
         if self.cache_path and self.cache_path.exists():
-            for line in self.cache_path.read_text().splitlines():
-                if line.strip():
-                    entry = json.loads(line)
-                    self._saved[entry["key"]] = entry["answer"]
+            for entry in read_saved_grades(self.cache_path):
+                self._saved[entry["key"]] = entry["answer"]
 
     def without_cache(self) -> "ChatEndpointJudge":
         """A judge on the same endpoint that sends every request and saves nothing.
@@ -297,7 +337,13 @@ class ChatEndpointJudge:
             with self.cache_path.open("a") as f:
                 f.write(
                     json.dumps(
-                        {"key": key, "model": self.model, "rule_id": rule.rule_id, "answer": answer}
+                        {
+                            "key": key,
+                            "model": self.model,
+                            "rule_id": rule.rule_id,
+                            "answer": answer,
+                            "version": SAVED_GRADES_VERSION,
+                        }
                     )
                     + "\n"
                 )
@@ -320,11 +366,9 @@ class ReplayJudge:
         self.missing_lookups = 0
         self.answers = {}
         self.models = set()
-        for line in Path(cache_path).read_text().splitlines():
-            if line.strip():
-                entry = json.loads(line)
-                self.answers[entry["key"]] = entry["answer"]
-                self.models.add(entry.get("model") or "unknown")
+        for entry in read_saved_grades(cache_path):
+            self.answers[entry["key"]] = entry["answer"]
+            self.models.add(entry.get("model") or "unknown")
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         text = build_prompt(
