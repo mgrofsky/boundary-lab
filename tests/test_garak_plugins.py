@@ -87,7 +87,7 @@ class TextJudge:
 def _text_transport(payload):
     """The same judge behind the HTTP judge class, so its replies are parsed for real."""
     text = payload["messages"][0]["content"]
-    answer = re.search(r"<assistant_response>(.*?)</assistant_response>", text, re.DOTALL).group(1)
+    answer = text.partition("<assistant_response>")[2].partition("</assistant_response>")[0]
     reply = _verdict(re.search(r"^RULE (\S+) ", text, re.MULTILINE).group(1), answer)
     if reply is None:
         return "this is not JSON"
@@ -831,8 +831,9 @@ def test_garak_says_why_the_detector_did_not_load_and_carries_on(tmp_path, rules
     assert alone.returncode == 0, alone.stdout + alone.stderr
     assert "detector load failed: redline.PolicyRules, skipping" in alone.stdout
     assert "No detectors, nothing to do" in alone.stdout
-    reason = "redline.PolicyRules: it needs a judge model. Set these environment variables: "
-    assert reason + ", ".join(ENV) in alone.stderr.splitlines()
+    reason = "redline.PolicyRules: it needs a judge model. Not set in the environment: "
+    [line] = [text for text in alone.stderr.splitlines() if text.startswith(reason)]
+    assert all(name in line for name in ENV)
     assert reason in next(tmp_path.rglob("garak.log")).read_text()
 
     url = _closed_port()

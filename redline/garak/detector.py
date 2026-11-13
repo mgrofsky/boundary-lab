@@ -35,6 +35,14 @@ def _judge_calls_unlogged():
             logger.setLevel(level)
 
 
+# What each judge setting is, for the message when one is missing.
+JUDGE_SETTINGS = (
+    "the judge address (REDLINE_JUDGE_BASE_URL unless judge_base_url_env names another)",
+    "the judge model name (REDLINE_JUDGE_MODEL unless judge_model_env names another)",
+    "the judge key (REDLINE_JUDGE_API_KEY unless judge_api_key_env names another)",
+)
+
+
 def _load_error(kind, reason: str) -> Exception:
     """Say why the detector cannot load, and return the exception to raise.
 
@@ -97,11 +105,12 @@ class PolicyRules(Detector):
         # The judge settings come first. garak's own tests skip a plugin that raises
         # APIKeyMissingError, as they do for its other detectors that need a key.
         names = (self.judge_base_url_env, self.judge_model_env, self.judge_api_key_env)
-        missing = [name for name in names if not os.environ.get(name)]
+        # The message is built from fixed words, never from a setting's value.
+        missing = [what for what, name in zip(JUDGE_SETTINGS, names) if not os.environ.get(name)]
         if missing:
             raise _load_error(
                 APIKeyMissingError,
-                "it needs a judge model. Set these environment variables: " + ", ".join(missing),
+                "it needs a judge model. Not set in the environment: " + "; ".join(missing),
             )
         if not self.rules:
             raise _load_error(
