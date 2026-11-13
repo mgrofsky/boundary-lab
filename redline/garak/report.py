@@ -458,6 +458,17 @@ def _output_counts(attempts: list[dict]) -> dict:
     return counts
 
 
+def check_score(name: str, value) -> None:
+    """Refuse a score option that is not a number from 0 to 1.
+
+    The command checks its two options the same way. Outside that range the eval
+    entries mislead: a threshold above 1 counts a clear break as passed.
+    """
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if not ok or not 0.0 <= value <= 1.0:  # a NaN fails the comparison too
+        raise ValueError(f"{name} must be a number from 0 to 1, got {value!r:.80}")
+
+
 def plan(
     report_path: str | os.PathLike,
     rules: api.Rules,
@@ -700,6 +711,8 @@ def grade_report(
     """
     if judge is None:
         raise ValueError("grade_report needs a judge object, such as ChatEndpointJudge")
+    check_score("review_score", review_score)
+    check_score("eval_threshold", eval_threshold)
     loaded, attempts, per_answer = plan(
         report_path, rules, top_k, train, user_type, max_judge_calls, deadline_seconds
     )

@@ -191,6 +191,35 @@ def test_a_bad_cap_or_deadline_is_refused(rules_data):
         redline_garak.grade_report(FIXTURE, rules_data, FakeJudge(PASS), deadline_seconds=-1)
 
 
+class Counts:
+    """A judge that counts its calls and answers pass."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        return dict(PASS)
+
+    grade = __call__
+
+
+@pytest.mark.parametrize("name", ["review_score", "eval_threshold"])
+@pytest.mark.parametrize("value", [1.1, -0.1, float("nan"), float("inf"), "0.5", None, True])
+def test_a_score_option_outside_0_to_1_is_refused_before_any_call(rules_data, name, value):
+    judge = Counts()
+    with pytest.raises(ValueError, match=f"{name} must be a number from 0 to 1"):
+        redline_garak.grade_report(FIXTURE, rules_data, judge, **{name: value})
+    assert judge.calls == 0
+
+
+def test_the_ends_of_the_range_are_accepted(rules_data):
+    summary = redline_garak.grade_report(
+        FIXTURE, rules_data, FakeJudge(PASS), review_score=0, eval_threshold=1.0
+    )
+    assert summary["stopped"] is None
+
+
 def test_the_deadline_is_checked_before_each_answer(rules_data, tmp_path, monkeypatch):
     # The clock is read once at the start and once before each answer. Each read adds 10.
     ticks = iter(range(0, 1000, 10))
