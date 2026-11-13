@@ -122,8 +122,14 @@ class PolicyRules(Detector):
             base_url, model, api_key, tries=report.JUDGE_TRIES, backoff=report.JUDGE_BACKOFF
         )
         try:
+            # garak draws a progress bar on stderr, so an outage line starts on a new line.
             self.grader = report.build_grader(
-                self.rules, judge, train=self.train, top_k=self.top_k, name=report.DETECTOR
+                self.rules,
+                judge,
+                train=self.train,
+                top_k=self.top_k,
+                name=report.DETECTOR,
+                lead="\n",
             )
             self.grader.check_user_type(self.user_type)
         except (OSError, TypeError, ValueError) as exc:

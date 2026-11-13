@@ -63,12 +63,14 @@ class JudgeWatch:
     a review. A judge that could not be called gave none. The first such call is said on
     stderr and logged. After STOP_AFTER of them in a row the judge is not called again.
     A call that reaches the judge resets the count before that point. No message names
-    the judge's address, since the error text of a failed request holds it.
+    the judge's address, since the error text of a failed request holds it. lead is
+    written to stderr before each line, for a caller that has a progress bar there.
     """
 
-    def __init__(self, judge, name: str = "redline"):
+    def __init__(self, judge, name: str = "redline", lead: str = ""):
         self.judge = judge
         self.name = name
+        self.lead = lead
         self.misses_in_a_row = 0
         self.stopped = False
         self.warned = False
@@ -76,7 +78,7 @@ class JudgeWatch:
         self.missed = False
 
     def _say(self, message: str) -> None:
-        print(f"{self.name}: {message}", file=sys.stderr)
+        print(f"{self.lead}{self.name}: {message}", file=sys.stderr)
         _log.warning("%s: %s", self.name, message)
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
@@ -117,12 +119,13 @@ def build_grader(
     missing_grade="stop",
     embedder=None,
     name="redline",
+    lead="",
 ):
     """Return a Grader for garak outputs.
 
     With no train file it grades from the rules alone. With one it uses the calibrated
     mode, where top_k None means 1. A judge passed in is watched for outages, see
-    JudgeWatch. name starts the lines it writes.
+    JudgeWatch. name starts the lines it writes and lead goes before them.
     """
     options = {"cache": cache, "missing_grade": missing_grade, "assistant_role": ASSISTANT_ROLE}
     if train is None:
@@ -140,7 +143,7 @@ def build_grader(
         )
     if judge is not None:
         # The Grader has set the judge up by now, so the watch goes on last.
-        grader.judge = JudgeWatch(grader.judge, name)
+        grader.judge = JudgeWatch(grader.judge, name, lead)
     return grader
 
 

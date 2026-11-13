@@ -68,9 +68,14 @@ def load_policy(path) -> Policy:
     An optional "assistant_role" text beside "rules" says what the judge prompt calls
     the assistant.
     A missing field, a repeated rule_id or an unknown user type raises ValueError.
+    So does a file that is not valid YAML.
     A file that is not a list of mappings raises TypeError.
     """
-    data = yaml.safe_load(Path(path).read_text())
+    try:
+        data = yaml.safe_load(Path(path).read_text())
+    except yaml.YAMLError as exc:
+        # The parser's message runs over several lines. Callers print one.
+        raise ValueError(f"{path}: is not valid YAML: {' '.join(str(exc).split())}") from exc
     user_types = _user_types(path, data)
     assistant_role = _assistant_role(path, data)
     if isinstance(data, dict) and "rules" in data:
