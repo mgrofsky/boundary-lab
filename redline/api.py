@@ -19,8 +19,38 @@ def _embedder(choice):
     return embed.make(choice)
 
 
+def read_rules(rules) -> tuple[policy.Policy, str]:
+    """Return the Policy for a path, a loaded Policy or rules data, and a name for errors."""
+    if isinstance(rules, policy.Policy):
+        return rules, "<policy>"
+    if isinstance(rules, (list, dict)):
+        return policy.load_policy_data(rules), "<data>"
+    return policy.load_policy(rules), str(rules)
+
+
+def estimate_calls(n_answers: int, rules, top_k=None, attempts: int = 1) -> int:
+    """The largest number of judge calls a rules only run can make.
+
+    rules is anything Grader.from_rules takes. Each answer is checked against every
+    rule, or against the top_k closest, and that is repeated attempts times. A run can
+    make fewer calls: a saved grade answers without one, and so does a blank answer in
+    a garak report.
+    """
+    if n_answers < 0:
+        raise ValueError(f"n_answers must be 0 or more, got {n_answers}")
+    if top_k is not None and top_k < 1:
+        raise ValueError(f"top_k must be at least 1, got {top_k}")
+    if attempts < 1:
+        raise ValueError(f"attempts must be at least 1, got {attempts}")
+    count = len(read_rules(rules)[0].rules)
+    return n_answers * (count if top_k is None else min(top_k, count)) * attempts
+
+
 class Grader:
     """Load the rules and examples once, fit the router, then grade one answer at a time.
+
+    rules is the path of a rules file, a Policy from redline.policy, or the rules as
+    data: what the file holds once parsed. See redline.policy.load_policy_data.
 
     judge is a judge object from redline.judge. None means the replay judge, which reads
     saved answers from cache. short_circuit is False, True for the default settings, or a
@@ -57,10 +87,10 @@ class Grader:
         attempts=1,
         assistant_role=None,
     ):
-        loaded = policy.load_policy(rules)
+        loaded, source = read_rules(rules)
         self.rules = loaded.rules
         if not self.rules:
-            raise ValueError(f"{rules}: the rules file has no rules")
+            raise ValueError(f"{source}: the rules file has no rules")
         self.user_types = loaded.user_types
         # With no labeled examples the rules' own text is all there is to route on.
         self.mode = "rules_only" if train is None else None
@@ -125,7 +155,9 @@ class Grader:
         attempts=1,
         assistant_role=None,
     ) -> "Grader":
-        """Grade from a rules file alone, with no labeled examples. This mode is unmeasured.
+        """Grade from the rules alone, with no labeled examples. This mode is unmeasured.
+
+        rules is a path, a Policy or rules data, as for Grader.
 
         The router ranks the rules by how close each rule's text is to the answer, and the
         judge gets no examples. top_k None checks every rule, which costs one judge call
