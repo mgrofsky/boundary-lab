@@ -1,5 +1,6 @@
 """Load rules from a file or from data, and check that each rule is well formed."""
 
+import os
 import re
 import reprlib
 import unicodedata
@@ -326,28 +327,38 @@ def _check(data) -> tuple[_Problems, list[str] | None, str | None, list]:
     return problems, user_types, assistant_role, items
 
 
-def validate_policy_data(data) -> list[dict]:
+def validate_policy_data(data: list | dict) -> list[dict]:
     """List every problem in rules data.
 
-    An empty list means load_policy_data takes the data and a Grader can be built from
-    it. Any problem means load_policy_data refuses it. data is what a rules file holds
-    once parsed, see load_policy_data. Each problem is a mapping with where, such as
-    "rules[2].allowed_for", a code from PROBLEM_CODES and a plain message. A message
-    shows a value from the data through show, so it is one line of bounded length. Bad
-    content never raises. No file is read and no judge is called.
+    data is what a rules file holds once parsed: a list of rule mappings, or a mapping
+    with "rules" and the optional "user_types" and "assistant_role". Any other value
+    is reported as a problem too.
+
+    Returns a list with one mapping per problem, in the order found. Each has where,
+    such as "rules[2].allowed_for", a code from PROBLEM_CODES and a plain message. A
+    message shows a value from the data through show, so it is one line of bounded
+    length. An empty list means load_policy_data takes the data and a Grader can be
+    built from it. Any problem means load_policy_data refuses it.
+
+    Bad content never raises. No file is read and no judge is called.
     """
     return [problem for problem, _ in _check(data)[0].found]
 
 
-def load_policy_data(data, source: str = "<data>") -> Policy:
+def load_policy_data(data: list | dict, source: str = "<data>") -> Policy:
     """Turn rules data into a Policy. The data is what a rules file holds once parsed.
 
     data is a list of rule mappings, or a mapping with "rules" and the optional
     "user_types" and "assistant_role". Without "user_types", the user types are
-    anonymous and verified. The first problem found raises ValueError, or TypeError
-    when the data is not a list of mappings. The message starts with source and names
-    the rule. validate_policy_data lists every problem and does not raise. A list with
+    anonymous and verified. source names the data in an error, such as a file path or
+    a tenant. The data is not changed.
+
+    Returns the Policy: the rules keyed by rule_id, the user types and the role.
+
+    The first problem found raises ValueError, or TypeError when the data is not a
+    list of mappings. The message starts with source and names the rule. A list with
     no rules is a problem, since nothing can be graded against it.
+    validate_policy_data lists every problem and does not raise.
     """
     problems, user_types, assistant_role, items = _check(data)
     if problems.found:
@@ -366,7 +377,7 @@ def load_policy_data(data, source: str = "<data>") -> Policy:
     return Policy(rules, user_types, assistant_role)
 
 
-def load_policy(path) -> Policy:
+def load_policy(path: str | os.PathLike) -> Policy:
     """Read a rules file and return its rules and user types.
 
     The file holds a list of rules, either at the top level or under a "rules" key.

@@ -12,7 +12,13 @@ Install Redline from a checkout of this repository, at a commit you pin:
 pip install .
 ```
 
-That install is enough for everything on this page. It does not include `sentence-transformers` or torch. Only the `minilm` embedder needs them, and the `minilm` extra adds them: `pip install ".[minilm]"`. The rules only mode used here matches text with `tfidf`, which needs no model.
+Or install it straight from the repository. The package is named `boundary-redline`. The import name and the command are `redline`.
+
+```sh
+pip install "boundary-redline @ git+https://github.com/mgrofsky/boundary-lab"
+```
+
+Either install is enough for everything on this page. It does not include `sentence-transformers` or torch. Only the `minilm` embedder needs them, and the `minilm` extra adds them: `pip install ".[minilm]"` from a checkout. The rules only mode used here matches text with `tfidf`, which needs no model.
 
 Redline imports and grades with garak absent. Only the worker that runs garak itself needs garak.
 
@@ -170,6 +176,28 @@ assert len(judge.calls) == 2
 
 The outcome is `pass`, `fail` or `review`. With more than one rule checked, the worst outcome is kept. Rules only mode has not been measured, so treat its verdicts as leads for a person to check.
 
+### One judge for many tenants
+
+One judge object can serve any number of `Grader` objects, in any order and from several threads. Build the judge once per worker and a `Grader` per tenant.
+
+The role in a tenant's rules, `assistant_role`, belongs to that tenant's `Grader`. The `Grader` passes it to the judge with each call and never writes it onto the judge. So a tenant with a role and a tenant without one can share a judge, and neither sees the other's role in its judge prompt. `grade_report` works the same way and leaves the judge as it found it.
+
+```python
+shared = FakeJudge({"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "Fine."})
+tenant_a = Grader.from_rules(rules, shared)
+tenant_b = Grader.from_rules([card_rule], shared)
+
+assert tenant_a.assistant_role == "a billing assistant"
+assert tenant_b.assistant_role is None
+for tenant in (tenant_a, tenant_b, tenant_a):
+    assert tenant.grade("can I pay by card", "Yes, in the app.", "anonymous")["outcome"] == "pass"
+assert len(shared.calls) == 5
+```
+
+`FakeJudge` builds no prompt, so it has no role to show. With `ChatEndpointJudge` and `ReplayJudge` the role is the first line of the judge prompt and part of the saved grade's key. A tenant whose rules name no role gets the judge's own, which is "a contact center assistant" unless you set `assistant_role` when you build the judge. `grade_report` is for any kind of model, so there the fallback is "an AI assistant".
+
+A judge of your own gets the role when its `grade` takes an `assistant_role` keyword. Without that keyword it is called with the six values alone.
+
 ## Grade a garak report
 
 `redline.garak.grade_report` grades the outputs in a garak report file. It needs only the file, so the worker that grades does not need garak installed.
@@ -219,6 +247,8 @@ assert estimate == {
 
 `answers` is the number of outputs that go to the judge. `skipped` is the number that do not. An output with no text is skipped. A blank output passes with no call. An output whose prompt was not sent in English, and that garak did not translate back, is not graded.
 
+`answers` plus `skipped` is the `outputs` count in the summary of the run. Pass `train` and `top_k` here as you will pass them to `grade_report`, and `judge_calls` is that run's `estimated_calls`. The estimate checks the rules, the report and the `train` file the way the run does, so it raises on the same bad input.
+
 Then grade. This run has a cap of four judge calls, so it stops before the third answer.
 
 ```python
@@ -240,8 +270,9 @@ summary = grade_report(
 assert summary["stopped"] == "cap"
 assert summary["not_graded"] == {"count": 2, "reasons": {"cap": 2}}
 assert summary["judge_calls_made"] == len(judge.calls) == 4
-assert summary["estimated_calls"] == 6
+assert summary["estimated_calls"] == estimate["judge_calls"] == 6
 assert summary["overall"]["passed"]["k"] == 2
+assert summary["overall"]["not_graded"] == summary["not_graded"]["count"]
 assert progress == [(1, 4), (2, 4)]
 assert len(summary["rows"]) == 2
 assert sorted(p.name for p in Path("scan-17").iterdir()) == [
@@ -254,12 +285,16 @@ assert sorted(p.name for p in Path("scan-17").iterdir()) == [
 What each option does:
 
 - `rules` is anything `Grader.from_rules` takes. `judge` is a judge object.
-- `out_dir` is where the three files of `redline garak-grade` are written. Each is written under a temporary name and then renamed, so a crash cannot leave half a file. With `out_dir=None` nothing is written.
+- `out_dir` is where the three files of `redline garak-grade` are written. The folder is made, and a file is written in it and removed, before the first judge call. A folder that cannot be written raises `redline.garak.report.OutputError`, an `OSError`, with no call spent. With `out_dir=None` nothing is written.
 - `on_progress(done, total, row)` is called after each output is settled. `row` is the graded row, or `None` for an output with no text. An exception raised inside it stops the run and reaches your code.
-- `should_stop()` is asked before each output. When it returns true the run ends.
-- `max_judge_calls` is a hard cap. An output is graded in full or not started, so the call that would pass the cap is never made. It counts calls to the judge object. One call can send its request more than once when `tries` is above 1.
+- `should_stop()` is asked before every output, including one with no text. When it returns true the run ends.
+- `max_judge_calls` is a hard cap. An output is started only when the most calls it could need still fit, so the cap is never passed and no output is half graded. The most it could need is one call per rule checked. It counts calls to the judge object, and a call that a saved grade answers counts. One call can send its request more than once when `tries` is above 1.
 - `deadline_seconds` is a time limit on the whole run, checked before each output.
 - `user_type`, `top_k`, `review_score`, `eval_threshold` and `train` mean what they mean for [the command](garak.md). `embedder` picks how text is matched to rules.
+
+Bad rules, a user type the rules do not declare, a bad report and a bad `train` file all raise `ValueError` before the first judge call.
+
+There is one rule for every stop: the cap, the deadline and a cancel. Outputs are settled in order. Once the run stops, no later output is settled, even one that needs no call. Each is counted as not graded, with the reason. Before the stop, an output with no text or no words is settled, since it costs nothing.
 
 The return value is the content of `garak_summary.json` plus two keys the file does not have. `rows` holds the graded rows and `evals` holds the eval entries. That is how you get the rows with `out_dir=None`.
 
@@ -268,13 +303,17 @@ The summary says how the run ended:
 | Key | Meaning |
 | --- | --- |
 | `stopped` | `None` when every output was reached. Otherwise `cancelled`, `cap`, `deadline`, `judge_unavailable` or `error`. |
-| `not_graded` | `count` is the number of outputs the run never reached, and `reasons` splits it by cause. |
-| `judge_calls` | The calls made to the judge object. A call that a saved grade answered counts too. |
+| `not_graded` | A mapping. `count` is the number of outputs the run never reached, and `reasons` splits it by cause, such as `{"cap": 2}`. |
+| `judge_calls_made` | The calls made to the judge object. A call that a saved grade answered counts too. |
 | `estimated_calls` | The largest number of calls this run could make. |
 
-`overall` and each entry under `probes` also carry a `not_graded` count. In `garak_evals.jsonl` an output that was not reached counts under `nones`.
+`overall` and each entry under `probes` also carry `not_graded`, and there it is a plain number. The top level `count` equals `overall.not_graded`. They also carry `judge_calls`, which is worked out from the graded rows and is not the same thing as `judge_calls_made`. [The summary file](garak.md#the-summary-file) shows a whole summary and how its counts add up.
 
-A run that ends early still returns, and still writes three whole files. That holds for a cancel, the cap, the deadline and a judge that cannot be reached. When the judge or `on_progress` raises, the files are written with `stopped` set to `error`. Then the exception is raised again, so pass `out_dir` if you want to keep what was graded.
+In `garak_evals.jsonl` an output that was not reached counts under `nones`.
+
+A run that ends early still returns, and still writes three whole files. That holds for a cancel, the cap, the deadline and a judge that cannot be reached. When the judge or `on_progress` raises, the files are written with `stopped` set to `error`. Then the exception is raised again, so pass `out_dir` if you want to keep what was graded. That includes an interrupt, such as `KeyboardInterrupt` or a cancelled task. If writing the files fails as well, the write error is raised, and the first error is its `__cause__`.
+
+The three files are written whole under temporary names, then renamed into place together, the summary last. So `garak_summary.json` is the file to trust as the marker that a run finished writing. When it is there, the other two are from the same run.
 
 A judge that cannot be reached is a separate case. Its outputs get a row with the outcome `not_evaluated`. They are counted under `judge_unavailable`, not under `not_graded`. After three failed calls in a row the judge is not called again and `stopped` is `judge_unavailable`.
 
@@ -325,10 +364,10 @@ All three are in `redline.judge`.
 | Class | Arguments | Use |
 | --- | --- | --- |
 | `ChatEndpointJudge` | `base_url`, `model`, `api_key`, then `transport=None`, `cache_path=None`, `json_mode=True`, `save=True`, `assistant_role`, `tries=6`, `backoff`, `timeout=60.0` | Calls a judge model. With `cache_path` it reads saved grades first and saves new ones. `save=False` reads but never writes. |
-| `ReplayJudge` | `cache_path`, then `missing="stop"`, `assistant_role` | Reads saved grades. `missing="stop"` raises `KeyError` when no grade matches. `missing="review"` records a review with the code `NO_SAVED_GRADE`. |
+| `ReplayJudge` | `cache_path`, then `missing="stop"`, `assistant_role` | Reads saved grades. `missing="stop"` raises `MissingSavedGrade`, a `KeyError`, when no grade matches. `missing="review"` records a review with the code `NO_SAVED_GRADE`. |
 | `FakeJudge` | `answers` | For tests. A mapping is returned for every call. A list is returned one entry per call, in order. Each call is kept in `calls`. |
 
-Your own judge is any object with `grade(rule, examples, prompt, response, user_type, stance)`. It returns a mapping with `verdict`, `severity`, `reason_code`, `reason_text` and `raw`.
+Your own judge is any object with `grade(rule, examples, prompt, response, user_type, stance)`. It returns a mapping with `verdict`, `severity`, `reason_code`, `reason_text` and `raw`. It may also take the keyword `assistant_role`, see [One judge for many tenants](#one-judge-for-many-tenants).
 
 ## See also
 

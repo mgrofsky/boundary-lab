@@ -36,7 +36,7 @@ The key is the SHA-256 of the judge prompt, as UTF-8 text, written in hex. The p
 
 These are in the prompt, so a change to any of them is a miss:
 
-- The assistant role, from the rules file's `assistant_role` or the judge's own setting.
+- The assistant role, from the rules' `assistant_role` or, when they set none, the judge's own setting. A `Grader` passes its role with each call, so two tenants with different roles can share one judge and one file.
 - The rule's `rule_id`, `name` and `rule` text.
 - The rule's `allowed_for` list and its `reason_codes`, in order.
 - The user type the answer was given to, and the sentence that says whether that user type is allowed.
@@ -55,14 +55,25 @@ So the same file can be replayed after you change `top_k`. It cannot be replayed
 
 ## What happens on a miss
 
-`ReplayJudge(cache_path, missing="stop")` is the default. A lookup with no saved grade raises `KeyError`, and the message holds the key. The commands turn that into one line and exit.
+`ReplayJudge(cache_path, missing="stop")` is the default. A lookup with no saved grade raises `redline.judge.MissingSavedGrade`, which is a `KeyError`, and the message holds the key. `redline garak-grade` turns that into one line and exits.
 
 `ReplayJudge(cache_path, missing="review")` records a review with the reason code `NO_SAVED_GRADE` and goes on. It counts each such lookup in `missing_lookups`. The commands take this as `--missing-grade review`.
 
 `ChatEndpointJudge` with a `cache_path` calls the judge model on a miss. It appends the grade to the file when the verdict is pass or fail. With `save=False` it reads the file and never writes to it.
 
+## A line that cannot be read
+
+`redline.judge.read_saved_grades(path)` reads a file, and both judges use it. A line it cannot use raises `ValueError`, and the message names the file and the line number. These are the cases:
+
+- The line is not valid JSON. A last line cut short by a crash reads this way. Remove that line and the rest of the file is good.
+- The line is not a JSON object, or it has no `key` or no `answer`, or `answer` is not an object.
+- `version` is not a whole number. The text `"1"` is refused, and the message says the number 1 is needed.
+- `version` is a number this Redline does not know.
+
 ## Versions
 
-A reader that finds a `version` it does not know stops with `ValueError` and names the line. Redline 0.5.0 knows version 1 only.
+Redline 0.5.0 knows version 1 only. A line with a later version is refused, as above.
 
 The lines in `data/judge_cache.jsonl` were written before the field existed. They have no `version`, they are read as version 1, and the file has not changed.
+
+Redline 0.4.0 can read a file that 0.5.0 wrote. Its reader takes `key` and `answer` from each line and skips any field it does not know, so the new `version` field does not trouble it. A test in this repository reads a new file with a copy of the 0.4.0 reading loop. It was also checked by hand: a grade saved by 0.5.0 was replayed by the 0.4.0 code itself, with `ReplayJudge` and with `ChatEndpointJudge`, and gave the same row.

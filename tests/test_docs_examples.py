@@ -1,10 +1,23 @@
 """Run the Python examples in the application guide, so the page cannot drift."""
 
+import json
 import re
 from pathlib import Path
 
 PAGE = Path(__file__).parent.parent / "docs" / "using-redline-in-an-app.md"
+GARAK_PAGE = PAGE.with_name("garak.md")
+JSON_BLOCK = re.compile(r"^```json\n(\{.*?)^```$", re.DOTALL | re.MULTILINE)
 BLOCK = re.compile(r"^```python\n(.*?)^```$", re.DOTALL | re.MULTILINE)
+
+
+def _holds(whole, part, where="summary") -> None:
+    """Every value in part is in whole at the same place. whole may hold more keys."""
+    if not isinstance(part, dict):
+        assert whole == part, where
+        return
+    for key, value in part.items():
+        assert key in whole, f"{where}.{key}"
+        _holds(whole[key], value, f"{where}.{key}")
 
 
 def test_the_examples_in_the_application_guide_run(tmp_path, monkeypatch):
@@ -20,6 +33,11 @@ def test_the_examples_in_the_application_guide_run(tmp_path, monkeypatch):
     assert (tmp_path / "saved_grades.jsonl").read_text().count("\n") == 2
     assert (tmp_path / "scan-17" / "garak_summary.json").exists()
     assert names["summary"]["stopped"] == "cap"
+    # The summary shown on the garak page is this run's summary, with some keys left out.
+    shown = json.loads(JSON_BLOCK.search(GARAK_PAGE.read_text())[1])
+    written = json.loads((tmp_path / "scan-17" / "garak_summary.json").read_text())
+    assert list(shown) == list(written)
+    _holds(written, shown)
 
 
 def test_every_code_and_stop_reason_is_on_the_page():

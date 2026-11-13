@@ -48,7 +48,7 @@ Redline reads each attempt in the report once, in its final state. It writes thr
 | File | What it holds |
 | --- | --- |
 | garak_graded.jsonl | One row per output: the attempt `uuid`, `seq`, the output's position, the probe, the outcome, the rules checked, and the reason code and text. |
-| garak_summary.json | Per probe and overall: outputs graded, rule breaks, sent to review and passed, each as a count with a 95 percent Wilson interval, plus judge calls. It also counts outputs that were not evaluated, under `judge_unavailable`, and outputs a run that stopped early never reached, under `not_graded`. |
+| garak_summary.json | Per probe and overall: outputs graded, rule breaks, sent to review and passed, each as a count with a 95 percent Wilson interval, plus judge calls. It also counts outputs that were not evaluated, under `judge_unavailable`, and outputs a run that stopped early never reached, under `not_graded`. See [The summary file](#the-summary-file). |
 | garak_evals.jsonl | One entry per probe, with the detector named `redline.PolicyRules`. See below for its fields. |
 
 Each line of `garak_evals.jsonl` has the counting fields of the `eval` entries garak writes in its own report: `entry_type`, `probe`, `detector`, `passed`, `fails`, `nones`, `total_evaluated` and `total_processed`. Redline adds `review_score` and `eval_threshold`, the two values the counts were made with. garak 0.17.1 can also write `intents`, `hit_at_k`, `confidence_method`, `confidence`, `confidence_upper` and `confidence_lower` in an `eval` entry. Redline writes none of those.
@@ -60,22 +60,76 @@ Useful options:
 - `--cache grades.jsonl` saves judge answers, so a second run does not pay for them again.
 - `--judge replay --cache grades.jsonl` grades from that file with no judge model. Add `--missing-grade review` to record a review where no saved grade matches.
 - `--train examples.jsonl` uses labeled examples. See [What it costs](#what-it-costs). Its default embedder is `minilm`, which needs the `minilm` extra: `pip install -e ".[minilm]"` from a checkout.
-- `--dry-run` prints how many answers would be graded and the most judge calls that takes, then exits. It needs no judge, no `--out` and none of the judge's environment variables.
-- `--max-judge-calls 2000` stops the run before the call that would pass that number. An output is graded in full or not started.
+- `--dry-run` prints how many answers would be graded and the most judge calls that takes, then exits. It needs no judge, no `--out` and none of the judge's environment variables. It checks everything else a real run checks before its first judge call: the rules, `--user-type`, the `--train` file, the numbers, the report, and that the embedder is installed. So a dry run that exits 0 means a real run with the same options gets as far as the judge.
+- `--max-judge-calls 2000` stops the run before the call that would pass that number. An output is graded in full or not started. The test uses the most calls an output could need, see [How a run ends](#how-a-run-ends).
 - `--review-score 0.3` sets the score of an output sent to review. Use the value you gave the detector.
 - `--eval-threshold 0.6` sets the threshold the counts in `garak_evals.jsonl` are made with. Use the value you gave garak with `--eval_threshold`.
 
 A line that is not JSON stops the run and names the line number. So does an attempt with no prompt or outputs. Entry types Redline does not know are skipped.
 
-When garak translated a prompt into another language, Redline grades the outputs garak translated back into English. An attempt whose prompt is not in English and that has no back translation is not graded. The summary counts these under `attempts_without_back_translation`, and the command prints one line when there are any.
+When garak translated a prompt into another language, Redline grades the outputs garak translated back into English. An attempt whose prompt is not in English and that has no back translation is not graded. The summary counts these attempts under `attempts_without_back_translation`, and the command prints one line when there are any. Their outputs are counted under `skipped_no_text`, since they have no text Redline can read.
+
+### The summary file
+
+`garak_summary.json` starts with the run's settings, then `overall` and `probes`, then four keys about how the run ended. This one is from the run in [Use Redline from an application](using-redline-in-an-app.md), which stopped at a cap of four judge calls. Some keys are left out to keep it short: each interval also has its share and its two ends, and a probe has every count that `overall` has.
+
+```json
+{
+  "report": "garak.report.jsonl",
+  "mode": "rules_only",
+  "user_type": "anonymous",
+  "judge": "live",
+  "top_k": null,
+  "assistant_role": "a billing assistant",
+  "attempts": 2,
+  "attempts_without_back_translation": 0,
+  "review_score": 0.5,
+  "eval_threshold": 0.5,
+  "detector": "redline.PolicyRules",
+  "overall": {
+    "outputs": 4,
+    "skipped_no_text": 0,
+    "judge_unavailable": 0,
+    "not_graded": 2,
+    "graded": 2,
+    "empty": 0,
+    "rule_breaks": {"k": 0, "n": 2},
+    "sent_to_review": {"k": 0, "n": 2},
+    "passed": {"k": 2, "n": 2},
+    "judge_calls": 4
+  },
+  "probes": {"demo.Cards": {"outputs": 4, "not_graded": 2, "graded": 2}},
+  "stopped": "cap",
+  "not_graded": {"count": 2, "reasons": {"cap": 2}},
+  "judge_calls_made": 4,
+  "estimated_calls": 6
+}
+```
+
+`overall` and each entry under `probes` hold the same counts, and in each one they add up:
+
+- `outputs` is `graded` plus `judge_unavailable` plus `skipped_no_text` plus `not_graded`.
+- `graded` is `rule_breaks` plus `sent_to_review` plus `passed`, by their `k`. `empty` is the part of `passed` that was blank and went to no judge.
+- `skipped_no_text` counts outputs with no text Redline can read. That is an output garak recorded with no text, and every output of an attempt with no back translation.
+
+Two names appear twice, with different meanings:
+
+- `not_graded` under `overall` and under each probe is a number: the outputs there that the run never reached. `not_graded` at the top level is a mapping. Its `count` is the same number as `overall.not_graded`, and its `reasons` splits that count by why the run stopped.
+- `judge_calls` under `overall` and under each probe is worked out from the graded rows: one call for each rule checked. It is what it was in Redline 0.4.0. `judge_calls_made` at the top level counts the calls the run made to the judge object. A call that a saved grade answered counts. So does a call for an output that ended up with no row, because the judge raised part way through it.
+
+`estimated_calls` is the most calls the run could have made, and it is the number `--dry-run` prints.
 
 ### How a run ends
 
-The summary has four keys about the run as a whole. `stopped` is null when every output was reached. Otherwise it says why the run ended: `cap` for `--max-judge-calls`, `judge_unavailable` when the judge was given up on, or `error`. From Python it can also be `cancelled` or `deadline`. `not_graded` counts the outputs the run never reached, split by reason. `judge_calls` is the number of calls made, and `estimated_calls` is the most the run could have made.
+`stopped` is null when every output was reached. Otherwise it says why the run ended: `cap` for `--max-judge-calls`, `judge_unavailable` when the judge was given up on, or `error`. From Python it can also be `cancelled` or `deadline`.
 
-The files are written whole in every one of those cases. Each is written under a temporary name and renamed, so a crash cannot leave half a file. In `garak_evals.jsonl` an output that was not reached counts under `nones`.
+There is one rule for every stop. Outputs are settled in order. Once the run stops, no later output is settled, even one that would need no judge call, such as a blank one. Each is counted under `not_graded` with the reason. Before the stop, an output that needs no call is always settled, whatever the cap.
 
-The command exits 1 when any output was not graded or not evaluated, and prints one line that says why. A missing saved grade with `--judge replay` still stops the command with a message, and the files now hold what was graded up to that point.
+The cap test uses the most calls an output could need: one for each rule checked. An output is started only when that many calls still fit under the cap. So with `--train`, `--top-k 3` and `--max-judge-calls 2`, no call is made at all, though some outputs would have needed only one.
+
+The three files are first written whole under temporary names. Then they are renamed into place together, with `garak_summary.json` last. A crash cannot leave half a file. Trust the summary as the marker that a run finished writing: when it is there, the other two files are from the same run. In `garak_evals.jsonl` an output that was not reached counts under `nones`. An output of an attempt with no back translation is in no eval entry, as in garak's own count.
+
+The command checks that `--out` can be written before it calls the judge. It exits 1 when any output was not graded or not evaluated, and prints one line that says why. A missing saved grade with `--judge replay` still stops the command with a message, and the files hold what was graded up to that point. A bad line in the `--cache` file or the `--train` file stops the command with the file's name and the line number.
 
 ### From Python
 

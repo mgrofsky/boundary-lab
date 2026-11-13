@@ -1,6 +1,6 @@
 # Using Redline in an application: AegisShield
 
-This page shows how one application consumes Redline. AegisShield is a threat modeling and scanning web app. It calls Redline. Redline does not call it and knows nothing about it.
+This page shows how one application plans to use Redline. AegisShield is a threat modeling and scanning web app. It will call Redline. Redline does not call it and knows nothing about it.
 
 Status: this is a reference design. The Redline pieces it uses exist in Redline 0.5.0. The AegisShield side is planned and not built yet. Its LLM scan route is API only today, with no page and no worker, and its stub runs inline. Nothing on this page is a measured result.
 
@@ -8,7 +8,7 @@ Status: this is a reference design. The Redline pieces it uses exist in Redline 
 
 ## The two jobs Redline does for the app
 
-**Job 1. Policy checks for a tenant's LLM scan.** AegisShield lets a tenant register an LLM endpoint and scan it. The scan runs [garak](https://github.com/NVIDIA/garak) probes. garak's own detectors answer general questions, such as whether a jailbreak worked. Redline adds one more question: did the answer break this tenant's written rules?
+**Job 1. Policy checks for a tenant's LLM scan.** AegisShield will let a tenant register an LLM endpoint and scan it. The scan will run [garak](https://github.com/NVIDIA/garak) probes. garak's own detectors answer general questions, such as whether a jailbreak worked. Redline adds one more question: did the answer break this tenant's written rules?
 
 **Job 2. Checks on the app's own model output.** AegisShield's prompts already tell its model how to behave, for example "Do not speculate beyond what is visible". Redline grades saved outputs against those same instructions. That shows whether the model follows them, including when the input data carries text an attacker wrote.
 
@@ -37,10 +37,10 @@ These are on the app's side. None of them is part of Redline, and a real runner 
 
 ## Setup the app needs
 
-1. **Install Redline with no extras** in the worker that grades, from a pinned commit. That install has no torch in it. Grading needs only the report file, so this worker does not need garak.
+1. **Install Redline with no extras** in the worker that grades, from a pinned commit of this repository. The package is named `boundary-redline` and is not on the public package index. That install has no torch in it. Grading needs only the report file, so this worker does not need garak.
 2. **Put garak in its own worker image.** It runs the probes and writes the report.
 3. **Pick a judge model.** It must not be the model being checked. Any endpoint that serves `/chat/completions` works.
-4. **Build the judge in the worker** with `ChatEndpointJudge(base_url, model, api_key, timeout=...)`. The key never goes in rules, a report or a log.
+4. **Build the judge in the worker** with `ChatEndpointJudge(base_url, model, api_key, timeout=...)`. The key never goes in rules, a report or a log. One judge object can serve every tenant: each tenant's `assistant_role` travels with that tenant's calls and is never left on the judge.
 5. **Store each tenant's rules as fields** in the app's database. Start from the prefilled rules below.
 
 The app can also run Redline as a detector inside garak. Then Redline is installed beside garak, `redline garak-install` is run once there, and the judge settings come from three environment variables. See [the garak page](../../garak.md). This page uses the report path, because grading then needs only the report file.
@@ -66,9 +66,9 @@ A rule works best when it is one sentence that a person could check by reading a
 4. The app checks the endpoint address and the probe names, stores the request and hands it to the garak worker.
 5. The garak worker runs garak as a subprocess with the tenant's endpoint as the target. garak sends its probe prompts, collects the answers and writes its report file.
 6. The grading worker calls `estimate_report_calls` on the report and the tenant's rules. The app can show the largest number of judge calls before any is made.
-7. The grading worker calls `grade_report` with the report, the rules as data and the judge. It passes `max_judge_calls`, `deadline_seconds`, `on_progress` and `should_stop`.
+7. The grading worker calls `grade_report` with the report, the rules as data and the judge. It passes `out_dir`, a folder for this scan, so the three output files are kept however the run ends. It also passes `max_judge_calls`, `deadline_seconds`, `on_progress` and `should_stop`.
 8. For each answer, Redline asks the judge model whether the answer breaks one of the tenant's rules. The app's `on_progress` updates the scan's progress.
-9. `grade_report` returns the summary per probe, with counts and intervals, and the graded rows. The worker stores them with the scan.
+9. `grade_report` returns the summary per probe, with counts and intervals, and the graded rows. The worker stores them with the scan. The same content is in the three files under `out_dir`.
 10. The analyst reads the results and reviews the answers marked review.
 
 ## Data flow for Job 2, the app's own output
@@ -104,12 +104,14 @@ This path runs offline. Redline is not in the app's request path.
 | The judge cannot be reached | Records the answer as not evaluated. Stops calling after three failures in a row. The summary says `stopped: judge_unavailable`. | The count of answers not evaluated, and that the scan is incomplete. |
 | The run reaches `max_judge_calls` | Never makes the call that would pass the cap. Counts the answers left under `not_graded` with the reason `cap`. | The count not graded, and that the cap ended the scan. |
 | The run reaches `deadline_seconds`, or `should_stop` returns true | Stops before the next answer. The reason is `deadline` or `cancelled`. | The count not graded, and why. |
-| The judge raises an error | Writes the three files with `stopped: error`, then raises the error again. | That the scan failed, with what was graded so far. |
+| The judge raises an error | Writes the three files under `out_dir` with `stopped: error`, then raises the error again. Nothing is returned, so the files are the record. | That the scan failed, with what was graded so far, read from the files. |
+| The folder for `out_dir` cannot be written | Raises before the first judge call. | That the scan could not start. No judge call was spent. |
+| A rule is named `none`, or the rules list is empty | `validate_policy_data` reports it on save, and loading refuses it. | The problem, beside the rule or the list. |
 | The judge answers but gives no usable verdict | Review. | A review queue for a person. |
 | An answer is blank | Pass, with no judge call. | Nothing special. A rule that requires the assistant to say something is not checked on a blank answer. |
 | A rule is vague | The judge guesses. | Nothing can fix this at run time. Check new rules on a few known answers first. |
 
-When a run ends early for any reason in this table, the output files are still written whole. A crash cannot leave half a file.
+When a run ends early for any reason in this table, the output files are still written whole. A crash cannot leave half a file. The summary file is renamed into place last, so its presence marks a run that finished writing.
 
 ## Limits
 
@@ -123,4 +125,4 @@ When a run ends early for any reason in this table, the output files are still w
 
 [redline-in-aegisshield.excalidraw](redline-in-aegisshield.excalidraw) holds the architecture and both data flows. Open it at excalidraw.com or in your own Excalidraw with Open. Boxes marked planned are not built yet.
 
-The diagram was drawn for Redline 0.4.0 and shows the detector path. Where it differs from this page, this page is right.
+The diagram shows the report path with the two planned workers: one that runs garak and one that grades the report. Where it differs from this page, this page is right.
