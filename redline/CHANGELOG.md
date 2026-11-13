@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0
+
+This release lets Redline start from a rules file alone, and work with [garak](https://github.com/NVIDIA/garak) 0.17.1. Neither has been measured yet, so no quality number is published for them.
+
+### Added
+
+- `Grader.from_rules(rules, judge)` grades with no labeled examples. A new router ranks the rules by how close each rule's own text is to the answer. The judge gets no examples and checks every rule unless `top_k` is set, and the worst outcome wins. Each row carries `"mode": "rules_only"`.
+- `redline run --rules-only` does the same from the command line. `--train` is not read, and no cache file is touched unless `--cache` is passed.
+- `redline garak-grade REPORT.jsonl --rules RULES.yaml --out DIR` grades each output in a garak report. It writes `garak_graded.jsonl`, `garak_summary.json` with counts and 95 percent Wilson intervals, and `garak_evals.jsonl` in the shape of garak's own eval entries.
+- `redline.garak.detector.PolicyRules` is a garak detector. A rule break scores 1.0, a pass 0.0, a review 0.5 by default and an output with no text scores none. The judge settings are read from environment variables and are never parameters.
+- `redline.garak.probe.PromptFile` is a garak probe that sends the prompts in a file you supply.
+- `redline garak-install` writes one small file each for the detector and the probe into the installed garak package, since garak loads plugins only from there. `redline garak-uninstall` removes them. Neither changes a file that is not byte for byte the one Redline writes.
+- The guide [using Redline with garak](../docs/garak.md), and a CI job that runs the garak tests against garak 0.17.1.
+
+### Changed
+
+- Rows and results from the existing mode are unchanged. garak is not a dependency: Redline imports and runs every other command with garak absent.
+
 ## 0.3.0
 
 This release makes the numbers say how far they can be trusted. The answer sets are small, each attack was tried once, and none was written to beat Redline.
