@@ -87,3 +87,31 @@ def test_published_attack_numbers_and_outputs_match_a_replay(tmp_path):
         "attack_end_to_end",
     )
     close(published["attack_routing"], report._attack_routing(attack_out, attacks), "attack_routing")
+
+
+@pytest.mark.slow
+def test_published_holdout_end_to_end_block_and_counts_match_a_replay(tmp_path):
+    cli.main(["run", "--data", "data/holdout.jsonl", "--judge", "replay", "--out", str(tmp_path)])
+    outputs = cli.read_jsonl(tmp_path / "holdout_outputs.jsonl")
+    labels = cli.read_jsonl("data/holdout.jsonl")
+    published = json.loads(Path("results/summary.json").read_text())
+    fresh = metrics.end_to_end(outputs, labels)
+    assert published["end_to_end"].keys() == fresh.keys()
+    close(published["end_to_end"], fresh, "end_to_end")
+
+
+@pytest.mark.slow
+def test_published_evade_replay_floor_matches_a_replay(tmp_path):
+    args = ["evade", "--data", "data/holdout.jsonl", "--judge", "replay"]
+    args += ["--missing-grade", "review", "--out", str(tmp_path)]
+    assert cli.main(args) == 0
+    fresh = json.loads((tmp_path / "evade_summary.json").read_text())
+    published = json.loads(Path("results/evade_replay_summary.json").read_text())
+    assert published.keys() == fresh.keys()
+    numbers = ("worst_case", "by_rewrite", "router_only", "judge_nonce")
+    for key in numbers:
+        close(published[key], fresh[key], key)
+    for key in published.keys() - set(numbers):
+        assert fresh[key] == published[key], key
+    assert published["router_only"]["after_rewrite"]["k"] == 2
+    assert published["router_only"]["as_written"]["k"] == 0

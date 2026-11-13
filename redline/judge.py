@@ -198,8 +198,12 @@ def http_transport(base_url: str, api_key: str, timeout: float = 60.0):
 class ChatEndpointJudge:
     """Grade answers by sending requests to /chat/completions."""
 
-    def __init__(self, base_url, model, api_key, transport=None, cache_path=None, json_mode=True):
+    def __init__(
+        self, base_url, model, api_key, transport=None, cache_path=None, json_mode=True, save=True
+    ):
+        """save False reads saved grades from cache_path but never writes to it."""
         self.model = model
+        self.save = save
         self.transport = transport or http_transport(base_url, api_key)
         self.cache_path = Path(cache_path) if cache_path else None
         self.json_mode = json_mode
@@ -209,6 +213,15 @@ class ChatEndpointJudge:
                 if line.strip():
                     entry = json.loads(line)
                     self._saved[entry["key"]] = entry["answer"]
+
+    def without_cache(self) -> "ChatEndpointJudge":
+        """A judge on the same endpoint that sends every request and saves nothing.
+
+        Repeat attempts use it, so each one is a fresh call to the model.
+        """
+        return ChatEndpointJudge(
+            None, self.model, None, transport=self.transport, json_mode=self.json_mode
+        )
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
@@ -233,6 +246,8 @@ class ChatEndpointJudge:
             answer = parse_answer(raw, rule, nonce)
         if self.cache_path and answer["verdict"] in ("pass", "fail"):
             self._saved[key] = answer
+            if not self.save:
+                return answer
             with self.cache_path.open("a") as f:
                 f.write(
                     json.dumps(

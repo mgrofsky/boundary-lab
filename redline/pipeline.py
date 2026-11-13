@@ -83,24 +83,66 @@ def _decide_many(record, policy, router, judge, examples, top_k, floor):
     return taken[0], taken[1], list(outcomes), outcomes
 
 
-def run(records, policy, router, judge, examples, top_k=1, floor=None) -> list[dict]:
+class _RouteOnce:
+    """Ask the router once per answer, so repeat attempts reuse its decision."""
+
+    def __init__(self, router):
+        self.router = router
+        self.seen = {}
+
+    def _ask(self, method, *args):
+        key = (method, *args)
+        if key not in self.seen:
+            self.seen[key] = getattr(self.router, method)(*args)
+        return self.seen[key]
+
+    def route(self, *args):
+        return self._ask("route", *args)
+
+    def rank(self, *args):
+        return self._ask("rank", *args)
+
+
+def _attempt(record, policy, router, judge, examples, top_k, floor):
+    if top_k == 1:
+        routed, decision = _decide(record, policy, router, judge, examples)
+        return routed, decision, None, None
+    return _decide_many(record, policy, router, judge, examples, top_k, floor)
+
+
+def run(
+    records, policy, router, judge, examples, top_k=1, floor=None, attempts=1, again=None
+) -> list[dict]:
     """Grade each record and return one output record per input, with one final outcome.
 
     With top_k above 1, each record is judged against up to top_k rules and the output adds
     rules_checked and outcomes_by_rule. With top_k 1 the output is the same as before.
+
+    With attempts above 1, an answer that reached the judge is judged again by again, a
+    judge that skips saved grades. The router decides once. The row is filled from the
+    worst attempt and adds attempts and outcomes, one outcome per attempt.
     """
     if top_k < 1:
         raise ValueError(f"top_k must be at least 1, got {top_k}")
+    if attempts < 1:
+        raise ValueError(f"attempts must be at least 1, got {attempts}")
+    if attempts > 1 and again is None:
+        raise ValueError("attempts above 1 need again, a judge for the later attempts")
     # Stub routers in tests have no name, and every real router before kmeans was "center".
     router_name = getattr(router, "name", "center")
     out = []
     for record in records:
-        if top_k == 1:
-            routed, decision = _decide(record, policy, router, judge, examples)
+        once = _RouteOnce(router) if attempts > 1 else router
+        tries = [_attempt(record, policy, once, judge, examples, top_k, floor)]
+        if tries[0][1]["decided_by"] == "judge":
+            tries += [
+                _attempt(record, policy, once, again, examples, top_k, floor)
+                for _ in range(attempts - 1)
+            ]
         else:
-            routed, decision, checked, outcomes = _decide_many(
-                record, policy, router, judge, examples, top_k, floor
-            )
+            tries *= attempts
+        # The worst outcome fills the row. On a tie the earlier attempt stays.
+        routed, decision, checked, outcomes = max(tries, key=lambda t: WORST[t[1]["outcome"]])
         row = {
             "id": record["id"],
             "user_type": record["user_type"],
@@ -120,6 +162,9 @@ def run(records, policy, router, judge, examples, top_k=1, floor=None) -> list[d
         if top_k > 1:
             row["rules_checked"] = checked
             row["outcomes_by_rule"] = outcomes
+        if attempts > 1:
+            row["attempts"] = attempts
+            row["outcomes"] = [t[1]["outcome"] for t in tries]
         out.append(row)
     return out
 
@@ -129,7 +174,9 @@ def judge_calls(outputs: list[dict]) -> int:
     total = 0
     for o in outputs:
         if "rules_checked" in o:
-            total += 0 if o["short_circuit"] else len(o["rules_checked"])
+            calls = 0 if o["short_circuit"] else len(o["rules_checked"])
         else:
-            total += o["decided_by"] == "judge"
+            calls = int(o["decided_by"] == "judge")
+        # Router decisions are 0 calls, so this only multiplies judged answers.
+        total += calls * o.get("attempts", 1)
     return total

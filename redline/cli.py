@@ -52,29 +52,42 @@ def _in_chunks(records, fn, label):
     out = []
     for start in range(0, len(records), CHUNK):
         out.extend(fn(records[start : start + CHUNK]))
-        print(f"{label}: {len(out)} of {len(records)}", file=sys.stderr)
+        done = min(start + CHUNK, len(records))
+        print(f"{label}: {done} of {len(records)}", file=sys.stderr)
     return out
 
 
-def cmd_run(args) -> int:
-    from redline import api, pipeline
+# The saved grades the published results were made from. summary.json pins its hash.
+PINNED_CACHE = "data/judge_cache.jsonl"
+
+
+def is_pinned_cache(path) -> bool:
+    """True when path is the saved judge cache in this folder or in the repo Redline came from."""
+    if not path:
+        return False
+    here = Path(path).resolve()
+    repo = Path(__file__).resolve().parent.parent / PINNED_CACHE
+    return here in (Path(PINNED_CACHE).resolve(), repo.resolve())
+
+
+def _grader(args, attempts: int = 1):
+    """Build the Grader that run and evade use, from their shared options."""
+    from redline import api
     from redline.judge import ChatEndpointJudge
     from redline.router import ShortCircuit
-
-    records = read_jsonl(args.data)
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     judge = None
     if args.judge == "live":
         load_env_file()
         base_url, model, api_key = _env("REDLINE_JUDGE")
-        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache)
+        # Repeat runs may read the saved grades but must not add to them.
+        save = not (attempts > 1 and is_pinned_cache(args.cache))
+        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache, save=save)
 
     short_circuit = False
     if args.short_circuit:
         short_circuit = ShortCircuit(args.purity, args.min_members, args.margin)
-    grader = api.Grader(
+    return api.Grader(
         rules=args.rules,
         train=args.train,
         judge=judge,
@@ -87,7 +100,28 @@ def cmd_run(args) -> int:
         top_k=args.top_k,
         floor=args.floor,
         missing_grade=args.missing_grade,
+        attempts=attempts,
     )
+
+
+def cmd_run(args) -> int:
+    from redline import pipeline
+
+    if args.attempts < 1:
+        print("redline: --attempts must be at least 1", file=sys.stderr)
+        return 2
+    if args.attempts > 1 and args.judge != "live":
+        print(
+            "redline: --attempts needs --judge live. Replay has one saved grade per answer, "
+            "so a repeat would only read the same grade again.",
+            file=sys.stderr,
+        )
+        return 2
+    records = read_jsonl(args.data)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    grader = _grader(args, args.attempts)
     router = grader.router
     for record in records:
         try:
@@ -124,6 +158,8 @@ def cmd_run(args) -> int:
         "no_saved_grade_lookups": getattr(grader.judge, "missing_lookups", 0),
         "seconds": round(seconds, 2),
     }
+    if args.attempts > 1:
+        meta["attempts"] = args.attempts
     meta_path = out_dir / f"{stem}_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     print(f"wrote {out_path} and {meta_path}", file=sys.stderr)
@@ -131,18 +167,99 @@ def cmd_run(args) -> int:
 
 
 def cmd_attack(args) -> int:
-    from redline.target import Target, run_attacks
+    from redline.target import Target, attempt_id_clashes, run_attacks
 
+    if args.attempts < 1:
+        print("redline: --attempts must be at least 1", file=sys.stderr)
+        return 2
     load_env_file()
     base_url, model, api_key = _env("REDLINE_TARGET")
     system_prompt = Path(args.system).read_text()
-    target = Target(base_url, model, api_key, system_prompt)
+    target = Target(base_url, model, api_key, system_prompt, temperature=args.temperature)
     prompts = read_jsonl(args.prompts)
-    responses = _in_chunks(prompts, lambda batch: run_attacks(batch, target), "answered")
+    clashes = attempt_id_clashes(prompts, args.attempts)
+    if clashes:
+        print(
+            "redline: with --attempts these prompt ids would be given to two answers: "
+            f"{', '.join(clashes)}. Rename the prompts so no id ends in # and a number.",
+            file=sys.stderr,
+        )
+        return 2
+    responses = _in_chunks(
+        prompts, lambda batch: run_attacks(batch, target, args.attempts), "answered"
+    )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl(out_path, responses)
     print(f"wrote {out_path}", file=sys.stderr)
+    return 0
+
+
+def cmd_evade(args) -> int:
+    from redline import evade
+
+    if args.rounds < 1:
+        print("redline: --rounds must be at least 1", file=sys.stderr)
+        return 2
+    if args.judge == "replay" and args.missing_grade == "stop":
+        print(
+            "redline: evade in replay mode needs --missing-grade review. The saved cache has "
+            "no grades for rewritten answers, so the run would stop at the first one.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.cache is None:
+        live = args.judge == "live"
+        args.cache = str(Path(args.out) / "judge_cache.jsonl") if live else PINNED_CACHE
+    # Checked after the default is filled in, so --out data cannot reach the pinned file.
+    if args.judge == "live" and is_pinned_cache(args.cache):
+        print(
+            f"redline: evade with a live judge must not write to {PINNED_CACHE}, the saved "
+            "grades the published results were made from. Pass --cache with another file, "
+            "or an --out folder other than the one that holds it.",
+            file=sys.stderr,
+        )
+        return 2
+    attacker = None
+    if args.attacker:
+        load_env_file()
+        base_url, model, api_key = _env("REDLINE_ATTACKER")
+        attacker = evade.Attacker(base_url, model, api_key)
+    records = read_jsonl(args.data)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    grader = _grader(args)
+    for record in records:
+        try:
+            grader.check_user_type(record["user_type"], record.get("id"))
+        except ValueError as exc:
+            raise SystemExit(f"redline: {exc}") from None
+
+    rows, summary, candidates = evade.run(
+        records,
+        grader,
+        max_judge_calls=args.max_judge_calls,
+        attacker=attacker,
+        rounds=args.rounds,
+    )
+    summary = {
+        "data": Path(args.data).as_posix(),
+        "judge": args.judge,
+        "router": grader.router.name,
+        "embedder": grader.embedder_name,
+        "top_k": args.top_k,
+        "missing_grade": args.missing_grade,
+        **summary,
+    }
+    written = [out_dir / "evade_outputs.jsonl", out_dir / "evade_summary.json"]
+    write_jsonl(written[0], rows)
+    written[1].write_text(json.dumps(summary, indent=2) + "\n")
+    if attacker is not None:
+        written.append(out_dir / "evade_candidates.jsonl")
+        write_jsonl(written[2], candidates)
+    if summary["stopped"]:
+        print(f"redline: {summary['stopped']}", file=sys.stderr)
+    print(f"wrote {', '.join(str(p) for p in written)}", file=sys.stderr)
     return 0
 
 
@@ -177,6 +294,10 @@ def cmd_report(args) -> int:
         args.cache,
         run_meta,
     )
+    if args.evade_labels:
+        from redline import evade
+
+        summary["confirmed_adaptive"] = evade.confirmed(read_jsonl(args.evade_labels))
     out_dir = Path(args.out)
     report.write_summary(summary, out_dir / "summary.json")
     report.write_report(summary, out_dir / "report.md")
@@ -217,16 +338,89 @@ def cmd_gate(args) -> int:
     path = Path(args.summary)
     if not path.is_file():
         raise SystemExit(f"redline: no summary at {path}, run redline report first")
-    lines = thresholds.check(
-        json.loads(path.read_text()),
-        min_recall=args.min_recall,
-        max_false_alarm=args.max_false_alarm,
-        min_kappa=args.min_kappa,
-        attack=args.attack,
-    )
+    try:
+        lines = thresholds.check(
+            json.loads(path.read_text()),
+            min_recall=args.min_recall,
+            max_false_alarm=args.max_false_alarm,
+            min_kappa=args.min_kappa,
+            attack=args.attack,
+            use_interval=args.use_interval,
+        )
+    except thresholds.NoCounts as exc:
+        print(f"redline: {exc}", file=sys.stderr)
+        return 2
     for line in lines:
         print(line)
     return 1 if lines else 0
+
+
+def _grading_options(
+    parser, cache_default=PINNED_CACHE, cache_help="file of saved judge grades"
+) -> None:
+    """Options for the rules, router and judge, shared by run and evade."""
+    parser.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
+    parser.add_argument("--cache", default=cache_default, help=cache_help)
+    parser.add_argument(
+        "--rules", default="policy/rules.yaml", help="YAML file containing your rules"
+    )
+    parser.add_argument(
+        "--router",
+        choices=["center", "kmeans"],
+        default="center",
+        help="match one center per rule or group similar examples with k-means",
+    )
+    parser.add_argument(
+        "--k", type=int, default=12, help="number of groups for k-means (default: 12)"
+    )
+    parser.add_argument(
+        "--short-circuit", action="store_true", help="let the router pass or fail some answers"
+    )
+    parser.add_argument(
+        "--purity",
+        type=float,
+        default=1.0,
+        help="k-means shortcut: share of labels that must agree (default: 1.0, or all)",
+    )
+    parser.add_argument(
+        "--min-members",
+        type=int,
+        default=5,
+        help="fewest examples needed in a shortcut group (default: 5)",
+    )
+    parser.add_argument(
+        "--margin",
+        type=float,
+        default=0.10,
+        help="center shortcut: required gap between good and bad match scores (default: 0.10)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="random seed for repeatable k-means runs"
+    )
+    parser.add_argument(
+        "--embedder",
+        choices=["minilm", "tfidf"],
+        default="minilm",
+        help="minilm, the default model, or tfidf, which needs no download but routes worse",
+    )
+    parser.add_argument(
+        "--missing-grade",
+        choices=["stop", "review"],
+        default="stop",
+        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
+    )
+    parser.add_argument(
+        "--floor",
+        type=float,
+        default=None,
+        help="with --top-k, skip extra rules whose match score is below this (default: none)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -249,61 +443,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--out", default="results/", help="folder for the output files (default: results/)"
     )
-    run.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
-    run.add_argument("--cache", default="data/judge_cache.jsonl", help="file of saved judge grades")
-    run.add_argument("--rules", default="policy/rules.yaml", help="YAML file containing your rules")
+    _grading_options(run)
     run.add_argument(
-        "--router",
-        choices=["center", "kmeans"],
-        default="center",
-        help="match one center per rule or group similar examples with k-means",
-    )
-    run.add_argument("--k", type=int, default=12, help="number of groups for k-means (default: 12)")
-    run.add_argument(
-        "--short-circuit", action="store_true", help="let the router pass or fail some answers"
-    )
-    run.add_argument(
-        "--purity",
-        type=float,
-        default=1.0,
-        help="k-means shortcut: share of labels that must agree (default: 1.0, or all)",
-    )
-    run.add_argument(
-        "--min-members",
-        type=int,
-        default=5,
-        help="fewest examples needed in a shortcut group (default: 5)",
-    )
-    run.add_argument(
-        "--margin",
-        type=float,
-        default=0.10,
-        help="center shortcut: required gap between good and bad match scores (default: 0.10)",
-    )
-    run.add_argument("--seed", type=int, default=0, help="random seed for repeatable k-means runs")
-    run.add_argument(
-        "--embedder",
-        choices=["minilm", "tfidf"],
-        default="minilm",
-        help="minilm, the default model, or tfidf, which needs no download but routes worse",
-    )
-    run.add_argument(
-        "--missing-grade",
-        choices=["stop", "review"],
-        default="stop",
-        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
-    )
-    run.add_argument(
-        "--top-k",
+        "--attempts",
         type=int,
         default=1,
-        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
-    )
-    run.add_argument(
-        "--floor",
-        type=float,
-        default=None,
-        help="with --top-k, skip extra rules whose match score is below this (default: none)",
+        help="live only: judge each answer this many times, skipping saved grades after "
+        "the first, and keep the worst outcome (default: 1)",
     )
     run.set_defaults(func=cmd_run)
 
@@ -313,7 +459,62 @@ def build_parser() -> argparse.ArgumentParser:
     attack.add_argument(
         "--system", default="policy/target_system_prompt.txt", help="instructions for the chatbot"
     )
+    attack.add_argument(
+        "--attempts",
+        type=int,
+        default=1,
+        help="send each prompt this many times; later answers get ids ending #2, #3 (default: 1)",
+    )
+    attack.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="sampling temperature for the chatbot; above 0 lets repeats differ (default: 0)",
+    )
     attack.set_defaults(func=cmd_attack)
+
+    evade = sub.add_parser(
+        "evade",
+        help="rewrite bad answers to see which slip past the checks",
+        description=(
+            "Grade each answer labeled bad as written and after each fixed rewrite. With "
+            "--attacker, a chat model then rewords the answers still caught. In replay mode "
+            "the rewritten answers have no saved grades, so pass --missing-grade review."
+        ),
+    )
+    evade.add_argument("--data", required=True, help="labeled answers; only bad ones are used")
+    evade.add_argument("--out", required=True, help="folder for the evade output files")
+    evade.add_argument(
+        "--judge",
+        choices=["live", "replay"],
+        default="replay",
+        help="call a judge model (live) or read saved grades (replay, needs "
+        "--missing-grade review) (default: replay)",
+    )
+    evade.add_argument(
+        "--rounds",
+        type=int,
+        default=5,
+        help="with --attacker, most rewording rounds per answer (default: 5)",
+    )
+    evade.add_argument(
+        "--attacker",
+        action="store_true",
+        help="also ask a chat model, set by REDLINE_ATTACKER_*, to reword the answers",
+    )
+    evade.add_argument(
+        "--max-judge-calls",
+        type=int,
+        default=None,
+        help="stop cleanly after this many judge calls and write what is done (default: none)",
+    )
+    _grading_options(
+        evade,
+        cache_default=None,
+        cache_help="file of saved judge grades (default: with --judge live, judge_cache.jsonl "
+        f"under --out, never {PINNED_CACHE}; with replay, {PINNED_CACHE})",
+    )
+    evade.set_defaults(func=cmd_evade)
 
     report = sub.add_parser("report", help="write the summary and the report")
     report.add_argument(
@@ -341,6 +542,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache",
         default="data/judge_cache.jsonl",
         help="saved judge grades to identify in the report",
+    )
+    report.add_argument(
+        "--evade-labels",
+        default=None,
+        help="evade candidates with a person's good or bad label; bad ones that passed "
+        "count as missed",
     )
     report.set_defaults(func=cmd_report)
 
@@ -380,6 +587,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--attack",
         action="store_true",
         help="check the attack run's numbers instead of the holdout's",
+    )
+    gate.add_argument(
+        "--use-interval",
+        action="store_true",
+        help="test recall on the low end of its 95%% interval and false alarms on the high end",
     )
     gate.set_defaults(func=cmd_gate)
     return parser

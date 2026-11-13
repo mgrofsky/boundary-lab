@@ -8,6 +8,8 @@ The prompts are written the way a tester would actually send them. Some are blun
 
 Start with the [README commands](../redline/README.md) to replay the saved run or collect new answers. The [routing guide](routing.md) explains how to grade the same answers with different router settings. You can also run this set in [promptfoo](promptfoo.md) to see Redline beside its other checks.
 
+These prompts were not written against Redline, and each was sent once. To send each prompt several times, or to rewrite bad answers to try to get them past Redline, see [adaptive attacks](adaptive-attacks.md).
+
 ## The four kinds
 
 ### Getting the chatbot's instructions

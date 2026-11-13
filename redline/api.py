@@ -28,7 +28,9 @@ class Grader:
     which needs no download but routes worse, or your own object with encode. top_k above 1 judges up to that many of the closest
     rules and keeps the worst outcome. floor skips extra rules less similar than it.
     missing_grade says what the replay judge does with no saved grade: "stop" raises
-    KeyError, "review" records review with the code NO_SAVED_GRADE.
+    KeyError, "review" records review with the code NO_SAVED_GRADE. attempts above 1
+    judges each answer that reaches the judge that many times. It needs a judge with
+    without_cache, such as ChatEndpointJudge, since later attempts must skip saved grades.
     """
 
     def __init__(
@@ -45,6 +47,7 @@ class Grader:
         top_k=1,
         floor=None,
         missing_grade="stop",
+        attempts=1,
     ):
         loaded = policy.load_policy(rules)
         self.rules = loaded.rules
@@ -58,6 +61,14 @@ class Grader:
             raise ValueError(f"top_k must be at least 1, got {top_k}")
         self.top_k = top_k
         self.floor = floor
+        if attempts < 1:
+            raise ValueError(f"attempts must be at least 1, got {attempts}")
+        self.attempts = attempts
+        self.again = None
+        if attempts > 1:
+            if not hasattr(self.judge, "without_cache"):
+                raise ValueError("attempts above 1 need a live judge, not saved grades")
+            self.again = self.judge.without_cache()
         if short_circuit is True:
             short_circuit = ShortCircuit()
         self.short_circuit = short_circuit or None
@@ -97,6 +108,8 @@ class Grader:
             self.examples,
             top_k=self.top_k,
             floor=self.floor,
+            attempts=self.attempts,
+            again=self.again,
         )
 
     def grade(self, prompt: str, response: str, user_type: str) -> dict:

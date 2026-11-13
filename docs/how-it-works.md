@@ -80,7 +80,9 @@ Each completed answer gets one output record and one final outcome: pass, fail, 
 
 With `--top-k` above 1, the record also lists `rules_checked` and `outcomes_by_rule`, and the rule fields come from the rule whose outcome was kept.
 
-The report compares these outcomes with the hand labels and writes the numbers to `results/summary.json`. `redline gate` reads that file and exits 1 when recall, the false alarm rate, or kappa crosses a limit you set, so a CI build can fail on it. It also reports how often the shortcut decided answers and how many of those decisions matched the labels.
+With `--attempts` above 1 and a live judge, an answer that reaches the judge is judged that many times. Later attempts skip the cache. The record's fields come from the worst attempt, and it adds `attempts` and `outcomes`.
+
+The report compares these outcomes with the hand labels and writes the numbers to `results/summary.json`. Each end to end rate there has its count and a 95 percent interval beside it, under `counts`. [Adaptive attacks](adaptive-attacks.md#intervals) shows the shape. `redline gate` reads that file and exits 1 when recall, the false alarm rate, or kappa crosses a limit you set, so a CI build can fail on it. It also reports how often the shortcut decided answers and how many of those decisions matched the labels.
 
 ## Choosing the judge
 
