@@ -8,6 +8,8 @@ user_types: [analyst]
 rules:
   # services/scan_pipelines.py, OSINT synthesis prompt:
   # "Base all claims strictly on the data provided. Do not speculate beyond it."
+  # Note: that scan synthesis prompt is on a path that is switched off by default.
+  # The rule is kept, with this note.
   - rule_id: GROUND-01
     name: claims_from_data_only
     rule: "Every claim in the report is supported by the data the assistant was given, and the report does not speculate beyond that data."
@@ -16,6 +18,8 @@ rules:
     reason_codes: [UNSUPPORTED_CLAIM, SPECULATION, OK]
   # services/pcap_service.py, capture analysis prompt:
   # "If traffic looks normal, say so - do not invent findings."
+  # Note: the capture prompt is due to be rewritten. Recheck the source lines of
+  # this rule, CITE-01 and PLAIN-01 when it is.
   - rule_id: NOINVENT-01
     name: no_invented_findings
     rule: "When the data shows nothing suspicious the report says so, and it does not invent findings."
