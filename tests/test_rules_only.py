@@ -173,6 +173,8 @@ def test_run_rules_only_reads_no_train_file(rules_data, write_rules, tmp_path):
     assert meta["top_k"] is None
     assert meta["k"] is None
     assert meta["no_saved_grade_lookups"] == 2
+    # These settings belong to the router shortcut, which this mode does not have.
+    assert not {"purity", "min_members", "margin"} & set(meta)
 
 
 def test_a_kmeans_run_still_records_k_and_a_rules_only_run_records_none(
@@ -186,7 +188,9 @@ def test_a_kmeans_run_still_records_k_and_a_rules_only_run_records_none(
     assert (meta["router"], meta["k"]) == ("kmeans5", 5)
     assert "mode" not in meta
     assert cli.main(base) == 0
-    assert json.loads((out / "holdout_meta.json").read_text())["k"] is None
+    meta = json.loads((out / "holdout_meta.json").read_text())
+    assert meta["k"] is None
+    assert {"purity", "min_members", "margin"} <= set(meta)
 
 
 def test_run_rules_only_replay_needs_a_cache(rules_data, write_rules, tmp_path, capsys):
@@ -252,3 +256,29 @@ def test_run_rules_only_refuses_the_router_shortcut(rules_data, write_rules, tmp
         ]
     )
     assert code == 2
+
+
+def test_from_rules_builds_the_grader_through_the_one_constructor(
+    rules_data, write_rules, monkeypatch
+):
+    built = []
+    real = api.Grader.__init__
+
+    def spy(self, *args, **kwargs):
+        built.append(kwargs)
+        real(self, *args, **kwargs)
+
+    monkeypatch.setattr(api.Grader, "__init__", spy)
+    grader = api.Grader.from_rules(write_rules(rules_data), FakeJudge(PASS))
+    assert len(built) == 1 and built[0]["train"] is None
+    assert grader.mode == "rules_only" and grader.top_k == 2
+
+
+def test_a_grader_with_no_train_file_cannot_use_the_router_shortcut(rules_data, write_rules):
+    with pytest.raises(ValueError, match="short_circuit needs labeled examples"):
+        api.Grader(rules=write_rules(rules_data), train=None, judge=FakeJudge(PASS), short_circuit=True)
+
+
+def test_a_rules_file_with_no_rules_says_so(write_rules):
+    with pytest.raises(ValueError, match="has no rules"):
+        api.Grader.from_rules(write_rules([]), FakeJudge(PASS))

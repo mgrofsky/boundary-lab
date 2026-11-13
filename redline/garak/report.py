@@ -21,6 +21,7 @@ REVIEW_SCORE = 0.5
 EVAL_THRESHOLD = 0.5
 # seq must be there but may be null: some garak probes give an attempt no sequence number.
 NEEDED = ("uuid", "seq", "probe_classname", "prompt", "outputs")
+OUTPUT_FILES = ("garak_graded.jsonl", "garak_summary.json", "garak_evals.jsonl")
 EMPTY = {
     "outcome": "pass",
     "routed_rule": None,
@@ -220,10 +221,8 @@ def write(out_dir, rows: list[dict], skipped: dict, extra: dict | None = None) -
     """Write garak_graded.jsonl, garak_summary.json and garak_evals.jsonl under out_dir."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    paths = [out_dir / name for name in ("garak_graded.jsonl", "garak_summary.json")]
-    paths.append(out_dir / "garak_evals.jsonl")
-    paths[0].write_text("".join(json.dumps(r) + "\n" for r in rows))
-    summary = {**(extra or {}), **summarize(rows, skipped)}
-    paths[1].write_text(json.dumps(summary, indent=2) + "\n")
-    paths[2].write_text("".join(json.dumps(e) + "\n" for e in eval_entries(rows, skipped)))
-    return paths
+    graded, summary, evals = (out_dir / name for name in OUTPUT_FILES)
+    graded.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    summary.write_text(json.dumps({**(extra or {}), **summarize(rows, skipped)}, indent=2) + "\n")
+    evals.write_text("".join(json.dumps(e) + "\n" for e in eval_entries(rows, skipped)))
+    return [graded, summary, evals]

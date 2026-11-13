@@ -203,15 +203,17 @@ def cmd_run(args) -> int:
     stem = Path(args.data).stem
     out_path = out_dir / f"{stem}_outputs.jsonl"
     write_jsonl(out_path, outputs)
+    # Rules only mode has no router shortcut, so its settings file leaves these out.
+    shortcut = {name: getattr(args, name) for name in ("purity", "min_members", "margin")}
+    if args.rules_only:
+        shortcut = {}
     meta = {
         "data": Path(args.data).as_posix(),
         "router": router.name,
         "embedder": grader.embedder_name,
         "k": args.k if args.router == "kmeans" and not args.rules_only else None,
         "short_circuit": args.short_circuit,
-        "purity": args.purity,
-        "min_members": args.min_members,
-        "margin": args.margin,
+        **shortcut,
         "records": len(outputs),
         "top_k": args.top_k,
         "floor": args.floor,
@@ -469,25 +471,26 @@ def cmd_garak_grade(args) -> int:
     return 0
 
 
-def _garak_shims(args, action) -> int:
+def _garak_shims(args, action: str) -> int:
+    """Run install or uninstall from redline.garak.install on the garak in this environment."""
     from redline.garak import install
 
     package_dir = install.find_garak()
     if package_dir is None:
         print("redline: garak is not installed in this environment", file=sys.stderr)
         return 2
-    code, lines = action(install)(package_dir, dry_run=args.dry_run)
+    code, lines = getattr(install, action)(package_dir, dry_run=args.dry_run)
     for line in lines:
         print(line)
     return code
 
 
 def cmd_garak_install(args) -> int:
-    return _garak_shims(args, lambda install: install.install)
+    return _garak_shims(args, "install")
 
 
 def cmd_garak_uninstall(args) -> int:
-    return _garak_shims(args, lambda install: install.uninstall)
+    return _garak_shims(args, "uninstall")
 
 
 def _grading_options(

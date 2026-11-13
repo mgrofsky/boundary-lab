@@ -31,6 +31,9 @@ class Grader:
     KeyError, "review" records review with the code NO_SAVED_GRADE. attempts above 1
     judges each answer that reaches the judge that many times. It needs a judge with
     without_cache, such as ChatEndpointJudge, since later attempts must skip saved grades.
+
+    train None grades from the rules file alone. See from_rules, which is the plain way
+    to ask for that mode.
     """
 
     def __init__(
@@ -51,16 +54,26 @@ class Grader:
     ):
         loaded = policy.load_policy(rules)
         self.rules = loaded.rules
+        if not self.rules:
+            raise ValueError(f"{rules}: the rules file has no rules")
         self.user_types = loaded.user_types
-        self.train = _read_jsonl(train)
+        # With no labeled examples the rules' own text is all there is to route on.
+        self.mode = "rules_only" if train is None else None
+        self.train = [] if train is None else _read_jsonl(train)
         self.examples = select(self.train)
-        self.mode = None
+        if self.mode and top_k is None:
+            top_k = len(self.rules)
         self._set_judge(judge, cache, missing_grade, top_k, floor, attempts)
         if short_circuit is True:
             short_circuit = ShortCircuit()
         self.short_circuit = short_circuit or None
+        if self.mode and self.short_circuit:
+            raise ValueError("short_circuit needs labeled examples, so it needs a train file")
         self.embedder = _embedder(embedder)
         self.embedder_name = getattr(self.embedder, "name", type(self.embedder).__name__)
+        if self.mode:
+            self.router = RuleRouter(self.embedder).fit(self.rules)
+            return
         if hasattr(self.embedder, "fit"):
             self.embedder.fit([embed.text(r["prompt"], r["response"]) for r in self.train])
         if router == "kmeans":
@@ -111,20 +124,16 @@ class Grader:
         """
         if judge is None and cache is None:
             raise ValueError("rules only mode needs a judge or a cache of saved grades")
-        grader = cls.__new__(cls)
-        loaded = policy.load_policy(rules)
-        grader.rules = loaded.rules
-        grader.user_types = loaded.user_types
-        grader.train = []
-        grader.examples = {}
-        grader.mode = "rules_only"
-        grader.short_circuit = None
-        top_k = len(grader.rules) if top_k is None else top_k
-        grader._set_judge(judge, cache, missing_grade, top_k, None, attempts)
-        grader.embedder = _embedder(embedder)
-        grader.embedder_name = getattr(grader.embedder, "name", type(grader.embedder).__name__)
-        grader.router = RuleRouter(grader.embedder).fit(grader.rules)
-        return grader
+        return cls(
+            rules=rules,
+            train=None,
+            judge=judge,
+            cache=cache,
+            embedder=embedder,
+            top_k=top_k,
+            missing_grade=missing_grade,
+            attempts=attempts,
+        )
 
     def check_user_type(self, user_type, record_id=None) -> None:
         """Raise ValueError when the rules file does not declare this user type."""
