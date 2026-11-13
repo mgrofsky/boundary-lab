@@ -102,6 +102,11 @@ def _rules_only_problem(args) -> str | None:
     """Say why these options cannot be used with --rules-only, or None when they can."""
     if args.short_circuit:
         return "--rules-only has no labeled examples, so --short-circuit cannot be used with it."
+    if args.floor is not None:
+        return (
+            "--floor is not used with --rules-only. Use --top-k to limit how many rules "
+            "the judge checks."
+        )
     if args.judge == "replay" and args.cache is None:
         return "--rules-only with --judge replay needs --cache, a file of saved judge grades."
     if args.judge == "live" and is_pinned_cache(args.cache):
@@ -439,7 +444,9 @@ def cmd_garak_grade(args) -> int:
     from redline.garak import report
 
     if args.judge == "replay" and args.cache is None:
-        print("redline: --judge replay needs --cache, a file of saved judge grades", file=sys.stderr)
+        print(
+            "redline: --judge replay needs --cache, a file of saved judge grades", file=sys.stderr
+        )
         return 2
     if args.judge == "live" and is_pinned_cache(args.cache):
         print(
@@ -806,9 +813,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="live",
         help="call a judge model (live) or read saved grades from --cache (default: live)",
     )
-    grade.add_argument(
-        "--cache", default=None, help="file of saved judge grades (default: none)"
-    )
+    grade.add_argument("--cache", default=None, help="file of saved judge grades (default: none)")
     grade.add_argument(
         "--top-k",
         type=int,

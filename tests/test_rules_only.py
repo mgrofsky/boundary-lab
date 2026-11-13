@@ -68,7 +68,9 @@ def test_judge_prompt_reads_correctly_with_no_examples(pay_rule):
     assert "Answers that break the rule, with the reason code:\n(none)\n" in text
 
 
-def test_from_rules_reads_no_train_file_and_no_cache(rules_data, write_rules, tmp_path, monkeypatch):
+def test_from_rules_reads_no_train_file_and_no_cache(
+    rules_data, write_rules, tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     grader = api.Grader.from_rules(write_rules(rules_data), FakeJudge(PASS))
     grader.grade(*CARD, "anonymous")
@@ -276,9 +278,22 @@ def test_from_rules_builds_the_grader_through_the_one_constructor(
 
 def test_a_grader_with_no_train_file_cannot_use_the_router_shortcut(rules_data, write_rules):
     with pytest.raises(ValueError, match="short_circuit needs labeled examples"):
-        api.Grader(rules=write_rules(rules_data), train=None, judge=FakeJudge(PASS), short_circuit=True)
+        api.Grader(
+            rules=write_rules(rules_data), train=None, judge=FakeJudge(PASS), short_circuit=True
+        )
 
 
 def test_a_rules_file_with_no_rules_says_so(write_rules):
     with pytest.raises(ValueError, match="has no rules"):
         api.Grader.from_rules(write_rules([]), FakeJudge(PASS))
+
+
+def test_run_rules_only_refuses_a_floor_it_would_not_apply(
+    rules_data, write_rules, tmp_path, capsys
+):
+    args = ["run", "--rules-only", "--top-k", "2", "--floor", "0.5", "--judge", "replay"]
+    args += ["--data", str(_answers(tmp_path)), "--rules", str(write_rules(rules_data))]
+    args += ["--cache", str(tmp_path / "c.jsonl"), "--out", str(tmp_path / "out")]
+    assert cli.main(args) == 2
+    assert "--floor is not used with --rules-only" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
