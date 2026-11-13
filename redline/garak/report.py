@@ -79,7 +79,10 @@ class JudgeWatch:
 
     def _say(self, message: str) -> None:
         print(f"{self.lead}{self.name}: {message}", file=sys.stderr)
-        _log.warning("%s: %s", self.name, message)
+        # garak sets up a log file. Where nothing has set logging up, a warning would be
+        # printed on stderr by Python itself, and the line above would be said twice.
+        if _log.hasHandlers():
+            _log.warning("%s: %s", self.name, message)
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         if not self.stopped:

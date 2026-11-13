@@ -2,6 +2,10 @@
 
 import json
 import logging
+import os
+import socket
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -231,3 +235,33 @@ def test_garak_grade_exits_0_when_every_output_was_evaluated(
     assert cli.main(args) == 0
     assert json.loads((out / "garak_summary.json").read_text())["overall"]["judge_unavailable"] == 0
     assert "not evaluated" not in capsys.readouterr().err
+
+
+def test_the_command_says_each_outage_line_once(rules_data, write_rules, tmp_path):
+    """Run the real command against an address nothing listens on."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = {
+        **os.environ,
+        "REDLINE_JUDGE_BASE_URL": f"http://127.0.0.1:{port}/v1",
+        "REDLINE_JUDGE_MODEL": "sentinel-model",
+        "REDLINE_JUDGE_API_KEY": "sentinel-key",
+    }
+    args = ["garak-grade", str(FIXTURE), "--rules", str(write_rules(rules_data)), "--out", "out"]
+    done = subprocess.run(
+        [sys.executable, "-m", "redline", *args],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 1, done.stderr
+    lines = done.stderr.splitlines()
+    assert sum("could not be reached. An output" in line for line in lines) == 1
+    assert sum("stopped calling" in line for line in lines) == 1
+    assert sum("3 outputs were not evaluated" in line for line in lines) == 1
+    assert not any(s in done.stderr + done.stdout for s in ("sentinel", str(port)))
+    summary = json.loads((tmp_path / "out" / "garak_summary.json").read_text())
+    assert summary["overall"]["judge_unavailable"] == 3
