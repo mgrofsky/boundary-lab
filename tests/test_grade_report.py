@@ -404,8 +404,10 @@ def test_dry_run_with_a_train_file_counts_one_rule_per_answer(
     rules_data, write_rules, tmp_path, capsys
 ):
     rules = write_rules(rules_data)
-    args = ["garak-grade", str(FIXTURE), "--rules", str(rules), "--dry-run", "--train", "t.jsonl"]
-    assert cli.main(args) == 0
+    train = tmp_path / "t.jsonl"
+    train.write_text("")
+    args = ["garak-grade", str(FIXTURE), "--rules", str(rules), "--dry-run", "--train", str(train)]
+    assert cli.main([*args, "--embedder", "tfidf"]) == 0
     assert "at most 3 judge calls" in capsys.readouterr().out
 
 

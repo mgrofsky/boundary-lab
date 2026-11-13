@@ -146,18 +146,12 @@ def build_grader(
     JudgeWatch. name starts the lines it writes and lead goes before them.
     """
     options = {"cache": cache, "missing_grade": missing_grade, "assistant_role": ASSISTANT_ROLE}
+    embedder = embedder or default_embedder(train)
     if train is None:
-        grader = api.Grader.from_rules(
-            rules, judge, top_k=top_k, embedder=embedder or "tfidf", **options
-        )
+        grader = api.Grader.from_rules(rules, judge, top_k=top_k, embedder=embedder, **options)
     else:
         grader = api.Grader(
-            rules=rules,
-            train=train,
-            judge=judge,
-            embedder=embedder or "minilm",
-            top_k=top_k or 1,
-            **options,
+            rules=rules, train=train, judge=judge, embedder=embedder, top_k=top_k or 1, **options
         )
     if judge is not None:
         # The Grader has set the judge up by now, so the watch goes on last.
@@ -489,6 +483,8 @@ def plan(
     top_k: int | None = None,
     train: str | os.PathLike | None = None,
     user_type: str | None = None,
+    max_judge_calls: int | None = None,
+    deadline_seconds: float | None = None,
 ):
     """Check everything a run checks before it sets up a judge or an embedder.
 
@@ -496,11 +492,15 @@ def plan(
     so they refuse the same input and count the same calls. Returns the loaded rules,
     the attempts in the report, and the most judge calls one answer can need.
 
-    Raises ValueError for a bad top_k, rules that do not load or hold no rule, a user
+    Raises ValueError for a bad number, rules that do not load or hold no rule, a user
     type the rules do not declare and a bad line in the train file. ReportError, a
     ValueError, is raised for a bad report. OSError is raised for a file that cannot
     be read. user_type None skips that one check.
     """
+    if max_judge_calls is not None and max_judge_calls < 0:
+        raise ValueError(f"max_judge_calls must be 0 or more, got {max_judge_calls}")
+    if deadline_seconds is not None and deadline_seconds < 0:
+        raise ValueError(f"deadline_seconds must be 0 or more, got {deadline_seconds}")
     if top_k is not None and top_k < 1:
         raise ValueError(f"top_k must be at least 1, got {top_k}")
     loaded, source = api.read_rules(rules)
@@ -537,6 +537,11 @@ def estimate_report_calls(
     raises.
     """
     _, attempts, per_answer = plan(report_path, rules, top_k, train)
+    return estimate(attempts, per_answer)
+
+
+def estimate(attempts: list[dict], per_answer: int) -> dict:
+    """What estimate_report_calls returns, from the two values plan gives."""
     counts = _output_counts(attempts)
     answers = counts.pop("answers")
     return {
@@ -545,6 +550,11 @@ def estimate_report_calls(
         "skipped_by_reason": counts,
         "judge_calls": answers * per_answer,
     }
+
+
+def default_embedder(train) -> str:
+    """The embedder a garak path uses when none is named: tfidf, or minilm with train."""
+    return "tfidf" if train is None else "minilm"
 
 
 def _row(entry: dict, index: int, graded: dict) -> dict:
@@ -702,11 +712,9 @@ def grade_report(
     """
     if judge is None:
         raise ValueError("grade_report needs a judge object, such as ChatEndpointJudge")
-    if max_judge_calls is not None and max_judge_calls < 0:
-        raise ValueError(f"max_judge_calls must be 0 or more, got {max_judge_calls}")
-    if deadline_seconds is not None and deadline_seconds < 0:
-        raise ValueError(f"deadline_seconds must be 0 or more, got {deadline_seconds}")
-    loaded, attempts, per_answer = plan(report_path, rules, top_k, train, user_type)
+    loaded, attempts, per_answer = plan(
+        report_path, rules, top_k, train, user_type, max_judge_calls, deadline_seconds
+    )
     grader = build_grader(loaded, judge, train=train, top_k=top_k, embedder=embedder)
     if out_dir is not None:
         check_out_dir(out_dir)

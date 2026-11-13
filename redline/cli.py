@@ -440,25 +440,25 @@ def _from_0_to_1(text: str) -> float:
     return value
 
 
-# What garak-grade says when a run ended before the last output, by the reason it ended.
-_STOPPED = {
-    "cap": "the run reached --max-judge-calls",
-    "cancelled": "the run was cancelled",
-    "deadline": "the run reached its time limit",
-    "error": "the run ended on an error",
-}
-
-
 def _garak_dry_run(args) -> int:
-    """Print what grading the report would cost. No judge and no embedder is set up."""
+    """Print what grading the report would cost. No judge is set up.
+
+    It checks what a real run checks before its first judge call, apart from the
+    judge's own settings and --out: the rules, the user type, the train file, the
+    numbers, the report, and that the embedder can be built.
+    """
+    from redline import embed
     from redline.garak import report
 
-    # With labeled examples one rule is checked per answer unless --top-k says more.
-    top_k = args.top_k or 1 if args.train else args.top_k
     try:
-        estimate = report.estimate_report_calls(args.report, args.rules, top_k=top_k)
+        _, attempts, per_answer = report.plan(
+            args.report, args.rules, args.top_k, args.train, args.user_type, args.max_judge_calls
+        )
     except (OSError, TypeError, ValueError) as exc:
         raise SystemExit(f"redline: {exc}") from None
+    # Building an embedder loads no model. It only finds out whether it is installed.
+    embed.make(args.embedder or report.default_embedder(args.train))
+    estimate = report.estimate(attempts, per_answer)
     reasons = estimate["skipped_by_reason"]
     print(
         f"{Path(args.report).name}: {estimate['answers']} answers to grade, "
@@ -471,7 +471,7 @@ def _garak_dry_run(args) -> int:
 
 def cmd_garak_grade(args) -> int:
     from redline.garak import report
-    from redline.judge import ReplayJudge
+    from redline.judge import MissingSavedGrade, ReplayJudge
 
     if args.dry_run:
         return _garak_dry_run(args)
@@ -508,7 +508,8 @@ def cmd_garak_grade(args) -> int:
             max_judge_calls=args.max_judge_calls,
             embedder=args.embedder,
         )
-    except KeyError as exc:
+    except MissingSavedGrade as exc:
+        # Only this case gets the hint. Any other KeyError is a fault and is not caught.
         raise SystemExit(
             f"redline: {exc.args[0]}. Pass --missing-grade review to record review and go on."
         ) from None
@@ -527,10 +528,12 @@ def cmd_garak_grade(args) -> int:
     code = 0
     left = result["not_graded"]["count"]
     if left:
+        # The cap is the one stop this command can ask for that leaves outputs behind.
+        # Any other one ends in an exception before this line.
         were = "output was" if left == 1 else "outputs were"
         print(
-            f"redline: warning: {left} {were} not graded because "
-            f"{_STOPPED[result['stopped']]}. They are not passes and not hits.",
+            f"redline: warning: {left} {were} not graded because the run reached "
+            "--max-judge-calls. They are not passes and not hits.",
             file=sys.stderr,
         )
         code = 1

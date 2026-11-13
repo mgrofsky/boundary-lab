@@ -3,6 +3,7 @@
 import hashlib
 import inspect
 import json
+import os
 import random
 import re
 import secrets
@@ -35,6 +36,7 @@ __all__ = [
     "ChatEndpointJudge",
     "FakeJudge",
     "Judge",
+    "MissingSavedGrade",
     "ReplayJudge",
     "RoleView",
     "build_prompt",
@@ -169,21 +171,51 @@ def prompt_key(prompt_text: str) -> str:
     return hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
 
 
-def read_saved_grades(path) -> list[dict]:
-    """Read a saved grades file: one JSON object per line. Blank lines are skipped.
+class MissingSavedGrade(KeyError):
+    """Replay found no saved grade for an answer and a rule. The message holds the key."""
 
-    Each entry has key and answer, and newer ones have model, rule_id and version. A
-    line written by a later format than this code knows raises ValueError.
+
+def read_saved_grades(path: str | os.PathLike) -> list[dict]:
+    """Read a saved grades file and return its entries in order.
+
+    path is a file with one JSON object per line. Blank lines are skipped. Each entry
+    has key and answer, and newer ones have model, rule_id and version. An entry with
+    no version is version 1.
+
+    A line that cannot be used raises ValueError with the file and the line number:
+    one that is not valid JSON, such as a last line cut short, one that is not an
+    object, one with no key or no answer, one whose version is not a whole number, and
+    one written by a later format than this code knows. A file that cannot be read
+    raises OSError.
     """
     entries = []
     for number, line in enumerate(Path(path).read_text().splitlines(), start=1):
         if not line.strip():
             continue
-        entry = json.loads(line)
-        version = entry.get("version", 1)
+        where = f"{path}: line {number}"
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            raise ValueError(
+                f"{where} is not valid JSON. A line cut short by a crash reads this way"
+            ) from None
+        if not isinstance(entry, dict):
+            raise ValueError(f"{where} is not a JSON object")  # noqa: TRY004
+        missing = [name for name in ("key", "answer") if name not in entry]
+        if missing:
+            raise ValueError(f"{where} has no {' and no '.join(missing)}")
+        if not isinstance(entry["answer"], dict):
+            raise ValueError(f"{where}: answer is not a JSON object")  # noqa: TRY004
+        version = entry.get("version", SAVED_GRADES_VERSION)
+        if isinstance(version, bool) or not isinstance(version, int):
+            kind = "text" if isinstance(version, str) else "value"
+            raise ValueError(  # noqa: TRY004
+                f"{where}: version must be the number {SAVED_GRADES_VERSION}, not the "
+                f"{kind} {version!r:.40}"
+            )
         if version != SAVED_GRADES_VERSION:
             raise ValueError(
-                f"{path}: line {number} is saved grades format version {version}, and this "
+                f"{where} is saved grades format version {version}, and this "
                 f"Redline reads version {SAVED_GRADES_VERSION}"
             )
         entries.append(entry)
@@ -400,8 +432,9 @@ class ChatEndpointJudge:
 class ReplayJudge:
     """Grades answers by looking up saved judge answers, so no key or network is needed.
 
-    A missing grade stops the run by default. With missing="review", the answer gets
-    review with the code NO_SAVED_GRADE and the run keeps going. assistant_role is the
+    A missing grade stops the run by default: grade raises MissingSavedGrade, a
+    KeyError. With missing="review", the answer gets review with the code
+    NO_SAVED_GRADE and the run keeps going. assistant_role is the
     role a lookup is made under when the call names none. One ReplayJudge can serve many
     Graders, and missing_lookups then counts the misses of all of them.
     """
@@ -438,7 +471,7 @@ class ReplayJudge:
                     "reason_text": "No saved judge grade matches this answer and rule.",
                     "raw": "",
                 }
-            raise KeyError(f"no saved judge answer for key {key}")
+            raise MissingSavedGrade(f"no saved judge answer for key {key}")
         return dict(self.answers[key])
 
 

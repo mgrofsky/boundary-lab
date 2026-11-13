@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 
 from redline import gate, policy
 from redline.cli import _env, load_env_file, read_jsonl
-from redline.embed import Embedder
+from redline.embed import Embedder, MissingExtra
 from redline.judge import ChatEndpointJudge, ReplayJudge, select
 from redline.router import Router
 
@@ -89,6 +89,10 @@ def grade(output: str, user_message: str, user_type: str, rig: Rig) -> dict:
 def get_assert(output: str, context) -> dict:
     global _rig
     if _rig is None:
-        _rig = build_rig()
+        try:
+            _rig = build_rig()
+        except MissingExtra as exc:
+            # One plain line, as the commands print, and no traceback.
+            raise SystemExit(f"redline: {exc}") from None
     variables = context["vars"]
     return grade(output, variables["user_message"], variables.get("user_type", "anonymous"), _rig)
