@@ -206,6 +206,10 @@ See [adaptive attacks](../docs/adaptive-attacks.md) for every rewrite, the outpu
 
 Redline's 80 attack prompts also run under [promptfoo](https://www.promptfoo.dev), alongside its string and rubric checks. That integration uses center matching with the shortcut off. See [running the attacks through promptfoo](../docs/promptfoo.md).
 
+## Use with garak
+
+[garak](https://github.com/NVIDIA/garak) is an open source scanner that sends attack prompts to a model. Redline can grade the answers in a garak report against your rules with `redline garak-grade`. It can also run inside garak as the detector `redline.PolicyRules`, after `redline garak-install`. A rules file is enough to start. Redline does not depend on garak, and this is not an official garak plugin. See [using Redline with garak](../docs/garak.md).
+
 ## Where it falls short
 
 Both routers can mix up rules that use similar words, like account data and identity checks. By default each response gets checked against one rule, so a violation of another rule can slip through. `--top-k` checks more rules for more judge calls. An off-topic match passes without asking the judge.
