@@ -19,9 +19,13 @@ You'll need Python 3.11 or newer. From the repository directory:
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[minilm]"
 redline run --data data/holdout.jsonl --judge replay --out results/local/center
 ```
+
+The `minilm` extra installs `sentence-transformers`, the model library this example matches text with. It pulls in torch.
+
+From Redline 0.5.0 a plain `pip install -e .` leaves that library out. That is a breaking change for an install that relied on it. The fix is one line: install `".[minilm]"` from a checkout, or `"redline[minilm]"` by name. A plain install still runs `--rules-only`, `--embedder tfidf` and `garak-grade`. Asking for the `minilm` embedder without the extra stops with one line that names it.
 
 Open `results/local/center/holdout_outputs.jsonl` to see the results. Each line has the original answer, the rule it matched, who made the decision, and why. The matching `_meta.json` file records the run settings and totals.
 
@@ -45,6 +49,10 @@ print(grader.grade(prompt, response, "verified")["outcome"])  # pass
 `grade` returns the same fields as a line in `holdout_outputs.jsonl`, without the `id`. Building the `Grader` loads the rules, picks judge examples and sets up the router, so build it once and reuse it.
 
 By default it uses the replay judge, which only knows the saved answers. To grade new answers, pass `judge=ChatEndpointJudge(base_url, model, api_key, cache_path="my_cache.jsonl")` from `redline.judge`. The other options match the `redline run` flags: `rules`, `train`, `router`, `k`, `short_circuit`, `seed`, `cache`, `embedder`, `top_k`, `floor`, `missing_grade` and `attempts`.
+
+## Use it from an application
+
+An app can call Redline as a library with no command line. It can pass rules as data and list every problem in them before saving. It can count judge calls before a run, grade a garak report with a cap and a stop, and replay saved grades in CI. [Use Redline from an application](../docs/using-redline-in-an-app.md) has a tested example of each. [Saved grades](../docs/saved-grades.md) describes the file that replay reads.
 
 ## Pick how answers find a rule
 

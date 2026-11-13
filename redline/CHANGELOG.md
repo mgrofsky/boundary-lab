@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.5.0
+
+**Breaking change for installs.** `sentence-transformers` is no longer installed with Redline. It moved to an extra named `minilm`, because it pulls in torch and rules only mode does not need it. If you use the default `minilm` embedder, install `pip install "redline[minilm]"`, or `pip install -e ".[minilm]"` from a checkout. Without it, asking for that embedder stops with one line that names the extra. No default changed: the calibrated mode still uses `minilm`. The `dev` extra still installs it.
+
+This release adds what an application needs to use Redline as a library. Nothing in it has been measured, and the published results are unchanged.
+
+### Added
+
+- `redline.policy.load_policy_data(data, source="<data>")` builds a `Policy` from the content of a rules file once parsed, so an app can keep rules in its own storage. `load_policy(path)` reads the file and calls it.
+- `redline.policy.validate_policy_data(data)` returns every problem in rules data as a list and never raises for bad content. Each problem has `where`, a `code` from `redline.policy.PROBLEM_CODES` and a `message`.
+- `Grader.from_rules` and `Grader` take the rules as a path, a `Policy` or data.
+- `redline.estimate_calls(n_answers, rules, top_k=None, attempts=1)` returns the largest number of judge calls a rules only run can make.
+- `redline.garak.grade_report(report_path, rules, judge, ...)` grades a garak report from Python and returns the summary, with the graded rows under `rows` and the eval entries under `evals`. It takes `out_dir`, `on_progress`, `should_stop`, `max_judge_calls` and `deadline_seconds`. It does not need garak.
+- `redline.garak.estimate_report_calls(report_path, rules, top_k=None)` counts the answers a report holds, the outputs that would be skipped and the largest number of judge calls.
+- `redline garak-grade --dry-run` prints that estimate and exits 0 with no judge and no `--out`. `--max-judge-calls N` stops a run before the call that would pass N.
+- `garak_summary.json` gains `stopped`, `not_graded`, `judge_calls` and `estimated_calls` at the top level, and a `not_graded` count under `overall` and each probe. Every key it had keeps its meaning.
+- `ChatEndpointJudge` takes `timeout`, the seconds one request may take. The default is 60, as before.
+- New lines in a saved grades file carry `"version": 1`. Lines without it are read as before, and `data/judge_cache.jsonl` is unchanged. A line from a later format is refused. `redline.judge.read_saved_grades` reads a file.
+- The guides [Use Redline from an application](../docs/using-redline-in-an-app.md), whose examples the test suite runs, and [Saved grades](../docs/saved-grades.md).
+- A CI job that installs Redline with no extras and checks that rules only mode works with torch absent.
+
+### Changed
+
+- The rule checks are stricter, in the file loader too. A `rule_id` or a reason code may hold only letters, digits, underscore and hyphen. `rule_id`, `name`, `rule` and `plain_summary` must be text and not empty. `reason_codes` needs at least one code. `allowed_for` must be a list. The rules files in this repository all pass.
+- An error from a rules file starts with the file's path, then the rule. Before, some messages named only the rule.
+- `redline garak-grade` is a wrapper over `grade_report`. For a run that finishes, `garak_graded.jsonl` and `garak_evals.jsonl` are byte for byte what 0.4.0 wrote. Each output file is written under a temporary name and renamed.
+- When `garak-grade --judge replay` stops on a missing saved grade, it now writes the three files first, with `stopped` set to `error`. Before, it wrote none.
+- `garak-grade` exits 1 when any output was not graded, as it already did when the judge could not be reached, and prints one line that says why.
+- `--out` is checked by the command, since `--dry-run` does not need it. Leaving it out of a real run still exits 2.
+
 ## 0.4.0
 
 This release lets Redline start from a rules file alone, and work with [garak](https://github.com/NVIDIA/garak) 0.17.1. Neither has been measured yet, so no quality number is published for them.
