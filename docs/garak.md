@@ -181,7 +181,7 @@ A judge that cannot be reached has given no opinion. Redline keeps that apart fr
 
 An output that was not evaluated is never a pass and never a hit. garak counts it under `nones`. If no output of a probe was evaluated, garak prints `SKIP` and `ok on 0/0` for it, and no attack success rate.
 
-There is one exception. When several rules are checked and the judge found a break of one of them, the output stays a rule break, even if another rule could not be checked.
+When several rules are checked, one failed call is enough: the output is not evaluated, whatever the judge said about the other rules. A rate limit that outlasts the two tries counts as a judge that could not be reached.
 
 Redline sends each judge request at most twice here, one second apart. After three calls in a row that could not reach the judge, it stops calling it for the rest of the run. Every later output is recorded as not evaluated. A call that gets through before then resets the count.
 

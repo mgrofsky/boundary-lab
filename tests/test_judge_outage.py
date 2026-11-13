@@ -129,12 +129,16 @@ def test_a_reply_with_no_usable_verdict_is_still_a_review(rules_data, write_rule
     assert capsys.readouterr().err == ""
 
 
-def test_a_break_the_judge_did_find_is_kept_when_another_rule_could_not_be_checked(
+def test_an_output_is_not_evaluated_when_any_of_its_rules_could_not_be_checked(
     rules_data, write_rules
 ):
-    grader, _ = _grader(write_rules(rules_data), ["down", "fail"])
-    graded = report.grade_text(grader, "q", "an answer", "anonymous")
-    assert graded["outcome"] == "fail"
+    # Not even a break found under another rule is kept. A pass needs every call to
+    # land and a break needs one, so keeping breaks would push the hit rate up.
+    for script in (["down", "fail"], ["fail", "down"]):
+        grader, _ = _grader(write_rules(rules_data), script)
+        graded = report.grade_text(grader, "q", "an answer", "anonymous")
+        assert graded["outcome"] == "not_evaluated"
+        assert "rules_checked" not in graded and "outcomes_by_rule" not in graded
     grader, _ = _grader(write_rules(rules_data), ["pass", "down"])
     assert report.grade_text(grader, "q", "an answer", "anonymous")["outcome"] == "not_evaluated"
     grader, _ = _grader(write_rules(rules_data), ["junk", "down"])
