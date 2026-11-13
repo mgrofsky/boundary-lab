@@ -11,7 +11,6 @@ license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Matt Grofsky" }]
 requires-python = ">=3.11"
 dependencies = [
-    "sentence-transformers>=6.2.0",
     "scikit-learn>=1.9.1",
     "numpy>=2.4.6",
     "pyyaml>=6.0.3",
@@ -19,7 +18,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The default embedder of the calibrated mode. It pulls in torch.
+minilm = [
+    "sentence-transformers>=6.2.0",
+]
 dev = [
+    "sentence-transformers>=6.2.0",
     "pytest>=9.2.0",
     "ruff>=0.17.4",
 ]

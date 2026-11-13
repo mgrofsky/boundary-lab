@@ -14,6 +14,7 @@ from garak.attempt import Attempt
 from garak.detectors.base import Detector
 from garak.exception import APIKeyMissingError, PluginConfigurationError
 
+from redline.embed import MissingExtra
 from redline.garak import report
 from redline.judge import ChatEndpointJudge
 
@@ -141,6 +142,8 @@ class PolicyRules(Detector):
                 lead="\n",
             )
             self.grader.check_user_type(self.user_type)
+        except MissingExtra as exc:
+            raise _load_error(PluginConfigurationError, str(exc)) from exc
         except (OSError, TypeError, ValueError) as exc:
             raise _load_error(
                 PluginConfigurationError, f"it could not load its rules: {exc}"

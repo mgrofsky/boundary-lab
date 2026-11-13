@@ -921,5 +921,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from redline.embed import MissingExtra
+
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except MissingExtra as exc:
+        print(f"redline: {exc}", file=sys.stderr)
+        return 2

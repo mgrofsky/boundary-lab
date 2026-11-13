@@ -1,8 +1,14 @@
 """Turn text into lists of numbers, called embeddings, so the router can compare it."""
 
+import importlib.util
+
 import numpy as np
 
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+class MissingExtra(ImportError):
+    """An embedder was asked for and the package it needs is not installed."""
 
 
 def text(prompt: str, response: str) -> str:
@@ -16,6 +22,12 @@ class Embedder:
     name = "minilm"
 
     def __init__(self, model_name: str = DEFAULT_MODEL):
+        # Checked here, before any work is done, and without loading the library.
+        if importlib.util.find_spec("sentence_transformers") is None:
+            raise MissingExtra(
+                "the minilm embedder needs sentence-transformers, which is not installed. "
+                'Install it with: pip install "redline[minilm]"'
+            )
         self.model_name = model_name
         self._model = None
 
