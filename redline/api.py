@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from redline import embed, pipeline, policy
-from redline.judge import MISSING_GRADE, ReplayJudge, select
+from redline.judge import MISSING_GRADE, ReplayJudge, RoleView, select, takes_role
 from redline.router import KMeansRouter, Router, RuleRouter, ShortCircuit
 
 
@@ -67,7 +67,11 @@ class Grader:
 
     The judge prompt calls the system being graded "a contact center assistant". A rules
     file can change that with a top level assistant_role, and assistant_role here is used
-    when the file sets none. The Grader sets the value on a judge that has assistant_role.
+    when the file sets none. The role belongs to the Grader. It is passed to the judge
+    with each call and is never written onto the judge, so one judge object can serve
+    any number of Graders, in any order and from several threads. A judge whose grade
+    does not take assistant_role is called without it. Grader.judge is then the judge
+    seen under this Grader's role, see redline.judge.RoleView.
     """
 
     def __init__(
@@ -127,8 +131,9 @@ class Grader:
             raise ValueError(f"missing_grade must be stop or review, got {missing_grade!r}")
         self.judge = judge if judge is not None else ReplayJudge(cache, missing=missing_grade)
         # None leaves the judge's own text, which is the one the saved grades were made with.
-        if role is not None and hasattr(self.judge, "assistant_role"):
-            self.judge.assistant_role = role
+        # The caller's judge is never written to. It may be serving other Graders.
+        if role is not None and takes_role(self.judge):
+            self.judge = RoleView(self.judge, role)
         self.assistant_role = getattr(self.judge, "assistant_role", role)
         if top_k < 1:
             raise ValueError(f"top_k must be at least 1, got {top_k}")

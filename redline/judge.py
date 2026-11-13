@@ -1,10 +1,12 @@
 """Ask a second model to grade one answer against one rule."""
 
 import hashlib
+import inspect
 import json
 import random
 import re
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Protocol
@@ -34,6 +36,7 @@ __all__ = [
     "FakeJudge",
     "Judge",
     "ReplayJudge",
+    "RoleView",
     "build_prompt",
     "http_transport",
     "parse_answer",
@@ -48,8 +51,47 @@ class Judge(Protocol):
     def grade(
         self, rule, examples: dict, prompt: str, response: str, user_type: str, stance: str
     ) -> dict:
-        """Return verdict, severity, reason_code, reason_text and raw."""
+        """Return verdict, severity, reason_code, reason_text and raw.
+
+        A judge that builds its own prompt may also take the keyword assistant_role. A
+        Grader whose rules name a role then passes it with every call. A judge whose
+        grade has no such keyword is called with the six values alone.
+        """
         ...
+
+
+def takes_role(judge) -> bool:
+    """True when the judge's grade takes the keyword assistant_role."""
+    try:
+        return "assistant_role" in inspect.signature(judge.grade).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+class RoleView:
+    """One Grader's view of a judge that may be shared: the same judge under one role.
+
+    Every call goes to the judge with this view's role passed beside it. Nothing is
+    written to the judge, so other Graders that hold it are not changed. Anything else
+    asked of the view, such as missing_lookups, is the judge's own.
+    """
+
+    def __init__(self, judge, assistant_role: str):
+        self.judge = judge
+        self.assistant_role = assistant_role
+
+    def __getattr__(self, name):
+        # Only reached for a name the view does not have itself.
+        return getattr(self.judge, name)
+
+    def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
+        return self.judge.grade(
+            rule, examples, prompt, response, user_type, stance, assistant_role=self.assistant_role
+        )
+
+    def without_cache(self) -> "RoleView":
+        """The judge's copy that skips saved grades, under the same role."""
+        return RoleView(self.judge.without_cache(), self.assistant_role)
 
 
 def _render_examples(items: list[dict], show_code: bool) -> str:
@@ -271,11 +313,13 @@ class ChatEndpointJudge:
     ):
         """save False reads saved grades from cache_path but never writes to it.
 
-        assistant_role is what the prompt calls the system being graded. A Grader whose
-        rules file sets assistant_role puts that value here. tries and backoff say how
-        often one request is sent and how long to wait between tries. timeout is the
-        seconds one request may take. See http_transport. None of the three is used
-        with a transport of your own. Every request asks for temperature 0.
+        assistant_role is what the prompt calls the system being graded when a call
+        names no role of its own. A Grader whose rules set a role passes it with each
+        call and leaves this value alone, so one judge can serve many Graders, from
+        several threads. tries and backoff say how often one request is sent and how
+        long to wait between tries. timeout is the seconds one request may take. See
+        http_transport. None of the three is used with a transport of your own. Every
+        request asks for temperature 0.
         """
         self.model = model
         self.save = save
@@ -286,6 +330,8 @@ class ChatEndpointJudge:
         self.cache_path = Path(cache_path) if cache_path else None
         self.json_mode = json_mode
         self._saved = {}
+        # Held while the saved grades are changed, so two threads cannot mix two lines.
+        self._lock = threading.Lock()
         if self.cache_path and self.cache_path.exists():
             for entry in read_saved_grades(self.cache_path):
                 self._saved[entry["key"]] = entry["answer"]
@@ -304,14 +350,19 @@ class ChatEndpointJudge:
             assistant_role=self.assistant_role,
         )
 
-    def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
+    def grade(
+        self, rule, examples, prompt, response, user_type, stance, assistant_role=None
+    ) -> dict:
+        """Grade one answer. assistant_role None means the role this judge was built with."""
+        role = self.assistant_role if assistant_role is None else assistant_role
         args = (rule, examples, prompt, response, user_type, stance)
-        key = prompt_key(build_prompt(*args, assistant_role=self.assistant_role))
-        if key in self._saved:
-            return dict(self._saved[key])
+        key = prompt_key(build_prompt(*args, assistant_role=role))
+        saved = self._saved.get(key)
+        if saved is not None:
+            return dict(saved)
         # A fresh check value per call. A reply that doesn't echo it is not trusted.
         nonce = secrets.token_hex(8)
-        prompt_text = build_prompt(*args, nonce, assistant_role=self.assistant_role)
+        prompt_text = build_prompt(*args, nonce, assistant_role=role)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt_text}],
@@ -331,22 +382,18 @@ class ChatEndpointJudge:
         else:
             answer = parse_answer(raw, rule, nonce)
         if self.cache_path and answer["verdict"] in ("pass", "fail"):
-            self._saved[key] = answer
-            if not self.save:
-                return answer
-            with self.cache_path.open("a") as f:
-                f.write(
-                    json.dumps(
-                        {
-                            "key": key,
-                            "model": self.model,
-                            "rule_id": rule.rule_id,
-                            "answer": answer,
-                            "version": SAVED_GRADES_VERSION,
-                        }
-                    )
-                    + "\n"
-                )
+            entry = {
+                "key": key,
+                "model": self.model,
+                "rule_id": rule.rule_id,
+                "answer": answer,
+                "version": SAVED_GRADES_VERSION,
+            }
+            with self._lock:
+                self._saved[key] = answer
+                if self.save:
+                    with self.cache_path.open("a") as f:
+                        f.write(json.dumps(entry) + "\n")
         return answer
 
 
@@ -354,7 +401,9 @@ class ReplayJudge:
     """Grades answers by looking up saved judge answers, so no key or network is needed.
 
     A missing grade stops the run by default. With missing="review", the answer gets
-    review with the code NO_SAVED_GRADE and the run keeps going.
+    review with the code NO_SAVED_GRADE and the run keeps going. assistant_role is the
+    role a lookup is made under when the call names none. One ReplayJudge can serve many
+    Graders, and missing_lookups then counts the misses of all of them.
     """
 
     def __init__(self, cache_path, missing: str = "stop", assistant_role: str = ASSISTANT_ROLE):
@@ -364,19 +413,23 @@ class ReplayJudge:
         self.assistant_role = assistant_role
         # Lookups that found no saved grade, counted for every rule checked.
         self.missing_lookups = 0
+        self._lock = threading.Lock()
         self.answers = {}
         self.models = set()
         for entry in read_saved_grades(cache_path):
             self.answers[entry["key"]] = entry["answer"]
             self.models.add(entry.get("model") or "unknown")
 
-    def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
-        text = build_prompt(
-            rule, examples, prompt, response, user_type, stance, assistant_role=self.assistant_role
-        )
+    def grade(
+        self, rule, examples, prompt, response, user_type, stance, assistant_role=None
+    ) -> dict:
+        """Look one grade up. assistant_role None means the role this judge was built with."""
+        role = self.assistant_role if assistant_role is None else assistant_role
+        text = build_prompt(rule, examples, prompt, response, user_type, stance, assistant_role=role)
         key = prompt_key(text)
         if key not in self.answers:
-            self.missing_lookups += 1
+            with self._lock:
+                self.missing_lookups += 1
             if self.missing == "review":
                 return {
                     "verdict": "review",
