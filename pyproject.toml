@@ -36,4 +36,7 @@ extend-exclude = ["tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: loads the embedding model, skip with -m 'not slow'"]
+markers = [
+    "slow: loads the embedding model, skip with -m 'not slow'",
+    "garak: needs garak installed, skipped without it",
+]
