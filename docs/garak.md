@@ -226,3 +226,7 @@ REDLINE_GARAK_E2E=1 pytest -m garak
 
 The CI job `redline-garak` sets that variable. The tests use a stub judge on 127.0.0.1 and garak's own test generator, so they need no network and no key.
 - Redline is licensed AGPL-3.0 and garak is Apache-2.0. No Redline code is part of garak, and the two installed files only import Redline.
+
+## An application that uses it
+
+[Using Redline in an application: AegisShield](integrations/aegisshield/README.md) shows how one app plans to consume the detector and the report grader. It includes two prefilled rules files and a diagram of the data flow.
