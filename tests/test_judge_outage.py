@@ -183,8 +183,10 @@ def test_the_outage_is_logged_as_a_warning_without_the_address(rules_data, write
 
 def test_rows_and_counts_keep_unevaluated_outputs_apart(rules_data, write_rules):
     # The fixture has three outputs with words. top_k 1 makes one call for each.
-    grader, _ = _grader(write_rules(rules_data), ["fail", "down", "pass"], top_k=1)
-    rows, skipped = report.grade_attempts(report.read_attempts(FIXTURE), grader, "anonymous")
+    judge = ChatEndpointJudge(None, "m", None, transport=Line(["fail", "down", "pass"]))
+    result = report.grade_report(FIXTURE, write_rules(rules_data), judge, top_k=1)
+    rows = result["rows"]
+    skipped = {probe: counts["skipped_no_text"] for probe, counts in result["probes"].items()}
     assert [r["outcome"] for r in rows] == ["fail", "not_evaluated", "pass", "pass"]
     assert rows[1]["reason_code"] == "JUDGE_UNAVAILABLE"
     overall = report.summarize(rows, skipped)["overall"]

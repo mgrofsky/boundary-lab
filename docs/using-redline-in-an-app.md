@@ -239,7 +239,7 @@ summary = grade_report(
 
 assert summary["stopped"] == "cap"
 assert summary["not_graded"] == {"count": 2, "reasons": {"cap": 2}}
-assert summary["judge_calls"] == len(judge.calls) == 4
+assert summary["judge_calls_made"] == len(judge.calls) == 4
 assert summary["estimated_calls"] == 6
 assert summary["overall"]["passed"]["k"] == 2
 assert progress == [(1, 4), (2, 4)]

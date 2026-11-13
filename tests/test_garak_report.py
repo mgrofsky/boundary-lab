@@ -95,9 +95,9 @@ def test_an_attempt_with_a_prompt_in_another_shape_stops(tmp_path):
 
 def _graded(rules_data, write_rules, answers):
     judge = FakeJudge(answers)
-    grader = report.build_grader(write_rules(rules_data), judge)
-    rows, skipped = report.grade_attempts(report.read_attempts(FIXTURE), grader, "anonymous")
-    return rows, skipped, judge
+    result = report.grade_report(FIXTURE, write_rules(rules_data), judge)
+    skipped = {probe: counts["skipped_no_text"] for probe, counts in result["probes"].items()}
+    return result["rows"], skipped, judge
 
 
 def test_one_row_per_output_that_has_text(rules_data, write_rules):
@@ -368,8 +368,9 @@ def test_an_attempt_with_no_back_translation_is_counted_and_said(
     assert cli.main(args) == 0
     summary = json.loads((tmp_path / "out" / "garak_summary.json").read_text())
     assert summary["attempts_without_back_translation"] == 1
-    # Its two outputs were not graded, so three of the five are left.
-    assert summary["overall"]["outputs"] == 3
+    # Its two outputs cannot be read. They are counted with the one that has no text.
+    assert summary["overall"]["outputs"] == 5
+    assert summary["overall"]["skipped_no_text"] == 3
     err = capsys.readouterr().err
     assert "1 attempt was not graded" in err and "back translation" in err
 

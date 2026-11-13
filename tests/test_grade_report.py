@@ -63,7 +63,7 @@ def test_it_returns_the_summary_and_writes_nothing_without_out_dir(
     assert [e["probe"] for e in result["evals"]] == ["test.Test", "test.Blank"]
     assert result["stopped"] is None
     assert result["not_graded"] == {"count": 0, "reasons": {}}
-    assert result["judge_calls"] == len(judge.calls) == 6
+    assert result["judge_calls_made"] == len(judge.calls) == 6
     assert result["estimated_calls"] == 6
 
 
@@ -80,7 +80,7 @@ def test_rules_may_be_a_path_a_policy_or_data(rules_data, write_rules):
     path = write_rules(rules_data)
     for rules in (path, policy.load_policy(path), rules_data):
         result = redline_garak.grade_report(FIXTURE, rules, FakeJudge(PASS), top_k=1)
-        assert result["judge_calls"] == 3
+        assert result["judge_calls_made"] == 3
 
 
 def test_it_needs_a_judge_object(rules_data):
@@ -135,7 +135,7 @@ def test_should_stop_ends_the_run_cleanly(rules_data, tmp_path):
     )
     assert result["stopped"] == "cancelled"
     assert result["not_graded"] == {"count": 3, "reasons": {"cancelled": 3}}
-    assert result["judge_calls"] == 4
+    assert result["judge_calls_made"] == 4
     rows, summary, evals = _read(tmp_path / "out")
     assert len(rows) == 2
     assert summary["overall"]["outputs"] == TOTAL
@@ -165,7 +165,7 @@ def test_the_cap_is_never_passed_and_no_answer_is_half_graded(
     result = redline_garak.grade_report(
         FIXTURE, rules_data, judge, out_dir=tmp_path / "out", max_judge_calls=cap
     )
-    assert len(judge.calls) == result["judge_calls"] == calls
+    assert len(judge.calls) == result["judge_calls_made"] == calls
     assert calls <= cap
     assert len(result["rows"]) == rows
     assert all(len(r.get("rules_checked", [1, 2])) == 2 for r in result["rows"])
@@ -214,7 +214,7 @@ def test_a_judge_that_is_down_leaves_three_whole_files(rules_data, tmp_path, cap
     assert result["stopped"] == "judge_unavailable"
     assert result["overall"]["judge_unavailable"] == 3
     assert result["not_graded"] == {"count": 0, "reasons": {}}
-    assert result["judge_calls"] == 3
+    assert result["judge_calls_made"] == 3
     rows, _, _ = _read(tmp_path / "out")
     assert [r["outcome"] for r in rows] == ["not_evaluated", "not_evaluated", "pass", "not_evaluated"]
     assert "could not be reached" in capsys.readouterr().err
@@ -229,7 +229,7 @@ def test_an_exception_in_the_judge_leaves_three_whole_files_and_propagates(rules
     assert len(rows) == 1
     assert summary["stopped"] == "error"
     assert summary["not_graded"] == {"count": 4, "reasons": {"error": 4}}
-    assert summary["judge_calls"] == 4
+    assert summary["judge_calls_made"] == 4
     assert sum(e["nones"] for e in evals) == 4
 
 
@@ -267,7 +267,7 @@ def test_grade_report_works_with_garak_not_importable(rules_data, tmp_path):
         "report, rules = sys.argv[1], json.loads(sys.argv[2])\n"
         "answer = {'verdict': 'pass', 'severity': 0, 'reason_code': 'OK', 'reason_text': 'ok'}\n"
         "result = grade_report(report, rules, FakeJudge(answer), out_dir=sys.argv[3])\n"
-        "assert estimate_report_calls(report, rules)['judge_calls'] == result['judge_calls']\n"
+        "assert estimate_report_calls(report, rules)['judge_calls'] == result['judge_calls_made']\n"
         "assert not any(name.split('.')[0] == 'garak' and sys.modules[name] for name in sys.modules)\n"
         "print(result['overall']['graded'])\n"
     )

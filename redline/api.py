@@ -1,15 +1,68 @@
 """Grade answers from your own code with the same steps the run command uses."""
 
 import json
+import os
 from pathlib import Path
 
 from redline import embed, pipeline, policy
 from redline.judge import MISSING_GRADE, ReplayJudge, RoleView, select, takes_role
 from redline.router import KMeansRouter, Router, RuleRouter, ShortCircuit
 
+# What every row of a labeled examples file holds.
+TRAIN_FIELDS = ("id", "rule_id", "user_type", "label", "prompt", "response", "reason_code")
+# What rules may be given as: the path of a rules file, a loaded Policy, or rules data.
+Rules = str | os.PathLike | policy.Policy | list | dict
 
-def _read_jsonl(path) -> list[dict]:
-    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+def read_train(path: str | os.PathLike) -> list[dict]:
+    """Read a labeled examples file: one JSON object per line. Blank lines are skipped.
+
+    A line that is not a JSON object, or that lacks one of TRAIN_FIELDS, raises
+    ValueError with the file and the line number. A file that cannot be read raises
+    OSError.
+    """
+    rows = []
+    for number, line in enumerate(Path(path).read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            raise ValueError(f"{path}: line {number} is not valid JSON") from None
+        if not isinstance(row, dict):
+            # A bad line is bad content, like a missing field, so it is a ValueError too.
+            raise ValueError(f"{path}: line {number} is not a JSON object")  # noqa: TRY004
+        missing = [field for field in TRAIN_FIELDS if field not in row]
+        if missing:
+            raise ValueError(f"{path}: line {number} has no {', '.join(missing)}")
+        rows.append(row)
+    return rows
+
+
+def check_rules(loaded: policy.Policy, source: str) -> None:
+    """Raise ValueError when a Grader cannot be built from these rules.
+
+    Data and files were checked when they were loaded. A Policy built by hand was not.
+    """
+    if not loaded.rules:
+        raise ValueError(f"{source}: {policy.NO_RULES}")
+    for rule_id in loaded.rules:
+        if policy.reserved(rule_id):
+            raise ValueError(
+                f"{source}: rule_id {policy.show(rule_id)} is reserved. Redline uses the "
+                "word none to mean that no rule applies"
+            )
+
+
+def check_user_type(user_types: list[str], user_type: str, record_id=None) -> None:
+    """Raise ValueError when user_type is not one of user_types."""
+    if user_type in user_types:
+        return
+    where = f"record {record_id}: " if record_id is not None else ""
+    raise ValueError(
+        f"{where}user_type {user_type!r} is not declared in the rules file "
+        f"(declared: {', '.join(user_types)})"
+    )
 
 
 def _embedder(choice):
@@ -19,7 +72,7 @@ def _embedder(choice):
     return embed.make(choice)
 
 
-def read_rules(rules) -> tuple[policy.Policy, str]:
+def read_rules(rules: Rules) -> tuple[policy.Policy, str]:
     """Return the Policy for a path, a loaded Policy or rules data, and a name for errors."""
     if isinstance(rules, policy.Policy):
         return rules, "<policy>"
@@ -28,13 +81,20 @@ def read_rules(rules) -> tuple[policy.Policy, str]:
     return policy.load_policy(rules), str(rules)
 
 
-def estimate_calls(n_answers: int, rules, top_k=None, attempts: int = 1) -> int:
+def estimate_calls(
+    n_answers: int, rules: Rules, top_k: int | None = None, attempts: int = 1
+) -> int:
     """The largest number of judge calls a rules only run can make.
 
-    rules is anything Grader.from_rules takes. Each answer is checked against every
-    rule, or against the top_k closest, and that is repeated attempts times. A run can
+    n_answers is how many answers will be graded. rules is anything Grader.from_rules
+    takes: a path, a Policy or rules data. top_k None checks every rule for each
+    answer, and top_k N checks the N closest, or every rule when there are fewer.
+    attempts is how many times each answer is judged, as for Grader.
+
+    Returns n_answers times the rules checked per answer times attempts. A run can
     make fewer calls: a saved grade answers without one, and so does a blank answer in
-    a garak report.
+    a garak report. No judge is called. A negative n_answers, or a top_k or attempts
+    below 1, raises ValueError. So do rules that do not load.
     """
     if n_answers < 0:
         raise ValueError(f"n_answers must be 0 or more, got {n_answers}")
@@ -42,7 +102,9 @@ def estimate_calls(n_answers: int, rules, top_k=None, attempts: int = 1) -> int:
         raise ValueError(f"top_k must be at least 1, got {top_k}")
     if attempts < 1:
         raise ValueError(f"attempts must be at least 1, got {attempts}")
-    count = len(read_rules(rules)[0].rules)
+    loaded, source = read_rules(rules)
+    check_rules(loaded, source)
+    count = len(loaded.rules)
     return n_answers * (count if top_k is None else min(top_k, count)) * attempts
 
 
@@ -92,20 +154,12 @@ class Grader:
         assistant_role=None,
     ):
         loaded, source = read_rules(rules)
+        check_rules(loaded, source)
         self.rules = loaded.rules
-        # Data and files were checked when they were loaded. A Policy built by hand was not.
-        if not self.rules:
-            raise ValueError(f"{source}: {policy.NO_RULES}")
-        for rule_id in self.rules:
-            if policy.reserved(rule_id):
-                raise ValueError(
-                    f"{source}: rule_id {policy.show(rule_id)} is reserved. Redline uses the "
-                    "word none to mean that no rule applies"
-                )
         self.user_types = loaded.user_types
         # With no labeled examples the rules' own text is all there is to route on.
         self.mode = "rules_only" if train is None else None
-        self.train = [] if train is None else _read_jsonl(train)
+        self.train = [] if train is None else read_train(train)
         self.examples = select(self.train)
         if self.mode and top_k is None:
             top_k = len(self.rules)
@@ -193,13 +247,7 @@ class Grader:
 
     def check_user_type(self, user_type, record_id=None) -> None:
         """Raise ValueError when the rules file does not declare this user type."""
-        if user_type in self.user_types:
-            return
-        where = f"record {record_id}: " if record_id is not None else ""
-        raise ValueError(
-            f"{where}user_type {user_type!r} is not declared in the rules file "
-            f"(declared: {', '.join(self.user_types)})"
-        )
+        check_user_type(self.user_types, user_type, record_id)
 
     def run(self, records: list[dict]) -> list[dict]:
         """Grade records that carry id, user_type, prompt and response."""

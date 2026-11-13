@@ -27,7 +27,7 @@ TRAIN = [
     {"id": "t2", "rule_id": "ACCT-01", "user_type": "verified", "label": "good"},
 ]
 # Keys the summary has gained since 0.4.0, at the top level and in each block of counts.
-NEW_KEYS = ("stopped", "not_graded", "judge_calls", "estimated_calls")
+NEW_KEYS = ("stopped", "not_graded", "judge_calls_made", "estimated_calls")
 NEW_COUNT_KEYS = ("not_graded",)
 
 
