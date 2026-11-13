@@ -436,19 +436,19 @@ def cmd_garak_grade(args) -> int:
         )
         return 2
     judge = _live_judge(args.cache) if args.judge == "live" else None
-    grader = report.build_grader(
-        args.rules,
-        judge,
-        train=args.train,
-        top_k=args.top_k,
-        cache=args.cache,
-        missing_grade=args.missing_grade,
-        embedder=args.embedder,
-    )
     try:
+        grader = report.build_grader(
+            args.rules,
+            judge,
+            train=args.train,
+            top_k=args.top_k,
+            cache=args.cache,
+            missing_grade=args.missing_grade,
+            embedder=args.embedder,
+        )
         grader.check_user_type(args.user_type)
         attempts = report.read_attempts(args.report)
-    except ValueError as exc:
+    except (OSError, TypeError, ValueError) as exc:
         raise SystemExit(f"redline: {exc}") from None
     try:
         rows, skipped = report.grade_attempts(attempts, grader, args.user_type)

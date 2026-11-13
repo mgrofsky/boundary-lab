@@ -241,6 +241,16 @@ def test_garak_grade_rejects_an_unknown_user_type(rules_data, write_rules, tmp_p
         cli.main(args + ["--user-type", "guest"])
 
 
+def test_garak_grade_reports_a_bad_option_or_rules_file_plainly(rules_data, write_rules, tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    replay = ["--judge", "replay", "--cache", str(cache)]
+    with pytest.raises(SystemExit, match="top_k"):
+        cli.main(_grade_args(tmp_path, write_rules(rules_data), *replay, "--top-k", "0"))
+    with pytest.raises(SystemExit, match="missing.yaml"):
+        cli.main(_grade_args(tmp_path, tmp_path / "missing.yaml", *replay))
+
+
 def test_the_fixture_names_no_local_path():
     text = FIXTURE.read_text()
     assert "/Users/" not in text and "/private/" not in text and "/home/" not in text
