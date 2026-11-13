@@ -146,6 +146,7 @@ With labeled examples, passed as `train`, Redline uses its calibrated mode. It r
 ## Limits
 
 - The files that `garak-install` writes are a stopgap. garak does not load plugins from outside its own package yet. See [garak issue 384](https://github.com/NVIDIA/garak/issues/384). They live inside garak's installed package, so check them with `redline garak-install --dry-run` after you upgrade garak.
+- Run `redline garak-uninstall` before you remove Redline. garak imports every file in its plugin folders when it lists plugins, so a leftover file that cannot import Redline can stop garak from starting.
 - This is not an official garak plugin. It is not part of garak, and garak's maintainers did not write or review it.
 - It was tested with garak 0.17.1 only. garak's report format and plugin interface can change between versions.
 - English only. The rules, the judge prompt and the detector's `lang_spec` are English.
