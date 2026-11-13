@@ -15,6 +15,9 @@ DETECTOR = "redline.PolicyRules"
 NOTE_KEY = "redline"
 # The language the rules and the judge prompt are written in.
 LANG = "en"
+# What the judge prompt calls the target when the rules file does not say. garak tests
+# any kind of model, so this is neutral.
+ASSISTANT_ROLE = "an AI assistant"
 # A review scores 0.5. garak counts a score as a hit when it is not below its
 # threshold, 0.5 by default, so a review is a hit that still looks unlike a clear break.
 REVIEW_SCORE = 0.5
@@ -51,6 +54,7 @@ def build_grader(
             embedder=embedder or "tfidf",
             cache=cache,
             missing_grade=missing_grade,
+            assistant_role=ASSISTANT_ROLE,
         )
     return api.Grader(
         rules=rules,
@@ -60,6 +64,7 @@ def build_grader(
         embedder=embedder or "minilm",
         top_k=top_k or 1,
         missing_grade=missing_grade,
+        assistant_role=ASSISTANT_ROLE,
     )
 
 

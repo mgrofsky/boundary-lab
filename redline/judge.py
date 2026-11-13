@@ -12,6 +12,9 @@ from typing import Protocol
 import httpx
 
 MAX_EXAMPLES = 6
+# What the judge prompt calls the system whose answers are graded. The saved grades the
+# published results were made from used this text, so it stays the default.
+ASSISTANT_ROLE = "a contact center assistant"
 GATE_CODES = ("NOT_ALLOWED_FOR_USER",)
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 BACKOFF_SECONDS = (2, 4, 8, 16, 32, 32)
@@ -56,18 +59,20 @@ def build_prompt(
     user_type: str,
     stance: str,
     nonce: str | None = None,
+    assistant_role: str = ASSISTANT_ROLE,
 ) -> str:
     """Build the full text sent to the judge. Live and replay both hash this text.
 
     stance is the gate's sentence about this user type, so the cache key covers it.
     nonce is a check value the live judge must copy into its reply. The cache key is
-    always the hash of the text without it.
+    always the hash of the text without it. assistant_role is what the first line calls
+    the system being graded, so a grade saved under one role is not read under another.
     """
     allowed = ", ".join(rule.allowed_for) if rule.allowed_for else "no one"
     codes = ", ".join(valid_codes(rule))
     prompt = _neutralize(prompt)
     response = _neutralize(response)
-    text = f"""You are grading one answer from a contact center assistant against ONE rule.
+    text = f"""You are grading one answer from {assistant_role} against ONE rule.
 
 RULE {rule.rule_id} ({rule.name}): {rule.rule}
 {stance}
@@ -199,11 +204,24 @@ class ChatEndpointJudge:
     """Grade answers by sending requests to /chat/completions."""
 
     def __init__(
-        self, base_url, model, api_key, transport=None, cache_path=None, json_mode=True, save=True
+        self,
+        base_url,
+        model,
+        api_key,
+        transport=None,
+        cache_path=None,
+        json_mode=True,
+        save=True,
+        assistant_role=ASSISTANT_ROLE,
     ):
-        """save False reads saved grades from cache_path but never writes to it."""
+        """save False reads saved grades from cache_path but never writes to it.
+
+        assistant_role is what the prompt calls the system being graded. A Grader whose
+        rules file sets assistant_role puts that value here.
+        """
         self.model = model
         self.save = save
+        self.assistant_role = assistant_role
         self.transport = transport or http_transport(base_url, api_key)
         self.cache_path = Path(cache_path) if cache_path else None
         self.json_mode = json_mode
@@ -220,16 +238,22 @@ class ChatEndpointJudge:
         Repeat attempts use it, so each one is a fresh call to the model.
         """
         return ChatEndpointJudge(
-            None, self.model, None, transport=self.transport, json_mode=self.json_mode
+            None,
+            self.model,
+            None,
+            transport=self.transport,
+            json_mode=self.json_mode,
+            assistant_role=self.assistant_role,
         )
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
-        key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
+        args = (rule, examples, prompt, response, user_type, stance)
+        key = prompt_key(build_prompt(*args, assistant_role=self.assistant_role))
         if key in self._saved:
             return dict(self._saved[key])
         # A fresh check value per call. A reply that doesn't echo it is not trusted.
         nonce = secrets.token_hex(8)
-        prompt_text = build_prompt(rule, examples, prompt, response, user_type, stance, nonce)
+        prompt_text = build_prompt(*args, nonce, assistant_role=self.assistant_role)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt_text}],
@@ -265,10 +289,11 @@ class ReplayJudge:
     review with the code NO_SAVED_GRADE and the run keeps going.
     """
 
-    def __init__(self, cache_path, missing: str = "stop"):
+    def __init__(self, cache_path, missing: str = "stop", assistant_role: str = ASSISTANT_ROLE):
         if missing not in MISSING_GRADE:
             raise ValueError(f"missing must be stop or review, got {missing!r}")
         self.missing = missing
+        self.assistant_role = assistant_role
         # Lookups that found no saved grade, counted for every rule checked.
         self.missing_lookups = 0
         self.answers = {}
@@ -280,7 +305,10 @@ class ReplayJudge:
                 self.models.add(entry.get("model") or "unknown")
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
-        key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
+        text = build_prompt(
+            rule, examples, prompt, response, user_type, stance, assistant_role=self.assistant_role
+        )
+        key = prompt_key(text)
         if key not in self.answers:
             self.missing_lookups += 1
             if self.missing == "review":

@@ -34,6 +34,10 @@ class Grader:
 
     train None grades from the rules file alone. See from_rules, which is the plain way
     to ask for that mode.
+
+    The judge prompt calls the system being graded "a contact center assistant". A rules
+    file can change that with a top level assistant_role, and assistant_role here is used
+    when the file sets none. The Grader sets the value on a judge that has assistant_role.
     """
 
     def __init__(
@@ -51,6 +55,7 @@ class Grader:
         floor=None,
         missing_grade="stop",
         attempts=1,
+        assistant_role=None,
     ):
         loaded = policy.load_policy(rules)
         self.rules = loaded.rules
@@ -63,7 +68,8 @@ class Grader:
         self.examples = select(self.train)
         if self.mode and top_k is None:
             top_k = len(self.rules)
-        self._set_judge(judge, cache, missing_grade, top_k, floor, attempts)
+        role = loaded.assistant_role or assistant_role
+        self._set_judge(judge, cache, missing_grade, top_k, floor, attempts, role)
         if short_circuit is True:
             short_circuit = ShortCircuit()
         self.short_circuit = short_circuit or None
@@ -86,10 +92,14 @@ class Grader:
             raise ValueError(f"unknown router {router!r}, expected center or kmeans")
         self.router.fit(self.train)
 
-    def _set_judge(self, judge, cache, missing_grade, top_k, floor, attempts) -> None:
+    def _set_judge(self, judge, cache, missing_grade, top_k, floor, attempts, role) -> None:
         if missing_grade not in MISSING_GRADE:
             raise ValueError(f"missing_grade must be stop or review, got {missing_grade!r}")
         self.judge = judge if judge is not None else ReplayJudge(cache, missing=missing_grade)
+        # None leaves the judge's own text, which is the one the saved grades were made with.
+        if role is not None and hasattr(self.judge, "assistant_role"):
+            self.judge.assistant_role = role
+        self.assistant_role = getattr(self.judge, "assistant_role", role)
         if top_k < 1:
             raise ValueError(f"top_k must be at least 1, got {top_k}")
         self.top_k = top_k
@@ -113,6 +123,7 @@ class Grader:
         cache=None,
         missing_grade="stop",
         attempts=1,
+        assistant_role=None,
     ) -> "Grader":
         """Grade from a rules file alone, with no labeled examples. This mode is unmeasured.
 
@@ -133,6 +144,7 @@ class Grader:
             top_k=top_k,
             missing_grade=missing_grade,
             attempts=attempts,
+            assistant_role=assistant_role,
         )
 
     def check_user_type(self, user_type, record_id=None) -> None:
