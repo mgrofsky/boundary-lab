@@ -10,8 +10,8 @@ import pytest
 from .mcp_helpers import FAKE, META, Proxy, http, text_of, wait_for
 from .test_mcp_proxy import blocked_code, calls_to, pending_ids, post
 
-# A real client's wire capture, kept outside the package next to the spec pages.
-SPEC = Path(__file__).parents[3] / ".hermes" / "spec"
+# The nine messages a real client (Claude Code 2.1.322) sent when it connected, one per line.
+CLIENT_LINES = Path(__file__).parent / "fixtures" / "claude_code_client_lines.jsonl"
 POLICY_TOOLS = ["echo", "fail", "rpc_error", "sleep", "mutate", "crash", "ask_roots",
                 "files.read-text", "guarded", "pay", "ask_input"]
 PROTOCOL_KEYS = {"io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientInfo",
@@ -20,11 +20,7 @@ SUBSCRIPTION = "io.modelcontextprotocol/subscriptionId"
 
 
 def client_lines():
-    found = sorted(SPEC.glob("*wire_capture.log")) if SPEC.is_dir() else []
-    if not found:
-        pytest.skip("the wire capture is not in this checkout")
-    return [json.loads(line[3:]) for line in found[0].read_text().splitlines()
-            if line.startswith("C> ")]
+    return [json.loads(line) for line in CLIENT_LINES.read_text().splitlines()]
 
 
 @pytest.fixture
