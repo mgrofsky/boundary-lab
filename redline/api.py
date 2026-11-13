@@ -93,8 +93,15 @@ class Grader:
     ):
         loaded, source = read_rules(rules)
         self.rules = loaded.rules
+        # Data and files were checked when they were loaded. A Policy built by hand was not.
         if not self.rules:
-            raise ValueError(f"{source}: the rules file has no rules")
+            raise ValueError(f"{source}: {policy.NO_RULES}")
+        for rule_id in self.rules:
+            if policy.reserved(rule_id):
+                raise ValueError(
+                    f"{source}: rule_id {policy.show(rule_id)} is reserved. Redline uses the "
+                    "word none to mean that no rule applies"
+                )
         self.user_types = loaded.user_types
         # With no labeled examples the rules' own text is all there is to route on.
         self.mode = "rules_only" if train is None else None

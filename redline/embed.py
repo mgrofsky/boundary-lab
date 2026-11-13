@@ -60,7 +60,12 @@ class TfidfEmbedder:
         # Imported here so the default embedder never pays for it.
         from sklearn.feature_extraction.text import TfidfVectorizer
 
-        self._vectorizer = TfidfVectorizer().fit(list(texts))
+        try:
+            self._vectorizer = TfidfVectorizer().fit(list(texts))
+        except ValueError:
+            # No text holds a word of two or more letters, so there is nothing to match
+            # on. Every text then encodes to 0 and no text is closer to one than another.
+            self._vectorizer = _NoWords()
         return self
 
     def encode(self, texts: list[str]) -> np.ndarray:
@@ -70,6 +75,15 @@ class TfidfEmbedder:
         vectors = self._vectorizer.transform(list(texts)).toarray().astype(np.float32)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         return np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
+
+
+class _NoWords:
+    """Stands in for a vectorizer that found no words: one column, always 0."""
+
+    def transform(self, texts):
+        from scipy.sparse import csr_matrix
+
+        return csr_matrix((len(texts), 1), dtype=np.float32)
 
 
 EMBEDDERS = {"minilm": Embedder, "tfidf": TfidfEmbedder}

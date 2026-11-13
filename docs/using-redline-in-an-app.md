@@ -20,7 +20,7 @@ Redline imports and grades with garak absent. Only the worker that runs garak it
 
 An app that keeps each rule as fields in its own database passes them to Redline as data. The data has the same shape as a parsed rules file: a list of rules, or a mapping with `rules` and the optional `user_types` and `assistant_role`. No YAML is read.
 
-`validate_policy_data` returns every problem it can find in one pass. It never raises for bad content, reads no file and calls no judge. An empty list means the data loads.
+`validate_policy_data` returns every problem it can find in one pass. It never raises for bad content, reads no file and calls no judge. An empty list means the data loads and a `Grader` can be built from it. Any problem means `load_policy_data` refuses the data.
 
 ```python
 from redline.policy import validate_policy_data
@@ -62,23 +62,29 @@ Each problem is a mapping with three keys. `where` points at the value, such as 
 | `wrong_type` | The value is not the kind needed, such as text or a list. |
 | `missing` | A needed field is not there, or a rule has no `rule_id`. |
 | `empty` | Text with no words, or a list that needs an entry and has none. |
-| `bad_characters` | A `rule_id` or a reason code holds a character that is not allowed. |
-| `duplicate` | A `rule_id` or a user type is listed more than once. |
+| `bad_characters` | A character that is not allowed there, or spaces around a name. |
+| `duplicate` | A `rule_id`, a reason code or a user type is listed twice, letter case aside. |
 | `unknown_user_type` | `allowed_for` names a user type that is not declared. |
-| `not_one_line` | `assistant_role` runs over more than one line. |
+| `not_one_line` | Text that must be one line has a line break in it. |
+| `reserved_id` | The `rule_id` is `none`, the word Redline uses for no rule. |
 
 The same list is in `redline.policy.PROBLEM_CODES`. These are the checks:
 
+- There is at least one rule. An empty list is a problem, because nothing can be graded against it.
 - Every rule has `rule_id`, `name`, `rule`, `plain_summary`, `allowed_for` and `reason_codes`.
 - `rule_id`, `name`, `rule` and `plain_summary` are text and are not empty.
-- A `rule_id` and a reason code hold only letters, digits, underscore and hyphen.
-- No `rule_id` is used twice.
+- A `rule_id` and a reason code hold only letters, digits, underscore and hyphen. So neither can have spaces around it.
+- No `rule_id` is `none`, in any letter case. Redline uses that word to mean no rule applies.
+- No `rule_id` is used twice, and no reason code is listed twice in one rule. Letter case does not make two of them different, so `OK` and `ok` are the same code.
 - `reason_codes` is a list with at least one code.
 - `allowed_for` is a list of declared user types. An empty list is fine and means no one.
-- `user_types`, when given, is a list of names with at least one entry and none repeated.
-- `assistant_role`, when given, is one line of text.
+- `user_types`, when given, is a list of names with at least one entry. None has spaces around it, and none is repeated, letter case aside.
+- `name`, each user type and `assistant_role` sit on one line of the judge prompt. None may hold a line break of any kind or a control character. Space around `assistant_role` is dropped first.
+- `rule` and `plain_summary` may run over more than one line.
 
 There are no size limits. Set your own on the length of a rule and the number of rules.
+
+A message shows text from your data in one fixed form: quoted, with line breaks and control characters escaped, and cut at 80 characters with `... (cut)` after it. So a message is always one line of bounded length, whatever the data holds.
 
 `load_policy_data(data, source="tenant 7")` turns good data into a `Policy`. It raises on the first problem, and the message starts with `source` and names the rule. `load_policy(path)` reads a YAML file and runs the same checks.
 

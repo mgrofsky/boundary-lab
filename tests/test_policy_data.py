@@ -17,6 +17,17 @@ SHIPPED = [
 ]
 
 
+# A rule that names no user type, so it fits under any user_types list.
+NO_ONE = {
+    "rule_id": "R1",
+    "name": "n",
+    "rule": "A rule.",
+    "plain_summary": "A rule.",
+    "allowed_for": [],
+    "reason_codes": ["OK"],
+}
+
+
 def _codes(data):
     return [(p["where"], p["code"]) for p in policy.validate_policy_data(data)]
 
@@ -138,15 +149,15 @@ def test_an_empty_allowed_for_means_no_one_and_is_not_a_problem(rules_data):
         ({"user_types": ["a"]}, "rules", "wrong_type"),
         ({"rules": {"a": 1}}, "rules", "wrong_type"),
         (["not a rule"], "rules[0]", "wrong_type"),
-        ({"rules": [], "user_types": []}, "user_types", "empty"),
-        ({"rules": [], "user_types": "guest"}, "user_types", "wrong_type"),
-        ({"rules": [], "user_types": ["a", "a"]}, "user_types[1]", "duplicate"),
-        ({"rules": [], "user_types": ["a", 3]}, "user_types[1]", "wrong_type"),
-        ({"rules": [], "user_types": ["a", {}]}, "user_types[1]", "wrong_type"),
-        ({"rules": [], "user_types": ["a", " "]}, "user_types[1]", "empty"),
-        ({"rules": [], "assistant_role": "two\nlines"}, "assistant_role", "not_one_line"),
-        ({"rules": [], "assistant_role": 4}, "assistant_role", "wrong_type"),
-        ({"rules": [], "assistant_role": ""}, "assistant_role", "empty"),
+        ({"rules": [NO_ONE], "user_types": []}, "user_types", "empty"),
+        ({"rules": [NO_ONE], "user_types": "guest"}, "user_types", "wrong_type"),
+        ({"rules": [NO_ONE], "user_types": ["a", "a"]}, "user_types[1]", "duplicate"),
+        ({"rules": [NO_ONE], "user_types": ["a", 3]}, "user_types[1]", "wrong_type"),
+        ({"rules": [NO_ONE], "user_types": ["a", {}]}, "user_types[1]", "wrong_type"),
+        ({"rules": [NO_ONE], "user_types": ["a", " "]}, "user_types[1]", "empty"),
+        ({"rules": [NO_ONE], "assistant_role": "two\nlines"}, "assistant_role", "not_one_line"),
+        ({"rules": [NO_ONE], "assistant_role": 4}, "assistant_role", "wrong_type"),
+        ({"rules": [NO_ONE], "assistant_role": ""}, "assistant_role", "empty"),
     ],
 )
 def test_problems_outside_the_rules(data, where, code):
@@ -184,5 +195,5 @@ def test_from_rules_takes_a_path_a_policy_or_data(rules_data, write_rules):
 
 
 def test_from_rules_with_data_that_has_no_rules_says_so():
-    with pytest.raises(ValueError, match="<data>: the rules file has no rules"):
+    with pytest.raises(ValueError, match="<data>: the rules list has no rules"):
         Grader.from_rules([], FakeJudge(PASS))

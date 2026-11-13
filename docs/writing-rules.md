@@ -13,6 +13,8 @@ Rules live in `policy/rules.yaml`, in a list under the key `rules`. Each rule ha
 - `allowed_for`: the user types who may get this kind of information, or an empty list for nobody. With the default user types that means `verified`, `anonymous`, or both.
 - `reason_codes`: the specific ways the rule can be broken, with `OK` last for an answer that follows it.
 
+A `rule_id` and a reason code hold only letters, digits, underscore and hyphen. Letter case does not make two of them different, so `ACCT-01` and `acct-01` count as the same ID. A rule cannot take the ID `none`, because Redline uses that word for an answer no rule applies to. `name` is one line. `rule` and `plain_summary` may run over more than one line, though one sentence is easier to judge. A file needs at least one rule.
+
 Here is a rule from the file:
 
 ```yaml
