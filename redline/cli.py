@@ -70,19 +70,73 @@ def is_pinned_cache(path) -> bool:
     return here in (Path(PINNED_CACHE).resolve(), repo.resolve())
 
 
+class _Given(argparse.Action):
+    """Store an option and note that it was given, so a default can differ by mode."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.given = {*getattr(namespace, "given", ()), self.dest}
+
+
+def _rules_only_defaults(args) -> None:
+    """With --rules-only, an option left out means no cache, tfidf and every rule."""
+    given = getattr(args, "given", ())
+    if "cache" not in given:
+        args.cache = None
+    if "embedder" not in given:
+        args.embedder = "tfidf"
+    if "top_k" not in given:
+        args.top_k = None
+
+
+def _live_judge(cache, save: bool = True):
+    """The judge model named by the REDLINE_JUDGE settings."""
+    from redline.judge import ChatEndpointJudge
+
+    load_env_file()
+    base_url, model, api_key = _env("REDLINE_JUDGE")
+    return ChatEndpointJudge(base_url, model, api_key, cache_path=cache, save=save)
+
+
+def _rules_only_problem(args) -> str | None:
+    """Say why these options cannot be used with --rules-only, or None when they can."""
+    if args.short_circuit:
+        return "--rules-only has no labeled examples, so --short-circuit cannot be used with it."
+    if args.judge == "replay" and args.cache is None:
+        return "--rules-only with --judge replay needs --cache, a file of saved judge grades."
+    if args.judge == "live" and is_pinned_cache(args.cache):
+        return (
+            f"--rules-only with a live judge must not write to {PINNED_CACHE}, the saved "
+            "grades the published results were made from. Pass another file or leave out --cache."
+        )
+    return None
+
+
+def _rules_only_grader(args, attempts: int = 1):
+    """Build a Grader from the rules file alone. The train file is not read."""
+    from redline import api
+
+    judge = _live_judge(args.cache) if args.judge == "live" else None
+    return api.Grader.from_rules(
+        args.rules,
+        judge,
+        top_k=args.top_k,
+        embedder=args.embedder,
+        cache=args.cache,
+        missing_grade=args.missing_grade,
+        attempts=attempts,
+    )
+
+
 def _grader(args, attempts: int = 1):
     """Build the Grader that run and evade use, from their shared options."""
     from redline import api
-    from redline.judge import ChatEndpointJudge
     from redline.router import ShortCircuit
 
     judge = None
     if args.judge == "live":
-        load_env_file()
-        base_url, model, api_key = _env("REDLINE_JUDGE")
         # Repeat runs may read the saved grades but must not add to them.
-        save = not (attempts > 1 and is_pinned_cache(args.cache))
-        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache, save=save)
+        judge = _live_judge(args.cache, save=not (attempts > 1 and is_pinned_cache(args.cache)))
 
     short_circuit = False
     if args.short_circuit:
@@ -117,18 +171,29 @@ def cmd_run(args) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.rules_only:
+        _rules_only_defaults(args)
+        problem = _rules_only_problem(args)
+        if problem:
+            print(f"redline: {problem}", file=sys.stderr)
+            return 2
     records = read_jsonl(args.data)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    grader = _grader(args, args.attempts)
+    if args.rules_only:
+        grader = _rules_only_grader(args, args.attempts)
+    else:
+        grader = _grader(args, args.attempts)
     router = grader.router
     for record in records:
         try:
             grader.check_user_type(record["user_type"], record.get("id"))
         except ValueError as exc:
             raise SystemExit(f"redline: {exc}") from None
-    (out_dir / "judge_examples.json").write_text(json.dumps(grader.examples, indent=2) + "\n")
+    if not args.rules_only:
+        examples = json.dumps(grader.examples, indent=2)
+        (out_dir / "judge_examples.json").write_text(examples + "\n")
 
     # Start timing after router setup and model loading, so this measures grading only.
     start = time.perf_counter()
@@ -142,7 +207,7 @@ def cmd_run(args) -> int:
         "data": Path(args.data).as_posix(),
         "router": router.name,
         "embedder": grader.embedder_name,
-        "k": args.k if args.router == "kmeans" else None,
+        "k": args.k if router.name == "kmeans" else None,
         "short_circuit": args.short_circuit,
         "purity": args.purity,
         "min_members": args.min_members,
@@ -160,6 +225,8 @@ def cmd_run(args) -> int:
     }
     if args.attempts > 1:
         meta["attempts"] = args.attempts
+    if args.rules_only:
+        meta["mode"] = grader.mode
     meta_path = out_dir / f"{stem}_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     print(f"wrote {out_path} and {meta_path}", file=sys.stderr)
@@ -358,9 +425,13 @@ def cmd_gate(args) -> int:
 def _grading_options(
     parser, cache_default=PINNED_CACHE, cache_help="file of saved judge grades"
 ) -> None:
-    """Options for the rules, router and judge, shared by run and evade."""
+    """Options for the rules, router and judge, shared by run and evade.
+
+    cache, embedder and top_k note when they are given, since --rules-only has its own
+    defaults for them.
+    """
     parser.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
-    parser.add_argument("--cache", default=cache_default, help=cache_help)
+    parser.add_argument("--cache", default=cache_default, action=_Given, help=cache_help)
     parser.add_argument(
         "--rules", default="policy/rules.yaml", help="YAML file containing your rules"
     )
@@ -401,7 +472,9 @@ def _grading_options(
         "--embedder",
         choices=["minilm", "tfidf"],
         default="minilm",
-        help="minilm, the default model, or tfidf, which needs no download but routes worse",
+        action=_Given,
+        help="minilm, the default model, or tfidf, which needs no download but routes worse. "
+        "With --rules-only the default is tfidf",
     )
     parser.add_argument(
         "--missing-grade",
@@ -413,7 +486,9 @@ def _grading_options(
         "--top-k",
         type=int,
         default=1,
-        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
+        action=_Given,
+        help="judge up to this many of the closest rules and keep the worst outcome "
+        "(default: 1, or every rule with --rules-only)",
     )
     parser.add_argument(
         "--floor",
@@ -444,6 +519,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", default="results/", help="folder for the output files (default: results/)"
     )
     _grading_options(run)
+    run.add_argument(
+        "--rules-only",
+        action="store_true",
+        help="grade from the rules file alone: --train is not read, the judge gets no "
+        "examples, and every rule is checked unless --top-k is set. This mode is unmeasured",
+    )
     run.add_argument(
         "--attempts",
         type=int,

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from redline import embed, pipeline, policy
 from redline.judge import MISSING_GRADE, ReplayJudge, select
-from redline.router import KMeansRouter, Router, ShortCircuit
+from redline.router import KMeansRouter, Router, RuleRouter, ShortCircuit
 
 
 def _read_jsonl(path) -> list[dict]:
@@ -54,21 +54,8 @@ class Grader:
         self.user_types = loaded.user_types
         self.train = _read_jsonl(train)
         self.examples = select(self.train)
-        if missing_grade not in MISSING_GRADE:
-            raise ValueError(f"missing_grade must be stop or review, got {missing_grade!r}")
-        self.judge = judge if judge is not None else ReplayJudge(cache, missing=missing_grade)
-        if top_k < 1:
-            raise ValueError(f"top_k must be at least 1, got {top_k}")
-        self.top_k = top_k
-        self.floor = floor
-        if attempts < 1:
-            raise ValueError(f"attempts must be at least 1, got {attempts}")
-        self.attempts = attempts
-        self.again = None
-        if attempts > 1:
-            if not hasattr(self.judge, "without_cache"):
-                raise ValueError("attempts above 1 need a live judge, not saved grades")
-            self.again = self.judge.without_cache()
+        self.mode = None
+        self._set_judge(judge, cache, missing_grade, top_k, floor, attempts)
         if short_circuit is True:
             short_circuit = ShortCircuit()
         self.short_circuit = short_circuit or None
@@ -86,6 +73,59 @@ class Grader:
             raise ValueError(f"unknown router {router!r}, expected center or kmeans")
         self.router.fit(self.train)
 
+    def _set_judge(self, judge, cache, missing_grade, top_k, floor, attempts) -> None:
+        if missing_grade not in MISSING_GRADE:
+            raise ValueError(f"missing_grade must be stop or review, got {missing_grade!r}")
+        self.judge = judge if judge is not None else ReplayJudge(cache, missing=missing_grade)
+        if top_k < 1:
+            raise ValueError(f"top_k must be at least 1, got {top_k}")
+        self.top_k = top_k
+        self.floor = floor
+        if attempts < 1:
+            raise ValueError(f"attempts must be at least 1, got {attempts}")
+        self.attempts = attempts
+        self.again = None
+        if attempts > 1:
+            if not hasattr(self.judge, "without_cache"):
+                raise ValueError("attempts above 1 need a live judge, not saved grades")
+            self.again = self.judge.without_cache()
+
+    @classmethod
+    def from_rules(
+        cls,
+        rules,
+        judge,
+        top_k=None,
+        embedder="tfidf",
+        cache=None,
+        missing_grade="stop",
+        attempts=1,
+    ) -> "Grader":
+        """Grade from a rules file alone, with no labeled examples. This mode is unmeasured.
+
+        The router ranks the rules by how close each rule's text is to the answer, and the
+        judge gets no examples. top_k None checks every rule, which costs one judge call
+        per rule per answer. top_k N checks the N closest. The worst outcome wins. judge
+        None reads saved grades from cache. cache None means no saved grades are read or
+        written by Redline. Every output row carries mode "rules_only".
+        """
+        if judge is None and cache is None:
+            raise ValueError("rules only mode needs a judge or a cache of saved grades")
+        grader = cls.__new__(cls)
+        loaded = policy.load_policy(rules)
+        grader.rules = loaded.rules
+        grader.user_types = loaded.user_types
+        grader.train = []
+        grader.examples = {}
+        grader.mode = "rules_only"
+        grader.short_circuit = None
+        top_k = len(grader.rules) if top_k is None else top_k
+        grader._set_judge(judge, cache, missing_grade, top_k, None, attempts)
+        grader.embedder = _embedder(embedder)
+        grader.embedder_name = getattr(grader.embedder, "name", type(grader.embedder).__name__)
+        grader.router = RuleRouter(grader.embedder).fit(grader.rules)
+        return grader
+
     def check_user_type(self, user_type, record_id=None) -> None:
         """Raise ValueError when the rules file does not declare this user type."""
         if user_type in self.user_types:
@@ -100,7 +140,7 @@ class Grader:
         """Grade records that carry id, user_type, prompt and response."""
         for record in records:
             self.check_user_type(record["user_type"], record.get("id"))
-        return pipeline.run(
+        rows = pipeline.run(
             records,
             self.rules,
             self.router,
@@ -111,6 +151,10 @@ class Grader:
             attempts=self.attempts,
             again=self.again,
         )
+        if self.mode:
+            for row in rows:
+                row["mode"] = self.mode
+        return rows
 
     def grade(self, prompt: str, response: str, user_type: str) -> dict:
         """Grade one answer and return its output record, without an id."""

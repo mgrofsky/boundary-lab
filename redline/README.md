@@ -73,6 +73,27 @@ redline run --data data/holdout.jsonl --judge replay --embedder tfidf --missing-
 
 The [routing guide](../docs/routing.md) walks through the settings, saved comparisons, and commands to compare your own runs.
 
+## Start from a rules file alone
+
+Everything above needs labeled example answers. If you have a rules file and nothing else, use rules only mode:
+
+```sh
+redline run --rules-only --rules my_rules.yaml --data my_answers.jsonl --judge live --out results/local/rules_only
+```
+
+```python
+from redline import Grader
+from redline.judge import ChatEndpointJudge
+
+judge = ChatEndpointJudge(base_url, model, api_key)
+grader = Grader.from_rules("my_rules.yaml", judge)
+print(grader.grade(prompt, response, "anonymous")["outcome"])
+```
+
+The train file is not read and no cache file is touched unless you pass `--cache`. The router ranks the rules by how close each rule's own text is to the answer. The judge checks the answer against every rule with no examples, and the worst outcome wins. Every output row carries `"mode": "rules_only"`.
+
+This mode has not been measured yet. It costs one judge call per rule per answer unless `--top-k` is set, which checks only that many of the closest rules. Adding labeled examples is what makes the router and judge better.
+
 ## What happened
 
 The saved run used two models running locally on Ollama: `llama3.2:3b` as the chatbot and `gemma3:27b` as the judge. The table below uses center matching with the shortcut off, across 56 holdout examples and 80 attack prompts.

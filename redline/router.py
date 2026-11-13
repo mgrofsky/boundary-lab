@@ -148,6 +148,46 @@ class Router:
         return _ranked(self.centers @ vec, self.rule_ids, self.threshold)
 
 
+def rule_text(rule) -> str:
+    """The words a rule is matched on: the rule itself and its plain summary."""
+    return f"{rule.rule}\n{rule.plain_summary}"
+
+
+class RuleRouter:
+    """Rank the rules by how close each rule's own text is to the answer.
+
+    It needs no labeled examples, so it has no "none" class, no cutoff and no shortcut.
+    Every answer goes to the judge for at least its closest rule.
+    """
+
+    def __init__(self, embedder):
+        self.embedder = embedder
+        self.rule_ids: list[str] = []
+        self.centers: np.ndarray | None = None
+
+    @property
+    def name(self) -> str:
+        return "rules"
+
+    def fit(self, rules: dict) -> "RuleRouter":
+        """Turn each rule's text into numbers. A tfidf embedder learns its words from them."""
+        texts = [rule_text(rule) for rule in rules.values()]
+        if hasattr(self.embedder, "fit"):
+            self.embedder.fit(texts)
+        self.rule_ids = list(rules)
+        self.centers = np.vstack([_unit(v) for v in self.embedder.encode(texts)])
+        return self
+
+    def rank(self, prompt: str, response: str, user_type: str | None = None) -> list[RouteResult]:
+        """Return every rule ordered by how close the answer is to it, closest first."""
+        vec = _unit(np.asarray(self.embedder.encode([text(prompt, response)])[0], np.float32))
+        return _ranked(self.centers @ vec, self.rule_ids, -math.inf)
+
+    def route(self, prompt: str, response: str, user_type: str | None = None) -> RouteResult:
+        """Return the closest rule. It never abstains."""
+        return self.rank(prompt, response, user_type)[0]
+
+
 class KMeansRouter:
     """Send each answer to the closest of k groups of labeled training answers.
 
