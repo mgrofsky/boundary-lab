@@ -167,7 +167,7 @@ def cmd_run(args) -> int:
 
 
 def cmd_attack(args) -> int:
-    from redline.target import Target, run_attacks
+    from redline.target import Target, attempt_id_clashes, run_attacks
 
     if args.attempts < 1:
         print("redline: --attempts must be at least 1", file=sys.stderr)
@@ -177,6 +177,14 @@ def cmd_attack(args) -> int:
     system_prompt = Path(args.system).read_text()
     target = Target(base_url, model, api_key, system_prompt, temperature=args.temperature)
     prompts = read_jsonl(args.prompts)
+    clashes = attempt_id_clashes(prompts, args.attempts)
+    if clashes:
+        print(
+            "redline: with --attempts these prompt ids would be given to two answers: "
+            f"{', '.join(clashes)}. Rename the prompts so no id ends in # and a number.",
+            file=sys.stderr,
+        )
+        return 2
     responses = _in_chunks(
         prompts, lambda batch: run_attacks(batch, target, args.attempts), "answered"
     )
@@ -200,17 +208,18 @@ def cmd_evade(args) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.judge == "live" and is_pinned_cache(args.cache):
-        print(
-            f"redline: evade with a live judge must not write to {PINNED_CACHE}, the saved "
-            "grades the published results were made from. Leave out --cache to use a file "
-            "under --out, or pass another file.",
-            file=sys.stderr,
-        )
-        return 2
     if args.cache is None:
         live = args.judge == "live"
         args.cache = str(Path(args.out) / "judge_cache.jsonl") if live else PINNED_CACHE
+    # Checked after the default is filled in, so --out data cannot reach the pinned file.
+    if args.judge == "live" and is_pinned_cache(args.cache):
+        print(
+            f"redline: evade with a live judge must not write to {PINNED_CACHE}, the saved "
+            "grades the published results were made from. Pass --cache with another file, "
+            "or an --out folder other than the one that holds it.",
+            file=sys.stderr,
+        )
+        return 2
     attacker = None
     if args.attacker:
         load_env_file()

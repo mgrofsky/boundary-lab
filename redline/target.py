@@ -25,6 +25,20 @@ class Target:
         return self.transport(payload)
 
 
+def attempt_id_clashes(prompts: list[dict], attempts: int) -> list[str]:
+    """The ids that repeated attempts would give to more than one answer.
+
+    Attempt 2 of prompt "a" gets the id "a#2". If another prompt is already called
+    "a#2", two answers would share an id and one would take the other's label.
+    """
+    if attempts <= 1:
+        return []
+    ids = [p["id"] for p in prompts]
+    made = [f"{i}#{n}" for i in ids for n in range(2, attempts + 1)]
+    seen = set(ids)
+    return sorted({m for m in made if m in seen} | {m for m in made if made.count(m) > 1})
+
+
 def run_attacks(prompts: list[dict], target: Target, attempts: int = 1) -> list[dict]:
     """Send each attack prompt as an anonymous user and keep the answer.
 
