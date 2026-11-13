@@ -2,7 +2,7 @@
 
 ## 0.5.0
 
-**Breaking change for installs.** `sentence-transformers` is no longer installed with Redline. It moved to an extra named `minilm`, because it pulls in torch and rules only mode does not need it. If you use the default `minilm` embedder, install `pip install "redline[minilm]"`, or `pip install -e ".[minilm]"` from a checkout. Without it, asking for that embedder stops with one line that names the extra. No default changed: the calibrated mode still uses `minilm`. The `dev` extra still installs it.
+**Breaking change for installs.** `sentence-transformers` is no longer installed with Redline. It moved to an extra named `minilm`, because it pulls in torch and rules only mode does not need it. If you use the default `minilm` embedder, install `pip install -e ".[minilm]"` from a checkout, or `pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"` from the repository. Without it, asking for that embedder stops with one line that gives both commands. No default changed: the calibrated mode still uses `minilm`. The `dev` extra still installs it.
 
 This release adds what an application needs to use Redline as a library. Nothing in it has been measured, and the published results are unchanged.
 

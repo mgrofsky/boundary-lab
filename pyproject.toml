@@ -3,7 +3,7 @@ requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "redline"
+name = "boundary-redline"
 version = "0.5.0"
 description = "Check chatbot answers against your rules and see what the checks catch or miss"
 readme = "redline/README.md"

@@ -59,7 +59,7 @@ Useful options:
 - `--top-k 3` checks only the three rules closest to each output.
 - `--cache grades.jsonl` saves judge answers, so a second run does not pay for them again.
 - `--judge replay --cache grades.jsonl` grades from that file with no judge model. Add `--missing-grade review` to record a review where no saved grade matches.
-- `--train examples.jsonl` uses labeled examples. See [What it costs](#what-it-costs). Its default embedder is `minilm`, which needs `pip install "redline[minilm]"`.
+- `--train examples.jsonl` uses labeled examples. See [What it costs](#what-it-costs). Its default embedder is `minilm`, which needs the `minilm` extra: `pip install -e ".[minilm]"` from a checkout.
 - `--dry-run` prints how many answers would be graded and the most judge calls that takes, then exits. It needs no judge, no `--out` and none of the judge's environment variables.
 - `--max-judge-calls 2000` stops the run before the call that would pass that number. An output is graded in full or not started.
 - `--review-score 0.3` sets the score of an output sent to review. Use the value you gave the detector.

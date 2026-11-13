@@ -16,6 +16,8 @@ HERE = Path(__file__).resolve().parent
 REPORT = HERE / "fixtures" / "garak_report.jsonl"
 RULES = HERE.parent / "docs" / "integrations" / "aegisshield" / "rules-llm-endpoint-starter.yaml"
 PASS = {"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "ok"}
+# The package is not on the public index, so the hint names the repository.
+HINT = 'pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"'
 
 
 def redline(*args) -> subprocess.CompletedProcess:
@@ -24,12 +26,18 @@ def redline(*args) -> subprocess.CompletedProcess:
 
 
 def main() -> int:
+    from importlib import metadata
+
     import redline as package
     from redline import Grader, embed
     from redline.garak import grade_report
     from redline.judge import FakeJudge
 
     assert HERE.parent not in Path(package.__file__).resolve().parents, "not the installed copy"
+    # The installed package is boundary-redline. The import name and the command are redline.
+    assert metadata.version("boundary-redline")
+    owners = metadata.packages_distributions().get("redline")
+    assert owners == ["boundary-redline"], owners
     for name in ("torch", "sentence_transformers", "garak"):
         assert importlib.util.find_spec(name) is None, f"{name} is installed"
 
@@ -46,7 +54,7 @@ def main() -> int:
     try:
         embed.make("minilm")
     except embed.MissingExtra as exc:
-        assert 'pip install "redline[minilm]"' in str(exc)
+        assert HINT in str(exc), exc
     else:
         raise AssertionError("the minilm embedder was built with no extra installed")
 
@@ -65,7 +73,7 @@ def main() -> int:
         calibrated = redline(*shared, "--train", str(cache), *replay)
         assert calibrated.returncode == 2, calibrated
         assert calibrated.stderr.strip().count("\n") == 0, calibrated
-        assert 'pip install "redline[minilm]"' in calibrated.stderr, calibrated
+        assert HINT in calibrated.stderr, calibrated
 
     print("plain install ok")
     return 0

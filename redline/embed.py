@@ -26,7 +26,9 @@ class Embedder:
         if importlib.util.find_spec("sentence_transformers") is None:
             raise MissingExtra(
                 "the minilm embedder needs sentence-transformers, which is not installed. "
-                'Install it with: pip install "redline[minilm]"'
+                'From a checkout, install it with: pip install -e ".[minilm]". From the '
+                "repository, where the package is named boundary-redline: "
+                'pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"'
             )
         self.model_name = model_name
         self._model = None

@@ -25,7 +25,15 @@ redline run --data data/holdout.jsonl --judge replay --out results/local/center
 
 The `minilm` extra installs `sentence-transformers`, the model library this example matches text with. It pulls in torch.
 
-From Redline 0.5.0 a plain `pip install -e .` leaves that library out. That is a breaking change for an install that relied on it. The fix is one line: install `".[minilm]"` from a checkout, or `"redline[minilm]"` by name. A plain install still runs `--rules-only`, `--embedder tfidf` and `garak-grade`. Asking for the `minilm` embedder without the extra stops with one line that names it.
+From Redline 0.5.0 a plain `pip install -e .` leaves that library out. That is a breaking change for an install that relied on it. The fix is one line: install `".[minilm]"` from a checkout, as above. A plain install still runs `--rules-only`, `--embedder tfidf` and `garak-grade`. Asking for the `minilm` embedder without the extra stops with one line that says what to install.
+
+The package is named `boundary-redline`, and it is not on the public Python package index. Another project owns the name `redline` there, so never install Redline by name alone. Install it from a checkout, or straight from the repository:
+
+```sh
+pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"
+```
+
+The import name is `redline` and the command is `redline`, as before.
 
 Open `results/local/center/holdout_outputs.jsonl` to see the results. Each line has the original answer, the rule it matched, who made the decision, and why. The matching `_meta.json` file records the run settings and totals.
 

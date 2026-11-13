@@ -17,7 +17,7 @@ ROOT = Path(__file__).parent.parent
 PASS = {"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "ok"}
 ARGS = ("can I pay by card", "Yes, in the app.", "anonymous", "The user is anonymous.")
 NONE = {"good": [], "bad": []}
-HINT = 'pip install "redline[minilm]"'
+HINT = 'pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"'
 
 
 @pytest.fixture
