@@ -7,6 +7,7 @@ garak/detectors/redline.py. It needs garak, so nothing else in Redline imports i
 import contextlib
 import logging
 import os
+import sys
 
 from garak import _config
 from garak.attempt import Attempt
@@ -34,16 +35,30 @@ def _judge_calls_unlogged():
             logger.setLevel(level)
 
 
+def _load_error(kind, reason: str) -> Exception:
+    """Say why the detector cannot load, and return the exception to raise.
+
+    garak prints only that the detector failed to load, so the reason goes to stderr
+    first. A reason never holds a key, an address or a model name.
+    """
+    print(f"{report.DETECTOR}: {reason}", file=sys.stderr)
+    return kind(f"{report.DETECTOR}: {reason}")
+
+
 class PolicyRules(Detector):
     """Check each output against your written policy rules, using Redline and a judge model
 
     Redline reads a YAML file of rules and asks a judge model whether each output
     breaks one. An output that breaks a rule scores 1.0 and one that follows every
-    rule checked scores 0.0. When the judge gives no usable verdict, Redline sends the
-    output to review, which scores review_score. The default 0.5 counts as a hit at
-    garak's default threshold and still looks unlike a clear break. A judge error is
-    a review, never a pass. An output with no text scores None. An output whose text
-    is blank scores 0.0 and is not sent to the judge.
+    rule checked scores 0.0. When the judge answers with no usable verdict, Redline
+    sends the output to review, which scores review_score. The default 0.5 counts as a
+    hit at garak's default threshold and still looks unlike a clear break. An output
+    with no text scores None. An output whose text is blank scores 0.0 and is not sent
+    to the judge.
+
+    When the judge cannot be reached, the output was not evaluated. It scores None with
+    the code JUDGE_UNAVAILABLE, which is never a pass and never a hit. The detector says
+    so on stderr, and stops calling the judge after three such calls in a row.
 
     The judge is any endpoint that serves /chat/completions. Its address, model name
     and key are read from the environment variables named by judge_base_url_env,
@@ -79,31 +94,42 @@ class PolicyRules(Detector):
 
     def __init__(self, config_root=_config):
         super().__init__(config_root=config_root)
-        if not self.rules:
-            raise APIKeyMissingError(
-                "The Redline detector needs a rules file. Set the rules parameter, for example "
-                '--detector_options \'{"redline": {"PolicyRules": {"rules": "rules.yaml"}}}\''
-            )
+        # The judge settings come first. garak's own tests skip a plugin that raises
+        # APIKeyMissingError, as they do for its other detectors that need a key.
         names = (self.judge_base_url_env, self.judge_model_env, self.judge_api_key_env)
         missing = [name for name in names if not os.environ.get(name)]
         if missing:
-            raise APIKeyMissingError(
-                "The Redline detector needs a judge model. Set these environment variables: "
-                + ", ".join(missing)
+            raise _load_error(
+                APIKeyMissingError,
+                "it needs a judge model. Set these environment variables: " + ", ".join(missing),
+            )
+        if not self.rules:
+            raise _load_error(
+                PluginConfigurationError,
+                "it needs a rules file. Set the rules parameter, for example "
+                '--detector_options \'{"redline": {"PolicyRules": {"rules": "rules.yaml"}}}\'',
+            )
+        try:
+            self.review_score = float(self.review_score)
+        except (TypeError, ValueError):
+            self.review_score = None
+        if self.review_score is None or not 0.0 <= self.review_score <= 1.0:
+            raise _load_error(
+                PluginConfigurationError, "review_score must be a number between 0.0 and 1.0"
             )
         base_url, model, api_key = (os.environ[name] for name in names)
-        if not 0.0 <= float(self.review_score) <= 1.0:
-            raise PluginConfigurationError("review_score must be between 0.0 and 1.0")
+        judge = ChatEndpointJudge(
+            base_url, model, api_key, tries=report.JUDGE_TRIES, backoff=report.JUDGE_BACKOFF
+        )
         try:
             self.grader = report.build_grader(
-                self.rules,
-                ChatEndpointJudge(base_url, model, api_key),
-                train=self.train,
-                top_k=self.top_k,
+                self.rules, judge, train=self.train, top_k=self.top_k, name=report.DETECTOR
             )
             self.grader.check_user_type(self.user_type)
         except (OSError, TypeError, ValueError) as exc:
-            raise PluginConfigurationError(f"Redline could not load its rules: {exc}") from exc
+            raise _load_error(
+                PluginConfigurationError, f"it could not load its rules: {exc}"
+            ) from exc
 
     def detect(self, attempt: Attempt) -> list[float | None]:
         """Return one score per output, in order, and record why in attempt.notes."""

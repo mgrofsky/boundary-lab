@@ -491,7 +491,11 @@ def _garak_shims(args, action: str) -> int:
     if package_dir is None:
         print("redline: garak is not installed in this environment", file=sys.stderr)
         return 2
-    code, lines = getattr(install, action)(package_dir, dry_run=args.dry_run)
+    try:
+        code, lines = getattr(install, action)(package_dir, dry_run=args.dry_run)
+    except OSError as exc:
+        print(f"redline: garak-{action} could not finish: {exc}", file=sys.stderr)
+        return 1
     for line in lines:
         print(line)
     return code
