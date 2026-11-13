@@ -251,7 +251,7 @@ What each option does:
 - `out_dir` is where the three files of `redline garak-grade` are written. Each is written under a temporary name and then renamed, so a crash cannot leave half a file. With `out_dir=None` nothing is written.
 - `on_progress(done, total, row)` is called after each output is settled. `row` is the graded row, or `None` for an output with no text. An exception raised inside it stops the run and reaches your code.
 - `should_stop()` is asked before each output. When it returns true the run ends.
-- `max_judge_calls` is a hard cap. An output is graded in full or not started, so the call that would pass the cap is never made.
+- `max_judge_calls` is a hard cap. An output is graded in full or not started, so the call that would pass the cap is never made. It counts calls to the judge object. One call can send its request more than once when `tries` is above 1.
 - `deadline_seconds` is a time limit on the whole run, checked before each output.
 - `user_type`, `top_k`, `review_score`, `eval_threshold` and `train` mean what they mean for [the command](garak.md). `embedder` picks how text is matched to rules.
 
@@ -302,6 +302,8 @@ try:
     strict.grade(question, "A different answer.", "anonymous")
 except KeyError as missing:
     assert "no saved judge answer" in str(missing)
+else:
+    raise AssertionError("a missing saved grade must stop the run")
 
 lenient = Grader.from_rules(rules, ReplayJudge("saved_grades.jsonl", missing="review"))
 row = lenient.grade(question, "A different answer.", "anonymous")

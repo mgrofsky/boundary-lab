@@ -65,6 +65,21 @@ def test_the_calibrated_mode_still_defaults_to_minilm_and_says_what_to_install(
     assert len(err.splitlines()) == 1
 
 
+def test_garak_grade_with_a_train_file_says_what_to_install(
+    no_minilm, rules_data, write_rules, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_live_judge", lambda *args, **kwargs: FakeJudge(PASS))
+    train = tmp_path / "train.jsonl"
+    train.write_text("")
+    report = ROOT / "tests" / "fixtures" / "garak_report.jsonl"
+    args = ["garak-grade", str(report), "--rules", str(write_rules(rules_data))]
+    assert cli.main([*args, "--out", str(tmp_path / "out"), "--train", str(train)]) == 2
+    err = capsys.readouterr().err.strip()
+    assert err.startswith("redline: ") and HINT in err
+    assert len(err.splitlines()) == 1
+    assert not (tmp_path / "out").exists()
+
+
 def test_importing_redline_loads_no_model_library():
     code = (
         "import sys, redline, redline.garak, redline.cli\n"

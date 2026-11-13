@@ -250,6 +250,14 @@ def test_files_are_written_through_a_temporary_name(rules_data, tmp_path, monkey
     assert sorted(p.name for p in out.iterdir()) == sorted(FILES)
 
 
+def test_the_files_get_the_access_rights_of_any_new_file(rules_data, tmp_path):
+    out = tmp_path / "out"
+    redline_garak.grade_report(FIXTURE, rules_data, FakeJudge(PASS), out_dir=out)
+    plain = out / "plain.txt"
+    plain.write_text("x")
+    assert {(out / name).stat().st_mode for name in FILES} == {plain.stat().st_mode}
+
+
 def test_grade_report_works_with_garak_not_importable(rules_data, tmp_path):
     code = (
         "import json, sys\n"

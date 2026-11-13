@@ -28,9 +28,9 @@ The first targets for Job 2 are the outputs the app produces today: the threat m
 
 These are on the app's side. None of them is part of Redline, and a real runner should send nothing until they exist.
 
-- A guard on the tenant's endpoint address, so a scan cannot be pointed at an address the app must not reach.
+- A guard on the tenant's endpoint address.
 - Storage for the endpoint's credential.
-- A fixed allow list for probe names. A tenant picks from it and never supplies a name of their own.
+- A fixed allow list for probe names.
 - A separate worker image for garak.
 - A table and a setup page for tenant rules.
 - Outbound network rules for the scanner.
@@ -40,10 +40,10 @@ These are on the app's side. None of them is part of Redline, and a real runner 
 1. **Install Redline with no extras** in the worker that grades, from a pinned commit. That install has no torch in it. Grading needs only the report file, so this worker does not need garak.
 2. **Put garak in its own worker image.** It runs the probes and writes the report.
 3. **Pick a judge model.** It must not be the model being checked. Any endpoint that serves `/chat/completions` works.
-4. **Build the judge in the worker** with `ChatEndpointJudge(base_url, model, api_key, timeout=...)`. The key comes from the app's own secret storage. It never goes in rules, a report or a log.
+4. **Build the judge in the worker** with `ChatEndpointJudge(base_url, model, api_key, timeout=...)`. The key never goes in rules, a report or a log.
 5. **Store each tenant's rules as fields** in the app's database. Start from the prefilled rules below.
 
-The app can also run Redline as a detector inside garak. Then Redline is installed beside garak, `redline garak-install` is run once there, and the judge settings come from three environment variables. See [the garak page](../../garak.md). This page uses the report path, because it keeps garak and the judge key in separate workers.
+The app can also run Redline as a detector inside garak. Then Redline is installed beside garak, `redline garak-install` is run once there, and the judge settings come from three environment variables. See [the garak page](../../garak.md). This page uses the report path, because grading then needs only the report file.
 
 ## Prefilled rules
 
@@ -94,7 +94,7 @@ This path runs offline. Redline is not in the app's request path.
 - **The tenant's LLM endpoint is untrusted.** Its answers are data. They go to the judge inside a prompt that marks them as the text to grade.
 - **The judge model sees the answers and the rules.** If answers may hold private data, host the judge where that data is allowed to go.
 - **Tenant rules are tenant input.** The app checks them with `validate_policy_data` when they are saved. Redline parses no tenant YAML on this path, and sets no size limits, so the app sets its own.
-- **The judge key stays on the grading worker.** The garak worker does not need it, and it is never written to a report.
+- **The judge key stays on the grading worker.** It is never written to a report.
 - **Scan data that reaches the app's own model is untrusted.** That is the case Job 2 tests.
 
 ## What can go wrong, and what the app should show

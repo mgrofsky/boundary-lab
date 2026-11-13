@@ -7,8 +7,8 @@ JSON object per line, where an attempt entry holds the prompt, the outputs and t
 import json
 import logging
 import os
+import secrets
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -362,15 +362,15 @@ def _write_whole(path: Path, text: str) -> None:
     """Write a file under a temporary name beside it, then rename it into place.
 
     A reader sees the old file or the new one, never part of one. A crash leaves the
-    old file as it was.
+    old file as it was. The file gets the access rights any new file here would get.
     """
-    handle, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
     try:
-        with os.fdopen(handle, "w") as f:
+        with temporary.open("x") as f:
             f.write(text)
-        os.replace(name, path)
+        os.replace(temporary, path)
     except BaseException:
-        Path(name).unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
         raise
 
 
