@@ -313,7 +313,7 @@ In `garak_evals.jsonl` an output that was not reached counts under `nones`.
 
 A run that ends early still returns, and still writes three whole files. That holds for a cancel, the cap, the deadline and a judge that cannot be reached. When the judge or `on_progress` raises, the files are written with `stopped` set to `error`. Then the exception is raised again, so pass `out_dir` if you want to keep what was graded. That includes an interrupt, such as `KeyboardInterrupt` or a cancelled task. If writing the files fails as well, the write error is raised, and the first error is its `__cause__`.
 
-The three files are written whole under temporary names, then renamed into place together, the summary last. So `garak_summary.json` is the file to trust as the marker that a run finished writing. When it is there, the other two are from the same run.
+The three files are written whole under temporary names, then renamed into place together, the summary last. So `garak_summary.json` is the file to trust as the marker that a run finished writing. When it is there, the other two are from the same run or a later one, never an earlier one. Use a fresh folder for each run and they are always from the same run.
 
 A judge that cannot be reached is a separate case. Its outputs get a row with the outcome `not_evaluated`. They are counted under `judge_unavailable`, not under `not_graded`. After three failed calls in a row the judge is not called again and `stopped` is `judge_unavailable`.
 

@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from redline import api, pipeline
+from redline import api, pipeline, policy
 from redline.intervals import interval
 from redline.judge import Judge, ReplayJudge
 
@@ -392,32 +392,13 @@ def _write_files(out_dir, rows: list[dict], summary: dict, entries: list[dict]) 
     return [graded, summary_path, evals]
 
 
-def write(
-    out_dir,
-    rows: list[dict],
-    skipped: dict,
-    extra: dict | None = None,
-    review_score: float = REVIEW_SCORE,
-    eval_threshold: float = EVAL_THRESHOLD,
-    not_graded: dict | None = None,
-    more: dict | None = None,
-) -> list[Path]:
-    """Write garak_graded.jsonl, garak_summary.json and garak_evals.jsonl under out_dir.
-
-    extra goes before the counts in the summary and more goes after them. The files
-    are written whole and renamed together, the summary last. See _write_files.
-    """
-    scoring = {"review_score": review_score, "eval_threshold": eval_threshold}
-    counts = {**(extra or {}), **scoring, **summarize(rows, skipped, not_graded), **(more or {})}
-    entries = eval_entries(rows, skipped, review_score, eval_threshold, not_graded)
-    return _write_files(out_dir, rows, counts, entries)
-
-
-def check_out_dir(out_dir) -> None:
+def check_out_dir(out_dir: str | os.PathLike) -> None:
     """Make the output folder and prove a file can be written in it.
 
-    Raises OutputError, an OSError, when it cannot. The file made for the check is
-    removed again.
+    out_dir is the folder, which may not exist yet. Its parents are made too. A small
+    file is written there and removed again, so nothing is left behind.
+
+    Raises OutputError, an OSError, when the folder cannot be made or written.
     """
     out_dir = Path(out_dir)
     probe = out_dir / f".redline.{secrets.token_hex(8)}.tmp"
@@ -485,17 +466,20 @@ def plan(
     user_type: str | None = None,
     max_judge_calls: int | None = None,
     deadline_seconds: float | None = None,
-):
+) -> tuple[policy.Policy, list[dict], int]:
     """Check everything a run checks before it sets up a judge or an embedder.
 
     The estimate, the dry run of the command and grade_report all come through here,
     so they refuse the same input and count the same calls. Returns the loaded rules,
     the attempts in the report, and the most judge calls one answer can need.
 
+    The arguments mean what they mean for grade_report. user_type None skips the
+    check of the user type, and the two limits are only checked for being 0 or more.
+
     Raises ValueError for a bad number, rules that do not load or hold no rule, a user
-    type the rules do not declare and a bad line in the train file. ReportError, a
-    ValueError, is raised for a bad report. OSError is raised for a file that cannot
-    be read. user_type None skips that one check.
+    type the rules do not declare, and a train file with a bad line, no rows or a row
+    for a rule the rules do not have. ReportError, a ValueError, is raised for a bad
+    report. OSError is raised for a file that cannot be read.
     """
     if max_judge_calls is not None and max_judge_calls < 0:
         raise ValueError(f"max_judge_calls must be 0 or more, got {max_judge_calls}")
@@ -508,7 +492,7 @@ def plan(
     if user_type is not None:
         api.check_user_type(loaded.user_types, user_type)
     if train is not None:
-        api.read_train(train)
+        api.read_train(train, loaded.rules)
     attempts = read_attempts(report_path)
     return loaded, attempts, _calls_per_answer(len(loaded.rules), top_k, train)
 
@@ -552,8 +536,12 @@ def estimate(attempts: list[dict], per_answer: int) -> dict:
     }
 
 
-def default_embedder(train) -> str:
-    """The embedder a garak path uses when none is named: tfidf, or minilm with train."""
+def default_embedder(train: str | os.PathLike | None) -> str:
+    """Return the name of the embedder a garak path uses when none is named.
+
+    train is the labeled examples file, or None. Without one the name is tfidf, which
+    needs no model. With one it is minilm, the calibrated mode's default.
+    """
     return "tfidf" if train is None else "minilm"
 
 

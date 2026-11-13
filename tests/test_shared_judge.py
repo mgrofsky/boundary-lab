@@ -182,3 +182,15 @@ def test_a_judge_can_still_be_copied_and_pickled(tmp_path, pay_rule):
     args = (pay_rule, {"good": [], "bad": []}, "q", "an answer", "anonymous", "stance")
     assert replay.grade(*args)["reason_code"] == "NO_SAVED_GRADE"
     assert replay.missing_lookups == 1
+
+
+def test_repeat_attempts_with_saved_grades_are_still_refused_when_the_rules_name_a_role(
+    rules_data, tmp_path
+):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    for rules in (rules_data, {"assistant_role": ROLE_A, "rules": rules_data}):
+        with pytest.raises(ValueError, match="attempts above 1 need a live judge"):
+            Grader.from_rules(rules, ReplayJudge(cache), attempts=2)
+    view = Grader.from_rules({"assistant_role": ROLE_A, "rules": rules_data}, ReplayJudge(cache)).judge
+    assert not hasattr(view, "without_cache")

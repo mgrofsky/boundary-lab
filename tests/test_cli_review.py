@@ -254,3 +254,41 @@ def test_the_promptfoo_check_says_one_line_without_the_minilm_extra(monkeypatch)
     message = stopped.value.code
     assert message.startswith("redline: ") and "minilm" in message
     assert message.count("\n") == 0
+
+
+def _train_cases(folder):
+    """Train files a run cannot use, and the words its message must hold."""
+    empty = folder / "empty.jsonl"
+    empty.write_text("\n")
+    stray = folder / "stray.jsonl"
+    stray.write_text(json.dumps(GOOD_ROW) + "\n" + json.dumps({**GOOD_ROW, "rule_id": "GONE-01"}) + "\n")
+    return {"empty": (empty, "empty.jsonl: has no examples"), "stray": (stray, "stray.jsonl: line 2")}
+
+
+@pytest.mark.parametrize("case", ["empty", "stray"])
+def test_a_train_file_a_run_cannot_use_is_refused_by_the_dry_run_and_the_real_run_alike(
+    rules_data, write_rules, tmp_path, monkeypatch, case
+):
+    judge = FakeJudge(PASS)
+    monkeypatch.setattr(cli, "_live_judge", lambda *args, **kwargs: judge)
+    train, words = _train_cases(tmp_path)[case]
+    more = ["--train", str(train), "--embedder", "tfidf"]
+    rules = write_rules(rules_data)
+    dry = _exit(_dry(rules, *more))
+    real = _exit(_grade(tmp_path, rules, *more))
+    assert dry == real and words in dry
+    assert "GONE-01" in dry or case == "empty"
+    assert judge.calls == [] and not (tmp_path / "out").exists()
+
+
+def test_the_grader_refuses_the_same_train_files(rules_data, tmp_path):
+    for train, words in _train_cases(tmp_path).values():
+        with pytest.raises(ValueError, match=words):
+            Grader(rules=rules_data, train=train, judge=FakeJudge(PASS), embedder="tfidf")
+
+
+def test_a_train_row_for_no_rule_is_fine(rules_data, tmp_path):
+    train = tmp_path / "train.jsonl"
+    rows = [GOOD_ROW, {**GOOD_ROW, "id": "t2", "rule_id": "none", "label": "good", "reason_code": "OK"}]
+    train.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    Grader(rules=rules_data, train=train, judge=FakeJudge(PASS), embedder="tfidf")

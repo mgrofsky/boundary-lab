@@ -6,7 +6,7 @@
 #   2. promptfoo's llm-rubric, graded by the same model the saved run used as its judge
 #   3. Redline as a Python check (router, gate, judge)
 #
-# Run from this folder with the project installed (pip install -e . at the root):
+# Run from this folder with the project installed (pip install -e ".[minilm]" at the root):
 #
 #   promptfoo eval -c promptfooconfig.yaml
 #   promptfoo eval -c promptfooconfig.yaml --filter-metadata rule=SYS-01

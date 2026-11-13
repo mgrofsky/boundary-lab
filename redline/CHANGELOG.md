@@ -28,7 +28,7 @@ This release adds what an application needs to use Redline as a library. Nothing
 - `redline.judge.__all__` is new. It lists the public names of the module: the three judge classes, `Judge`, `RoleView`, `MissingSavedGrade`, `SAVED_GRADES_VERSION`, `build_prompt`, `http_transport`, `parse_answer`, `prompt_key`, `read_saved_grades`, `select` and `valid_codes`. It narrows `from redline.judge import *`, which before brought in every name without a leading underscore, such as `ASSISTANT_ROLE` and `TRIES`. Import those by name.
 - `ChatEndpointJudge` takes `timeout`, the seconds one request may take. The default is 60, as before.
 - New lines in a saved grades file carry `"version": 1`. Lines without it are read as before, and `data/judge_cache.jsonl` is unchanged. Redline 0.4.0 can read a file that 0.5.0 wrote. `redline.judge.read_saved_grades` reads a file, and a line it cannot use is refused with the file's name and the line number.
-- `redline.api.read_train(path)` reads a labeled examples file and names the file and line of a bad row.
+- `redline.api.read_train(path, rules=None)` reads a labeled examples file and names the file and line of a bad row.
 - The guides [Use Redline from an application](../docs/using-redline-in-an-app.md), whose examples the test suite runs, and [Saved grades](../docs/saved-grades.md).
 - A CI job that installs Redline with no extras and checks that rules only mode works with torch absent.
 
@@ -48,12 +48,13 @@ This release adds what an application needs to use Redline as a library. Nothing
 - When `garak-grade --judge replay` stops on a missing saved grade, it now writes the three files first, with `stopped` set to `error`. Before, it wrote none. The same holds for any exception from the judge, an interrupt included.
 - `garak-grade` exits 1 when any output was not graded, as it already did when the judge could not be reached, and prints one line that says why.
 - `garak-grade` prints the missing saved grade hint only for a missing saved grade. A cache line with no `key`, or a training row with no `prompt`, now stops it with the file's name and the line number.
+- A labeled examples file is checked when it is read, by `Grader`, `garak-grade` and the dry run alike. Every row needs all seven fields: `id`, `rule_id`, `user_type`, `label`, `prompt`, `response` and `reason_code`. Its `rule_id` must be a rule in the rules, or `none`. A file with no rows is refused. Before, such a file failed part way through a run, or with a message that named no file.
 - `--out` is checked by the command, since `--dry-run` does not need it. Leaving it out of a real run still exits 2.
 - A rules only `Grader` whose rules hold no word of two or more letters is now built, and every rule is still checked. Before, the `tfidf` embedder raised.
 
 ### Removed
 
-- `redline.garak.report.grade_attempts`. Nothing called it once `grade_report` took over its loop. Call `grade_report`, which returns the same rows under `rows`.
+- `redline.garak.report.grade_attempts` and `redline.garak.report.write`. Nothing called either once `grade_report` took over the loop and the writing. Call `grade_report`, which returns the same rows under `rows` and writes the same three files with `out_dir`.
 
 ## 0.4.0
 

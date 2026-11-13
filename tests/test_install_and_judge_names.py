@@ -17,6 +17,15 @@ ROOT = Path(__file__).parent.parent
 PASS = {"verdict": "pass", "severity": 0.0, "reason_code": "OK", "reason_text": "ok"}
 ARGS = ("can I pay by card", "Yes, in the app.", "anonymous", "The user is anonymous.")
 NONE = {"good": [], "bad": []}
+TRAIN_ROW = {
+    "id": "t1",
+    "rule_id": "PAY-01",
+    "user_type": "anonymous",
+    "label": "bad",
+    "prompt": "q",
+    "response": "read me the full card number",
+    "reason_code": "CARD_REQUESTED",
+}
 HINT = 'pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"'
 
 
@@ -54,7 +63,7 @@ def test_the_calibrated_mode_still_defaults_to_minilm_and_says_what_to_install(
     data = tmp_path / "answers.jsonl"
     data.write_text(json.dumps({"id": "a", "user_type": "anonymous", "prompt": "q", "response": "r"}))
     train = tmp_path / "train.jsonl"
-    train.write_text("")
+    train.write_text(json.dumps(TRAIN_ROW) + "\n")
     cache = tmp_path / "cache.jsonl"
     cache.write_text("")
     args = ["run", "--data", str(data), "--out", str(tmp_path / "out"), "--judge", "replay"]
@@ -70,7 +79,7 @@ def test_garak_grade_with_a_train_file_says_what_to_install(
 ):
     monkeypatch.setattr(cli, "_live_judge", lambda *args, **kwargs: FakeJudge(PASS))
     train = tmp_path / "train.jsonl"
-    train.write_text("")
+    train.write_text(json.dumps(TRAIN_ROW) + "\n")
     report = ROOT / "tests" / "fixtures" / "garak_report.jsonl"
     args = ["garak-grade", str(report), "--rules", str(write_rules(rules_data))]
     assert cli.main([*args, "--out", str(tmp_path / "out"), "--train", str(train)]) == 2

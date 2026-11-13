@@ -62,8 +62,12 @@ class Judge(Protocol):
         ...
 
 
-def takes_role(judge) -> bool:
-    """True when the judge's grade takes the keyword assistant_role."""
+def takes_role(judge: object) -> bool:
+    """True when the judge's grade takes the keyword assistant_role.
+
+    judge is any judge object. A Grader asks this once, when it is built, to decide
+    whether to pass its role with each call. A judge with no grade gives False.
+    """
     try:
         return "assistant_role" in inspect.signature(judge.grade).parameters
     except (TypeError, ValueError):
@@ -75,28 +79,30 @@ class RoleView:
 
     Every call goes to the judge with this view's role passed beside it. Nothing is
     written to the judge, so other Graders that hold it are not changed. Anything else
-    asked of the view, such as missing_lookups, is the judge's own.
+    asked of the view, such as missing_lookups, is the judge's own. The view has
+    without_cache only when the judge has it, and it then gives a view of that copy
+    under the same role.
     """
 
-    def __init__(self, judge, assistant_role: str):
+    def __init__(self, judge: Judge, assistant_role: str):
         self.judge = judge
         self.assistant_role = assistant_role
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str):
         # Only reached for a name the view does not have itself. A copy that is still
         # being built has no judge yet, and must not go looking for one here.
         if name == "judge":
             raise AttributeError(name)
-        return getattr(self.judge, name)
+        value = getattr(self.judge, name)
+        if name == "without_cache":
+            # The judge's copy that skips saved grades, seen under the same role.
+            return lambda: RoleView(value(), self.assistant_role)
+        return value
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
         return self.judge.grade(
             rule, examples, prompt, response, user_type, stance, assistant_role=self.assistant_role
         )
-
-    def without_cache(self) -> "RoleView":
-        """The judge's copy that skips saved grades, under the same role."""
-        return RoleView(self.judge.without_cache(), self.assistant_role)
 
 
 def _render_examples(items: list[dict], show_code: bool) -> str:

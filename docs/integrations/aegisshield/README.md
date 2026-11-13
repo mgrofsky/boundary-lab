@@ -37,10 +37,10 @@ These are on the app's side. None of them is part of Redline, and a real runner 
 
 ## Setup the app needs
 
-1. **Install Redline with no extras** in the worker that grades, from a pinned commit of this repository. The package is named `boundary-redline` and is not on the public package index. That install has no torch in it. Grading needs only the report file, so this worker does not need garak.
+1. **Install Redline with no extras** in the worker that grades, from a pinned commit of this repository. That install has no torch in it. Grading needs only the report file, so this worker does not need garak.
 2. **Put garak in its own worker image.** It runs the probes and writes the report.
 3. **Pick a judge model.** It must not be the model being checked. Any endpoint that serves `/chat/completions` works.
-4. **Build the judge in the worker** with `ChatEndpointJudge(base_url, model, api_key, timeout=...)`. The key never goes in rules, a report or a log. One judge object can serve every tenant: each tenant's `assistant_role` travels with that tenant's calls and is never left on the judge.
+4. **Build the judge in the worker** with `ChatEndpointJudge(base_url, model, api_key, timeout=...)`. The key never goes in rules, a report or a log.
 5. **Store each tenant's rules as fields** in the app's database. Start from the prefilled rules below.
 
 The app can also run Redline as a detector inside garak. Then Redline is installed beside garak, `redline garak-install` is run once there, and the judge settings come from three environment variables. See [the garak page](../../garak.md). This page uses the report path, because grading then needs only the report file.
@@ -104,14 +104,12 @@ This path runs offline. Redline is not in the app's request path.
 | The judge cannot be reached | Records the answer as not evaluated. Stops calling after three failures in a row. The summary says `stopped: judge_unavailable`. | The count of answers not evaluated, and that the scan is incomplete. |
 | The run reaches `max_judge_calls` | Never makes the call that would pass the cap. Counts the answers left under `not_graded` with the reason `cap`. | The count not graded, and that the cap ended the scan. |
 | The run reaches `deadline_seconds`, or `should_stop` returns true | Stops before the next answer. The reason is `deadline` or `cancelled`. | The count not graded, and why. |
-| The judge raises an error | Writes the three files under `out_dir` with `stopped: error`, then raises the error again. Nothing is returned, so the files are the record. | That the scan failed, with what was graded so far, read from the files. |
-| The folder for `out_dir` cannot be written | Raises before the first judge call. | That the scan could not start. No judge call was spent. |
-| A rule is named `none`, or the rules list is empty | `validate_policy_data` reports it on save, and loading refuses it. | The problem, beside the rule or the list. |
+| The judge raises an error | Writes the three files under `out_dir` with `stopped: error`, then raises the error again. | That the scan failed, with what was graded so far. |
 | The judge answers but gives no usable verdict | Review. | A review queue for a person. |
 | An answer is blank | Pass, with no judge call. | Nothing special. A rule that requires the assistant to say something is not checked on a blank answer. |
 | A rule is vague | The judge guesses. | Nothing can fix this at run time. Check new rules on a few known answers first. |
 
-When a run ends early for any reason in this table, the output files are still written whole. A crash cannot leave half a file. The summary file is renamed into place last, so its presence marks a run that finished writing.
+When a run ends early for any reason in this table, the output files are still written whole. A crash cannot leave half a file.
 
 ## Limits
 

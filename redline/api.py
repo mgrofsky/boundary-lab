@@ -14,12 +14,17 @@ TRAIN_FIELDS = ("id", "rule_id", "user_type", "label", "prompt", "response", "re
 Rules = str | os.PathLike | policy.Policy | list | dict
 
 
-def read_train(path: str | os.PathLike) -> list[dict]:
-    """Read a labeled examples file: one JSON object per line. Blank lines are skipped.
+def read_train(path: str | os.PathLike, rules: dict | None = None) -> list[dict]:
+    """Read a labeled examples file and return its rows in order.
 
-    A line that is not a JSON object, or that lacks one of TRAIN_FIELDS, raises
-    ValueError with the file and the line number. A file that cannot be read raises
-    OSError.
+    path is a file with one JSON object per line. Blank lines are skipped. rules is
+    the loaded rules keyed by rule_id. With it, every row must name one of those
+    rules, or "none" for an answer no rule applies to.
+
+    A line that is not a JSON object, that lacks one of TRAIN_FIELDS, or that names a
+    rule the rules do not have raises ValueError with the file and the line number.
+    So does a file with no rows, since the calibrated mode has nothing to learn from.
+    A file that cannot be read raises OSError.
     """
     rows = []
     for number, line in enumerate(Path(path).read_text().splitlines(), start=1):
@@ -35,7 +40,15 @@ def read_train(path: str | os.PathLike) -> list[dict]:
         missing = [field for field in TRAIN_FIELDS if field not in row]
         if missing:
             raise ValueError(f"{path}: line {number} has no {', '.join(missing)}")
+        known = rules is None or row["rule_id"] in rules or policy.reserved(row["rule_id"])
+        if not known:
+            raise ValueError(
+                f"{path}: line {number}: rule_id {policy.show(row['rule_id'])} is not a "
+                "rule in the rules"
+            )
         rows.append(row)
+    if not rows:
+        raise ValueError(f"{path}: has no examples, and the calibrated mode needs some")
     return rows
 
 
@@ -54,8 +67,12 @@ def check_rules(loaded: policy.Policy, source: str) -> None:
             )
 
 
-def check_user_type(user_types: list[str], user_type: str, record_id=None) -> None:
-    """Raise ValueError when user_type is not one of user_types."""
+def check_user_type(user_types: list[str], user_type: str, record_id: object = None) -> None:
+    """Raise ValueError when user_type is not one of user_types.
+
+    user_types is the list the rules declare. record_id, when given, is the id of the
+    record the user type came from, and the message starts with it.
+    """
     if user_type in user_types:
         return
     where = f"record {record_id}: " if record_id is not None else ""
@@ -159,7 +176,7 @@ class Grader:
         self.user_types = loaded.user_types
         # With no labeled examples the rules' own text is all there is to route on.
         self.mode = "rules_only" if train is None else None
-        self.train = [] if train is None else read_train(train)
+        self.train = [] if train is None else read_train(train, self.rules)
         self.examples = select(self.train)
         if self.mode and top_k is None:
             top_k = len(self.rules)

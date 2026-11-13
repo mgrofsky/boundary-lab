@@ -61,8 +61,13 @@ _LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 SHOWN = 80
 
 
-def show(value) -> str:
-    """A caller's value as a message shows it: escaped, on one line, cut at 80 characters."""
+def show(value: object) -> str:
+    """Return a caller's value the way a message shows it.
+
+    Text is quoted with line breaks and control characters escaped, so it is one
+    line. Any other value is written as Python writes it, with a long list or mapping
+    shortened. The result is cut at 80 characters, with "... (cut)" after it when cut.
+    """
     if isinstance(value, str):
         text = repr(value[: SHOWN + 1])
     else:
@@ -76,8 +81,12 @@ def _named(name: str) -> str:
     return name if _NAME.fullmatch(name) and len(name) <= SHOWN else show(name)
 
 
-def reserved(rule_id) -> bool:
-    """True for a rule_id that is the word none, in any letter case, spaces aside."""
+def reserved(rule_id: object) -> bool:
+    """True for a rule_id that is the word none, in any letter case, spaces aside.
+
+    Redline uses that word for an answer no rule applies to, so no rule may take it.
+    A value that is not text gives False.
+    """
     return isinstance(rule_id, str) and _same(rule_id) == RESERVED_ID
 
 

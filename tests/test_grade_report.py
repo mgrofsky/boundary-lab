@@ -405,7 +405,9 @@ def test_dry_run_with_a_train_file_counts_one_rule_per_answer(
 ):
     rules = write_rules(rules_data)
     train = tmp_path / "t.jsonl"
-    train.write_text("")
+    row = {"id": "t1", "rule_id": "PAY-01", "user_type": "anonymous", "label": "bad"}
+    row.update(prompt="q", response="read me the full card number", reason_code="CARD_REQUESTED")
+    train.write_text(json.dumps(row) + "\n")
     args = ["garak-grade", str(FIXTURE), "--rules", str(rules), "--dry-run", "--train", str(train)]
     assert cli.main([*args, "--embedder", "tfidf"]) == 0
     assert "at most 3 judge calls" in capsys.readouterr().out
