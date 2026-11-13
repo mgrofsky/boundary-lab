@@ -422,6 +422,74 @@ def cmd_gate(args) -> int:
     return 1 if lines else 0
 
 
+def cmd_garak_grade(args) -> int:
+    from redline.garak import report
+
+    if args.judge == "replay" and args.cache is None:
+        print("redline: --judge replay needs --cache, a file of saved judge grades", file=sys.stderr)
+        return 2
+    if args.judge == "live" and is_pinned_cache(args.cache):
+        print(
+            f"redline: garak-grade with a live judge must not write to {PINNED_CACHE}, the "
+            "saved grades the published results were made from. Pass another file.",
+            file=sys.stderr,
+        )
+        return 2
+    judge = _live_judge(args.cache) if args.judge == "live" else None
+    grader = report.build_grader(
+        args.rules,
+        judge,
+        train=args.train,
+        top_k=args.top_k,
+        cache=args.cache,
+        missing_grade=args.missing_grade,
+        embedder=args.embedder,
+    )
+    try:
+        grader.check_user_type(args.user_type)
+        attempts = report.read_attempts(args.report)
+    except ValueError as exc:
+        raise SystemExit(f"redline: {exc}") from None
+    try:
+        rows, skipped = report.grade_attempts(attempts, grader, args.user_type)
+    except KeyError as exc:
+        raise SystemExit(
+            f"redline: {exc.args[0]}. Pass --missing-grade review to record review and go on."
+        ) from None
+    extra = {
+        "report": Path(args.report).name,
+        "mode": grader.mode or "calibrated",
+        "user_type": args.user_type,
+        "judge": args.judge,
+        "top_k": args.top_k,
+        "attempts": len(attempts),
+    }
+    paths = report.write(args.out, rows, skipped, extra)
+    print(f"wrote {', '.join(str(p) for p in paths)}", file=sys.stderr)
+    return 0
+
+
+def _garak_shims(args, action) -> int:
+    from redline.garak import install
+
+    package_dir = install.find_garak()
+    if package_dir is None:
+        print("redline: garak is not installed in this environment", file=sys.stderr)
+        return 2
+    code, lines = action(install)(package_dir, dry_run=args.dry_run)
+    for line in lines:
+        print(line)
+    return code
+
+
+def cmd_garak_install(args) -> int:
+    return _garak_shims(args, lambda install: install.install)
+
+
+def cmd_garak_uninstall(args) -> int:
+    return _garak_shims(args, lambda install: install.uninstall)
+
+
 def _grading_options(
     parser, cache_default=PINNED_CACHE, cache_help="file of saved judge grades"
 ) -> None:
@@ -675,6 +743,73 @@ def build_parser() -> argparse.ArgumentParser:
         help="test recall on the low end of its 95%% interval and false alarms on the high end",
     )
     gate.set_defaults(func=cmd_gate)
+
+    grade = sub.add_parser(
+        "garak-grade",
+        help="grade the outputs in a garak report against your rules",
+        description=(
+            "Read a garak report file and check each output against the rules. Without "
+            "--train every rule is checked with no examples, a mode that is unmeasured."
+        ),
+    )
+    grade.add_argument("report", help="a garak report file, one JSON entry per line")
+    grade.add_argument("--rules", required=True, help="YAML file containing your rules")
+    grade.add_argument("--out", required=True, help="folder for the three output files")
+    grade.add_argument(
+        "--user-type",
+        default="anonymous",
+        help="the user type every output was given to (default: anonymous)",
+    )
+    grade.add_argument(
+        "--judge",
+        choices=["live", "replay"],
+        default="live",
+        help="call a judge model (live) or read saved grades from --cache (default: live)",
+    )
+    grade.add_argument(
+        "--cache", default=None, help="file of saved judge grades (default: none)"
+    )
+    grade.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="check this many of the closest rules (default: every rule, or 1 with --train)",
+    )
+    grade.add_argument(
+        "--train",
+        default=None,
+        help="labeled examples; with them the calibrated mode is used instead of rules only",
+    )
+    grade.add_argument(
+        "--embedder",
+        choices=["minilm", "tfidf"],
+        default=None,
+        help="how text is matched to rules (default: tfidf, or minilm with --train)",
+    )
+    grade.add_argument(
+        "--missing-grade",
+        choices=["stop", "review"],
+        default="stop",
+        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
+    )
+    grade.set_defaults(func=cmd_garak_grade)
+
+    for name, func, text in (
+        ("garak-install", cmd_garak_install, "let the garak in this environment load Redline"),
+        ("garak-uninstall", cmd_garak_uninstall, "remove the files garak-install wrote"),
+    ):
+        shim = sub.add_parser(
+            name,
+            help=text,
+            description=(
+                "garak loads plugins only from inside its own package. garak-install writes "
+                "one small file each for the Redline detector and probe into it, and "
+                "garak-uninstall removes them. A file that is not the Redline shim is "
+                "never changed."
+            ),
+        )
+        shim.add_argument("--dry-run", action="store_true", help="print what would be done")
+        shim.set_defaults(func=func)
     return parser
 
 
