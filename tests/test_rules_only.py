@@ -171,7 +171,22 @@ def test_run_rules_only_reads_no_train_file(rules_data, write_rules, tmp_path):
     assert meta["mode"] == "rules_only"
     assert meta["embedder"] == "tfidf"
     assert meta["top_k"] is None
+    assert meta["k"] is None
     assert meta["no_saved_grade_lookups"] == 2
+
+
+def test_a_kmeans_run_still_records_k_and_a_rules_only_run_records_none(
+    rules_data, write_rules, tmp_path
+):
+    out = tmp_path / "out"
+    base = ["run", "--data", "data/holdout.jsonl", "--judge", "replay", "--embedder", "tfidf"]
+    base += ["--missing-grade", "review", "--out", str(out)]
+    assert cli.main([*base, "--router", "kmeans", "--k", "5"]) == 0
+    meta = json.loads((out / "holdout_meta.json").read_text())
+    assert (meta["router"], meta["k"]) == ("kmeans5", 5)
+    assert "mode" not in meta
+    assert cli.main(base) == 0
+    assert json.loads((out / "holdout_meta.json").read_text())["k"] is None
 
 
 def test_run_rules_only_replay_needs_a_cache(rules_data, write_rules, tmp_path, capsys):

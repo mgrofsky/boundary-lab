@@ -207,7 +207,7 @@ def cmd_run(args) -> int:
         "data": Path(args.data).as_posix(),
         "router": router.name,
         "embedder": grader.embedder_name,
-        "k": args.k if router.name == "kmeans" else None,
+        "k": args.k if args.router == "kmeans" and not args.rules_only else None,
         "short_circuit": args.short_circuit,
         "purity": args.purity,
         "min_members": args.min_members,
