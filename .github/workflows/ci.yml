@@ -44,6 +44,20 @@ jobs:
       - run: pytest -q -m garak
         env:
           REDLINE_GARAK_E2E: "1"
+  redline-plain-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # Redline with no extras: rules only mode must work, and torch must not be there.
+      - run: |
+          python -m venv /tmp/plain
+          /tmp/plain/bin/pip install .
+          cd /tmp
+          /tmp/plain/bin/python "$GITHUB_WORKSPACE/tests/check_plain_install.py"
   latch:
     runs-on: ubuntu-latest
     timeout-minutes: 15

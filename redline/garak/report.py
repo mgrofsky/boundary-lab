@@ -6,11 +6,16 @@ JSON object per line, where an attempt entry holds the prompt, the outputs and t
 
 import json
 import logging
+import os
+import secrets
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 
-from redline import api, pipeline
+from redline import api, pipeline, policy
 from redline.intervals import interval
+from redline.judge import Judge, ReplayJudge
 
 _log = logging.getLogger(__name__)
 # Where nothing has set logging up, Python prints a warning on stderr itself. This
@@ -46,6 +51,12 @@ UNAVAILABLE = {
     "reason_text": "The judge model could not be reached, so this output was not evaluated.",
 }
 OUTPUT_FILES = ("garak_graded.jsonl", "garak_summary.json", "garak_evals.jsonl")
+# Why grade_report ended before the last output, under "stopped" in the summary.
+# cancelled: should_stop said so. cap: max_judge_calls. deadline: deadline_seconds.
+# judge_unavailable: the judge was given up on. error: the judge or on_progress raised.
+STOP_REASONS = ("cancelled", "cap", "deadline", "judge_unavailable", "error")
+# The clock the deadline is measured on. Tests replace it.
+_clock = time.monotonic
 EMPTY = {
     "outcome": "pass",
     "routed_rule": None,
@@ -57,6 +68,10 @@ EMPTY = {
 
 class ReportError(ValueError):
     """The report file cannot be read as a garak report."""
+
+
+class OutputError(OSError):
+    """The folder for the output files cannot be made or written."""
 
 
 class JudgeWatch:
@@ -131,18 +146,12 @@ def build_grader(
     JudgeWatch. name starts the lines it writes and lead goes before them.
     """
     options = {"cache": cache, "missing_grade": missing_grade, "assistant_role": ASSISTANT_ROLE}
+    embedder = embedder or default_embedder(train)
     if train is None:
-        grader = api.Grader.from_rules(
-            rules, judge, top_k=top_k, embedder=embedder or "tfidf", **options
-        )
+        grader = api.Grader.from_rules(rules, judge, top_k=top_k, embedder=embedder, **options)
     else:
         grader = api.Grader(
-            rules=rules,
-            train=train,
-            judge=judge,
-            embedder=embedder or "minilm",
-            top_k=top_k or 1,
-            **options,
+            rules=rules, train=train, judge=judge, embedder=embedder, top_k=top_k or 1, **options
         )
     if judge is not None:
         # The Grader has set the judge up by now, so the watch goes on last.
@@ -248,51 +257,20 @@ def read_attempts(path) -> list[dict]:
     return list(kept.values())
 
 
-def grade_attempts(attempts: list[dict], grader, user_type: str) -> tuple[list[dict], dict]:
-    """Grade every output of every attempt.
+def _counts(rows: list[dict], skipped: int, not_graded: int = 0) -> dict:
+    """Count outcomes. Outputs that were not evaluated are counted apart from the rest.
 
-    Returns one row per output that has text, and the count of outputs with none per probe.
-    An output the judge could not be reached for gets a row too, with the outcome
-    not_evaluated.
+    not_graded is how many outputs a run that stopped early never reached.
     """
-    rows, skipped = [], {}
-    for entry in attempts:
-        probe = entry["probe_classname"]
-        skipped.setdefault(probe, 0)
-        prompt = prompt_text(entry)
-        for index, text in enumerate(output_texts(entry)):
-            graded = grade_text(grader, prompt, text, user_type)
-            if graded is None:
-                skipped[probe] += 1
-                continue
-            row = {
-                "uuid": entry["uuid"],
-                "seq": entry["seq"],
-                "output": index,
-                "probe": probe,
-                "outcome": graded["outcome"],
-                "routed_rule": graded["routed_rule"],
-                "decided_by": graded["decided_by"],
-                "reason_code": graded["reason_code"],
-                "reason_text": graded["reason_text"],
-            }
-            for key in ("rules_checked", "outcomes_by_rule", "short_circuit", "mode"):
-                if key in graded:
-                    row[key] = graded[key]
-            rows.append(row)
-    return rows, skipped
-
-
-def _counts(rows: list[dict], skipped: int) -> dict:
-    """Count outcomes. Outputs that were not evaluated are counted apart from the rest."""
     unavailable = sum(r["outcome"] == NOT_EVALUATED for r in rows)
     rows = [r for r in rows if r["outcome"] != NOT_EVALUATED]
     graded = len(rows)
     judged = [r for r in rows if r["reason_code"] != EMPTY["reason_code"]]
     return {
-        "outputs": graded + unavailable + skipped,
+        "outputs": graded + unavailable + skipped + not_graded,
         "skipped_no_text": skipped,
         "judge_unavailable": unavailable,
+        "not_graded": not_graded,
         "graded": graded,
         "empty": graded - len(judged),
         "rule_breaks": interval(sum(r["outcome"] == "fail" for r in rows), graded),
@@ -302,15 +280,32 @@ def _counts(rows: list[dict], skipped: int) -> dict:
     }
 
 
-def summarize(rows: list[dict], skipped: dict) -> dict:
-    """Count outcomes overall and per probe, each with a 95 percent Wilson interval."""
+def summarize(
+    rows: list[dict],
+    skipped: dict,
+    not_graded: dict | None = None,
+    unread: dict | None = None,
+) -> dict:
+    """Count outcomes overall and per probe, each with a 95 percent Wilson interval.
+
+    skipped holds, per probe, the outputs that have no text. unread holds the outputs
+    of attempts sent in another language with no back translation. Both are counted
+    under skipped_no_text, since neither has text that can be read. not_graded holds
+    the outputs a run that stopped early never reached.
+
+    In every block of counts, outputs is graded plus judge_unavailable plus
+    skipped_no_text plus not_graded. graded is rule_breaks plus sent_to_review plus
+    passed, and empty is the part of passed that was blank.
+    """
+    left, unread = not_graded or {}, unread or {}
+    no_text = {probe: count + unread.get(probe, 0) for probe, count in skipped.items()}
     probes = {
-        probe: _counts([r for r in rows if r["probe"] == probe], skipped[probe])
+        probe: _counts([r for r in rows if r["probe"] == probe], no_text[probe], left.get(probe, 0))
         for probe in skipped
     }
     return {
         "detector": DETECTOR,
-        "overall": _counts(rows, sum(skipped.values())),
+        "overall": _counts(rows, sum(no_text.values()), sum(left.values())),
         "probes": probes,
     }
 
@@ -320,18 +315,22 @@ def eval_entries(
     skipped: dict,
     review_score: float = REVIEW_SCORE,
     eval_threshold: float = EVAL_THRESHOLD,
+    not_graded: dict | None = None,
 ) -> list[dict]:
     """One entry per probe, with the counting fields of the eval entries garak writes.
 
     The scores are the detector's, with a review at review_score. As in garak's
     ThresholdEvaluator, a score below eval_threshold passes and any other score fails,
     so a score equal to the threshold is a fail. An output with no text is a none, and
-    so is one that was not evaluated. Each entry records the two values it was made with.
+    so is one that was not evaluated or that a run which stopped early never reached.
+    An output of an attempt sent in another language with no back translation is left
+    out, as garak leaves it out: its detector is given nothing to score for it.
+    Each entry records the two values it was made with.
     """
     entries = []
     for probe, no_text in skipped.items():
         scores = [score(r["outcome"], review_score) for r in rows if r["probe"] == probe]
-        nones = no_text + scores.count(None)
+        nones = no_text + scores.count(None) + (not_graded or {}).get(probe, 0)
         scores = [s for s in scores if s is not None]
         passed = sum(s < eval_threshold for s in scores)
         entries.append(
@@ -351,22 +350,416 @@ def eval_entries(
     return entries
 
 
-def write(
-    out_dir,
-    rows: list[dict],
-    skipped: dict,
-    extra: dict | None = None,
-    review_score: float = REVIEW_SCORE,
-    eval_threshold: float = EVAL_THRESHOLD,
-) -> list[Path]:
-    """Write garak_graded.jsonl, garak_summary.json and garak_evals.jsonl under out_dir."""
+def _write_together(files: list[tuple[Path, str]]) -> None:
+    """Write several files so that a reader never sees part of one.
+
+    Every file is first written whole under a temporary name beside it. Only then are
+    they renamed into place, in the order given. A failure before the first rename
+    leaves every old file as it was. No temporary file is left behind. Each file gets
+    the access rights any new file here would get.
+    """
+    made = []
+    try:
+        for path, text in files:
+            temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+            made.append(temporary)
+            with temporary.open("x") as f:
+                f.write(text)
+        for temporary, (path, _) in zip(made, files):
+            os.replace(temporary, path)
+    except BaseException:
+        for temporary in made:
+            temporary.unlink(missing_ok=True)
+        raise
+
+
+def _write_files(out_dir, rows: list[dict], summary: dict, entries: list[dict]) -> list[Path]:
+    """Write the three output files. The summary is renamed into place last.
+
+    So a summary file on disk means the other two beside it are from the same run or
+    a later one, never an earlier one.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    graded, summary, evals = (out_dir / name for name in OUTPUT_FILES)
-    graded.write_text("".join(json.dumps(r) + "\n" for r in rows))
-    scoring = {"review_score": review_score, "eval_threshold": eval_threshold}
-    counts = {**(extra or {}), **scoring, **summarize(rows, skipped)}
-    summary.write_text(json.dumps(counts, indent=2) + "\n")
-    entries = eval_entries(rows, skipped, review_score, eval_threshold)
-    evals.write_text("".join(json.dumps(e) + "\n" for e in entries))
-    return [graded, summary, evals]
+    graded, summary_path, evals = (out_dir / name for name in OUTPUT_FILES)
+    _write_together(
+        [
+            (graded, "".join(json.dumps(r) + "\n" for r in rows)),
+            (evals, "".join(json.dumps(e) + "\n" for e in entries)),
+            (summary_path, json.dumps(summary, indent=2) + "\n"),
+        ]
+    )
+    return [graded, summary_path, evals]
+
+
+def check_out_dir(out_dir: str | os.PathLike) -> None:
+    """Make the output folder and prove a file can be written in it.
+
+    out_dir is the folder, which may not exist yet. Its parents are made too. A small
+    file is written there and removed again, so nothing is left behind.
+
+    Raises OutputError, an OSError, when the folder cannot be made or written.
+    """
+    out_dir = Path(out_dir)
+    probe = out_dir / f".redline.{secrets.token_hex(8)}.tmp"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with probe.open("x"):
+            pass
+        probe.unlink()
+    except OSError as exc:
+        raise OutputError(
+            f"{out_dir}: the output folder cannot be written, so nothing was graded "
+            f"({type(exc).__name__}: {exc.strerror or exc})"
+        ) from exc
+
+
+class _Counted:
+    """Count the calls made to a judge. Everything else is the judge's own."""
+
+    def __init__(self, judge):
+        self.judge = judge
+        self.calls = 0
+
+    def grade(self, *args) -> dict:
+        self.calls += 1
+        return self.judge.grade(*args)
+
+
+def _calls_per_answer(rule_count: int, top_k: int | None, train=None) -> int:
+    """The most judge calls one answer can need: one per rule checked.
+
+    Rules only mode checks every rule unless top_k says fewer. With labeled examples
+    one rule is checked unless top_k says more.
+    """
+    if train is not None and top_k is None:
+        top_k = 1
+    return rule_count if top_k is None else min(top_k, rule_count)
+
+
+def _unread(entry: dict) -> bool:
+    """True for an attempt sent in another language whose outputs were not put back."""
+    return bool(entry["outputs"]) and not output_texts(entry)
+
+
+def _output_counts(attempts: list[dict]) -> dict:
+    """Count the outputs of a report by what grading does with each."""
+    counts = {"answers": 0, "no_text": 0, "blank": 0, "wrong_language": 0}
+    for entry in attempts:
+        if _unread(entry):
+            counts["wrong_language"] += len(entry["outputs"])
+        for text in output_texts(entry):
+            if text is None:
+                counts["no_text"] += 1
+            elif not text.strip():
+                counts["blank"] += 1
+            else:
+                counts["answers"] += 1
+    return counts
+
+
+def check_score(name: str, value) -> None:
+    """Refuse a score option that is not a number from 0 to 1.
+
+    The command checks its two options the same way. Outside that range the eval
+    entries mislead: a threshold above 1 counts a clear break as passed.
+    """
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if not ok or not 0.0 <= value <= 1.0:  # a NaN fails the comparison too
+        raise ValueError(f"{name} must be a number from 0 to 1, got {value!r:.80}")
+
+
+def plan(
+    report_path: str | os.PathLike,
+    rules: api.Rules,
+    top_k: int | None = None,
+    train: str | os.PathLike | None = None,
+    user_type: str | None = None,
+    max_judge_calls: int | None = None,
+    deadline_seconds: float | None = None,
+) -> tuple[policy.Policy, list[dict], int]:
+    """Check everything a run checks before it sets up a judge or an embedder.
+
+    The estimate, the dry run of the command and grade_report all come through here,
+    so they refuse the same input and count the same calls. Returns the loaded rules,
+    the attempts in the report, and the most judge calls one answer can need.
+
+    The arguments mean what they mean for grade_report. user_type None skips the
+    check of the user type, and the two limits are only checked for being 0 or more.
+
+    Raises ValueError for a bad number, rules that do not load or hold no rule, a user
+    type the rules do not declare, and a train file with a bad line, no rows or a row
+    for a rule the rules do not have. ReportError, a ValueError, is raised for a bad
+    report. OSError is raised for a file that cannot be read.
+    """
+    if max_judge_calls is not None and max_judge_calls < 0:
+        raise ValueError(f"max_judge_calls must be 0 or more, got {max_judge_calls}")
+    if deadline_seconds is not None and deadline_seconds < 0:
+        raise ValueError(f"deadline_seconds must be 0 or more, got {deadline_seconds}")
+    if top_k is not None and top_k < 1:
+        raise ValueError(f"top_k must be at least 1, got {top_k}")
+    loaded, source = api.read_rules(rules)
+    api.check_rules(loaded, source)
+    if user_type is not None:
+        api.check_user_type(loaded.user_types, user_type)
+    if train is not None:
+        api.read_train(train, loaded.rules)
+    attempts = read_attempts(report_path)
+    return loaded, attempts, _calls_per_answer(len(loaded.rules), top_k, train)
+
+
+def estimate_report_calls(
+    report_path: str | os.PathLike,
+    rules: api.Rules,
+    top_k: int | None = None,
+    train: str | os.PathLike | None = None,
+) -> dict:
+    """Count what grading a report would cost, without a judge.
+
+    report_path is a garak report file. rules is anything Grader.from_rules takes: a
+    path, a Policy or rules data. top_k and train mean what they mean for
+    grade_report, and the same values give the same number as that run's
+    estimated_calls. train is read and checked, and no embedder is set up.
+
+    Returns a mapping with four keys. answers is how many outputs would be sent to
+    the judge. skipped is how many would not, and skipped_by_reason splits it into
+    no_text, blank, and wrong_language for an output whose prompt was not sent in
+    English and has no back translation. judge_calls is the largest number of calls
+    the run can make: answers times the rules checked for each. That is every rule,
+    or the top_k closest. With train it is one rule unless top_k says more.
+
+    answers plus skipped is the outputs count of the run's summary. Raises what plan
+    raises.
+    """
+    _, attempts, per_answer = plan(report_path, rules, top_k, train)
+    return estimate(attempts, per_answer)
+
+
+def estimate(attempts: list[dict], per_answer: int) -> dict:
+    """What estimate_report_calls returns, from the two values plan gives."""
+    counts = _output_counts(attempts)
+    answers = counts.pop("answers")
+    return {
+        "answers": answers,
+        "skipped": sum(counts.values()),
+        "skipped_by_reason": counts,
+        "judge_calls": answers * per_answer,
+    }
+
+
+def default_embedder(train: str | os.PathLike | None) -> str:
+    """Return the name of the embedder a garak path uses when none is named.
+
+    train is the labeled examples file, or None. Without one the name is tfidf, which
+    needs no model. With one it is minilm, the calibrated mode's default.
+    """
+    return "tfidf" if train is None else "minilm"
+
+
+def _row(entry: dict, index: int, graded: dict) -> dict:
+    row = {
+        "uuid": entry["uuid"],
+        "seq": entry["seq"],
+        "output": index,
+        "probe": entry["probe_classname"],
+        "outcome": graded["outcome"],
+        "routed_rule": graded["routed_rule"],
+        "decided_by": graded["decided_by"],
+        "reason_code": graded["reason_code"],
+        "reason_text": graded["reason_text"],
+    }
+    for key in ("rules_checked", "outcomes_by_rule", "short_circuit", "mode"):
+        if key in graded:
+            row[key] = graded[key]
+    return row
+
+
+class _Run:
+    """One pass over a report's outputs that can stop early. It holds what was settled."""
+
+    def __init__(self, attempts, grader, counted, user_type, per_answer):
+        self.attempts = attempts
+        self.grader = grader
+        self.counted = counted
+        self.user_type = user_type
+        self.per_answer = per_answer
+        self.rows = []
+        # Every probe is listed from the start, so one the run never reaches still counts.
+        # skipped is outputs with no text. unread is outputs in another language.
+        self.skipped = {entry["probe_classname"]: 0 for entry in attempts}
+        self.unread = dict.fromkeys(self.skipped, 0)
+        self.totals = dict.fromkeys(self.skipped, 0)
+        self.unreadable = dict.fromkeys(self.skipped, 0)
+        for entry in attempts:
+            self.totals[entry["probe_classname"]] += len(self._texts(entry))
+            if _unread(entry):
+                self.unreadable[entry["probe_classname"]] += len(entry["outputs"])
+        self.total = sum(self.totals.values())
+        self.done = 0
+        self.stopped = None
+
+    @staticmethod
+    def _texts(entry) -> list[str | None]:
+        """The text of each output the run walks. One that cannot be read has none."""
+        return [None] * len(entry["outputs"]) if _unread(entry) else output_texts(entry)
+
+    def _why_stop(self, text, should_stop, max_judge_calls, deadline) -> str | None:
+        if should_stop is not None and should_stop():
+            return "cancelled"
+        if deadline is not None and _clock() >= deadline:
+            return "deadline"
+        if max_judge_calls is None or text is None or not text.strip():
+            return None
+        # An answer is graded in full or not started, so the most it could need must fit.
+        if self.counted.calls + self.per_answer > max_judge_calls:
+            return "cap"
+        return None
+
+    def go(self, on_progress, should_stop, max_judge_calls, deadline) -> None:
+        """Settle outputs in order until the last one or the first reason to stop.
+
+        Once the run stops, no later output is settled, even one that needs no call.
+        """
+        for entry in self.attempts:
+            prompt, probe = prompt_text(entry), entry["probe_classname"]
+            no_text = self.unread if _unread(entry) else self.skipped
+            for index, text in enumerate(self._texts(entry)):
+                self.stopped = self._why_stop(text, should_stop, max_judge_calls, deadline)
+                if self.stopped:
+                    return
+                graded = grade_text(self.grader, prompt, text, self.user_type)
+                row = None if graded is None else _row(entry, index, graded)
+                if row is None:
+                    no_text[probe] += 1
+                else:
+                    self.rows.append(row)
+                self.done += 1
+                if on_progress is not None:
+                    on_progress(self.done, self.total, row)
+
+    def not_graded(self) -> dict:
+        """Per probe, the outputs the run did not reach."""
+        left = dict(self.totals)
+        for counts in (self.skipped, self.unread):
+            for probe, count in counts.items():
+                left[probe] -= count
+        for row in self.rows:
+            left[row["probe"]] -= 1
+        return left
+
+    def not_scored(self) -> dict:
+        """Per probe, the outputs not reached that an eval entry counts.
+
+        An output that cannot be read is in no eval entry, reached or not.
+        """
+        left = self.not_graded()
+        for probe, count in self.unreadable.items():
+            left[probe] -= count - self.unread[probe]
+        return left
+
+
+def grade_report(
+    report_path: str | os.PathLike,
+    rules: api.Rules,
+    judge: Judge,
+    *,
+    out_dir: str | os.PathLike | None = None,
+    user_type: str = "anonymous",
+    top_k: int | None = None,
+    review_score: float = REVIEW_SCORE,
+    eval_threshold: float = EVAL_THRESHOLD,
+    train: str | os.PathLike | None = None,
+    max_judge_calls: int | None = None,
+    deadline_seconds: float | None = None,
+    on_progress: Callable[[int, int, dict | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    embedder: str | object | None = None,
+) -> dict:
+    """Grade the outputs in a garak report and return the summary. garak is not needed.
+
+    report_path is a garak report file. rules is a path, a Policy or rules data, as
+    for Grader.from_rules. judge is a judge object from redline.judge, or your own.
+    It is not changed, so one judge can serve many runs and many tenants.
+
+    out_dir is a folder for the three files of redline garak-grade. It is made, and
+    proved writable, before the first judge call. None writes nothing. user_type is
+    the user type every output was given to. top_k None checks every rule for each
+    answer, or one rule with train. review_score and eval_threshold are the two
+    values the eval entries are made with. train is a labeled examples file, which
+    selects the calibrated mode. embedder is "tfidf", "minilm" or your own object,
+    and None means tfidf, or minilm with train.
+
+    max_judge_calls is a hard cap on calls to the judge object. An answer is started
+    only when the most calls it could need still fit, so the cap is never passed.
+    deadline_seconds is a limit on the whole run, checked before each output.
+    should_stop() is asked before each output, and true ends the run.
+    on_progress(done, total, row) is called after each output is settled. row is the
+    graded row, or None for an output with no text.
+
+    Returns the summary file's content plus two keys the file does not have: rows,
+    the graded rows, and evals, the eval entries. A run that ends early still
+    returns, and still writes whole files. The summary says why under stopped, see
+    STOP_REASONS. Once a run has stopped, no later output is settled. Each one is
+    counted under not_graded with the reason, even one that would need no call.
+
+    Raises ValueError for a bad option, bad rules, an undeclared user type or a bad
+    report, and OutputError, an OSError, for an out_dir that cannot be written. All
+    of those come before the first judge call. Anything raised by the judge or by
+    on_progress, an interrupt included, ends the run with stopped "error": the files
+    are written, then it is raised again. If that write fails too, the write error is
+    raised from the first one.
+    """
+    if judge is None:
+        raise ValueError("grade_report needs a judge object, such as ChatEndpointJudge")
+    check_score("review_score", review_score)
+    check_score("eval_threshold", eval_threshold)
+    loaded, attempts, per_answer = plan(
+        report_path, rules, top_k, train, user_type, max_judge_calls, deadline_seconds
+    )
+    grader = build_grader(loaded, judge, train=train, top_k=top_k, embedder=embedder)
+    if out_dir is not None:
+        check_out_dir(out_dir)
+    # The count sits under the watch, so a call the watch does not make is not counted.
+    watch = grader.judge
+    counted = watch.judge = _Counted(watch.judge)
+    run = _Run(attempts, grader, counted, user_type, per_answer)
+    deadline = None if deadline_seconds is None else _clock() + deadline_seconds
+    error = None
+    try:
+        run.go(on_progress, should_stop, max_judge_calls, deadline)
+    except BaseException as exc:  # noqa: BLE001 (the files are written, then it is raised again)
+        error = exc
+        run.stopped = "error"
+    if run.stopped is None and watch.stopped:
+        run.stopped = "judge_unavailable"
+    left = run.not_graded()
+    count = sum(left.values())
+    summary = {
+        "report": Path(report_path).name,
+        "mode": grader.mode or "calibrated",
+        "user_type": user_type,
+        "judge": "replay" if isinstance(judge, ReplayJudge) else "live",
+        "top_k": top_k,
+        "assistant_role": grader.assistant_role,
+        "attempts": len(attempts),
+        "attempts_without_back_translation": without_back_translation(attempts),
+        "review_score": review_score,
+        "eval_threshold": eval_threshold,
+        **summarize(run.rows, run.skipped, left, run.unread),
+        "stopped": run.stopped,
+        "not_graded": {"count": count, "reasons": {run.stopped: count} if count else {}},
+        "judge_calls_made": counted.calls,
+        "estimated_calls": _output_counts(attempts)["answers"] * per_answer,
+    }
+    entries = eval_entries(run.rows, run.skipped, review_score, eval_threshold, run.not_scored())
+    if out_dir is not None:
+        try:
+            _write_files(out_dir, run.rows, summary, entries)
+        except Exception as write_error:
+            if error is not None:
+                # Neither is lost: the write error carries the one that ended the run.
+                raise write_error from error
+            raise
+    if error is not None:
+        raise error
+    return {**summary, "rows": run.rows, "evals": entries}

@@ -40,7 +40,7 @@ def test_cache_line_has_model_and_rule_id(tmp_path, pay_rule):
     live = ChatEndpointJudge("http://unused", "m", "k", transport=echo(RAW), cache_path=cache)
     live.grade(pay_rule, EXAMPLES, *ARGS)
     entry = json.loads(cache.read_text().splitlines()[0])
-    assert sorted(entry) == ["answer", "key", "model", "rule_id"]
+    assert sorted(entry) == ["answer", "key", "model", "rule_id", "version"]
     assert (entry["model"], entry["rule_id"]) == ("m", "PAY-01")
     assert ReplayJudge(cache).models == {"m"}
 

@@ -1,8 +1,14 @@
 """Turn text into lists of numbers, called embeddings, so the router can compare it."""
 
+import importlib.util
+
 import numpy as np
 
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+class MissingExtra(ImportError):
+    """An embedder was asked for and the package it needs is not installed."""
 
 
 def text(prompt: str, response: str) -> str:
@@ -16,6 +22,14 @@ class Embedder:
     name = "minilm"
 
     def __init__(self, model_name: str = DEFAULT_MODEL):
+        # Checked here, before any work is done, and without loading the library.
+        if importlib.util.find_spec("sentence_transformers") is None:
+            raise MissingExtra(
+                "the minilm embedder needs sentence-transformers, which is not installed. "
+                'From a checkout, install it with: pip install -e ".[minilm]". From the '
+                "repository, where the package is named boundary-redline: "
+                'pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"'
+            )
         self.model_name = model_name
         self._model = None
 
@@ -48,7 +62,12 @@ class TfidfEmbedder:
         # Imported here so the default embedder never pays for it.
         from sklearn.feature_extraction.text import TfidfVectorizer
 
-        self._vectorizer = TfidfVectorizer().fit(list(texts))
+        try:
+            self._vectorizer = TfidfVectorizer().fit(list(texts))
+        except ValueError:
+            # No text holds a word of two or more letters, so there is nothing to match
+            # on. Every text then encodes to 0 and no text is closer to one than another.
+            self._vectorizer = _NoWords()
         return self
 
     def encode(self, texts: list[str]) -> np.ndarray:
@@ -58,6 +77,15 @@ class TfidfEmbedder:
         vectors = self._vectorizer.transform(list(texts)).toarray().astype(np.float32)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         return np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
+
+
+class _NoWords:
+    """Stands in for a vectorizer that found no words: one column, always 0."""
+
+    def transform(self, texts):
+        from scipy.sparse import csr_matrix
+
+        return csr_matrix((len(texts), 1), dtype=np.float32)
 
 
 EMBEDDERS = {"minilm": Embedder, "tfidf": TfidfEmbedder}

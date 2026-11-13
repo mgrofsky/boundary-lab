@@ -32,7 +32,7 @@ The `rig_judge` metric reports Redline's check. The overall promptfoo test resul
 Install the project first so promptfoo's Python check can import it. promptfoo uses whichever `python` command is on your path. If that isn't the environment where you installed Redline, set `PROMPTFOO_PYTHON` to the path of the right Python executable.
 
 ```sh
-pip install -e .
+pip install -e ".[minilm]"
 cd promptfoo
 REDLINE_JUDGE=replay promptfoo eval -c promptfooconfig.replay.yaml
 promptfoo view

@@ -1,0 +1,2 @@
+{"entry_type": "eval", "probe": "test.Test", "detector": "redline.PolicyRules", "passed": 1, "fails": 2, "nones": 1, "total_evaluated": 3, "total_processed": 4, "review_score": 0.2, "eval_threshold": 0.5}
+{"entry_type": "eval", "probe": "test.Blank", "detector": "redline.PolicyRules", "passed": 0, "fails": 1, "nones": 0, "total_evaluated": 1, "total_processed": 1, "review_score": 0.2, "eval_threshold": 0.5}

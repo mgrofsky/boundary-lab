@@ -48,7 +48,7 @@ from redline import cli
 from redline.garak import install, report
 from redline.garak.detector import PolicyRules
 from redline.garak.probe import PromptFile, read_prompts
-from redline.judge import FakeJudge
+from redline.judge import FakeJudge, RoleView
 
 PASS = {"verdict": "pass", "severity": 0.1, "reason_code": "OK", "reason_text": "Fine."}
 FAIL = {"verdict": "fail", "severity": 0.9, "reason_code": "CARD_ECHOED", "reason_text": "Bad."}
@@ -143,7 +143,10 @@ def _detector(rules_file, answers, **params):
 def _live_detector(rules_file, transport, **params):
     """Build the detector as garak would, with only the network call replaced."""
     detector = PolicyRules(config_root=_config_root(rules=str(rules_file), **params))
-    detector.grader.judge.judge.transport = transport
+    # The watch holds the Grader's view of the judge, and the view holds the judge itself.
+    view = detector.grader.judge.judge
+    assert isinstance(view, RoleView) and view.assistant_role == report.ASSISTANT_ROLE
+    view.judge.transport = transport
     return detector
 
 
@@ -465,6 +468,25 @@ def test_a_bad_setting_is_a_configuration_error_with_the_reason_on_stderr(
         PolicyRules(config_root=_config_root(**params))
     [line] = capsys.readouterr().err.splitlines()
     assert line.startswith("redline.PolicyRules: ") and reason in line
+    assert not any(secret in line + str(caught.value) for secret in SECRETS)
+
+
+def test_a_missing_minilm_extra_is_a_configuration_error_that_says_what_to_install(
+    rules_file, judge_env, tmp_path, monkeypatch, capsys
+):
+    # With a train file the detector uses the minilm embedder, which is an extra.
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    train = tmp_path / "train.jsonl"
+    # A row for no rule fits any rules file.
+    row = {"id": "t1", "rule_id": "none", "user_type": "anonymous", "label": "good"}
+    row.update(prompt="hello", response="hi there", reason_code="OK")
+    train.write_text(json.dumps(row) + "\n")
+    with pytest.raises(PluginConfigurationError, match="boundary-redline") as caught:
+        PolicyRules(config_root=_config_root(rules=str(rules_file), train=str(train)))
+    [line] = capsys.readouterr().err.splitlines()
+    assert line.startswith("redline.PolicyRules: the minilm embedder needs sentence-transformers")
+    assert 'pip install -e ".[minilm]"' in line
+    assert "could not load its rules" not in line
     assert not any(secret in line + str(caught.value) for secret in SECRETS)
 
 

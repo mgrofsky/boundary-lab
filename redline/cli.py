@@ -440,9 +440,44 @@ def _from_0_to_1(text: str) -> float:
     return value
 
 
-def cmd_garak_grade(args) -> int:
+def _garak_dry_run(args) -> int:
+    """Print what grading the report would cost. No judge is set up.
+
+    It checks what a real run checks before its first judge call, apart from the
+    judge's own settings and --out: the rules, the user type, the train file, the
+    numbers, the report, and that the embedder can be built.
+    """
+    from redline import embed
     from redline.garak import report
 
+    try:
+        _, attempts, per_answer = report.plan(
+            args.report, args.rules, args.top_k, args.train, args.user_type, args.max_judge_calls
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise SystemExit(f"redline: {exc}") from None
+    # Building an embedder loads no model. It only finds out whether it is installed.
+    embed.make(args.embedder or report.default_embedder(args.train))
+    estimate = report.estimate(attempts, per_answer)
+    reasons = estimate["skipped_by_reason"]
+    print(
+        f"{Path(args.report).name}: {estimate['answers']} answers to grade, "
+        f"{estimate['skipped']} skipped ({reasons['no_text']} with no text, "
+        f"{reasons['blank']} blank, {reasons['wrong_language']} in another language), "
+        f"at most {estimate['judge_calls']} judge calls"
+    )
+    return 0
+
+
+def cmd_garak_grade(args) -> int:
+    from redline.garak import report
+    from redline.judge import MissingSavedGrade, ReplayJudge
+
+    if args.dry_run:
+        return _garak_dry_run(args)
+    if args.out is None:
+        print("redline: garak-grade needs --out, a folder for the three output files", file=sys.stderr)
+        return 2
     if args.judge == "replay" and args.cache is None:
         print(
             "redline: --judge replay needs --cache, a file of saved judge grades", file=sys.stderr
@@ -455,42 +490,34 @@ def cmd_garak_grade(args) -> int:
             file=sys.stderr,
         )
         return 2
-    judge = None
-    if args.judge == "live":
-        judge = _live_judge(args.cache, tries=report.JUDGE_TRIES, backoff=report.JUDGE_BACKOFF)
     try:
-        grader = report.build_grader(
+        if args.judge == "live":
+            judge = _live_judge(args.cache, tries=report.JUDGE_TRIES, backoff=report.JUDGE_BACKOFF)
+        else:
+            judge = ReplayJudge(args.cache, missing=args.missing_grade)
+        result = report.grade_report(
+            args.report,
             args.rules,
             judge,
-            train=args.train,
+            out_dir=args.out,
+            user_type=args.user_type,
             top_k=args.top_k,
-            cache=args.cache,
-            missing_grade=args.missing_grade,
+            review_score=args.review_score,
+            eval_threshold=args.eval_threshold,
+            train=args.train,
+            max_judge_calls=args.max_judge_calls,
             embedder=args.embedder,
         )
-        grader.check_user_type(args.user_type)
-        attempts = report.read_attempts(args.report)
-    except (OSError, TypeError, ValueError) as exc:
-        raise SystemExit(f"redline: {exc}") from None
-    try:
-        rows, skipped = report.grade_attempts(attempts, grader, args.user_type)
-    except KeyError as exc:
+    except MissingSavedGrade as exc:
+        # Only this case gets the hint. Any other KeyError is a fault and is not caught.
         raise SystemExit(
             f"redline: {exc.args[0]}. Pass --missing-grade review to record review and go on."
         ) from None
-    extra = {
-        "report": Path(args.report).name,
-        "mode": grader.mode or "calibrated",
-        "user_type": args.user_type,
-        "judge": args.judge,
-        "top_k": args.top_k,
-        "assistant_role": grader.assistant_role,
-        "attempts": len(attempts),
-        "attempts_without_back_translation": report.without_back_translation(attempts),
-    }
-    paths = report.write(args.out, rows, skipped, extra, args.review_score, args.eval_threshold)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SystemExit(f"redline: {exc}") from None
+    paths = [Path(args.out) / name for name in report.OUTPUT_FILES]
     print(f"wrote {', '.join(str(p) for p in paths)}", file=sys.stderr)
-    untranslated = extra["attempts_without_back_translation"]
+    untranslated = result["attempts_without_back_translation"]
     if untranslated:
         was = "attempt was" if untranslated == 1 else "attempts were"
         print(
@@ -498,7 +525,19 @@ def cmd_garak_grade(args) -> int:
             "and the report holds no back translation of the outputs.",
             file=sys.stderr,
         )
-    unavailable = sum(row["outcome"] == report.NOT_EVALUATED for row in rows)
+    code = 0
+    left = result["not_graded"]["count"]
+    if left:
+        # The cap is the one stop this command can ask for that leaves outputs behind.
+        # Any other one ends in an exception before this line.
+        were = "output was" if left == 1 else "outputs were"
+        print(
+            f"redline: warning: {left} {were} not graded because the run reached "
+            "--max-judge-calls. They are not passes and not hits.",
+            file=sys.stderr,
+        )
+        code = 1
+    unavailable = result["overall"]["judge_unavailable"]
     if unavailable:
         were = "output was" if unavailable == 1 else "outputs were"
         print(
@@ -507,8 +546,8 @@ def cmd_garak_grade(args) -> int:
             "judge answers.",
             file=sys.stderr,
         )
-        return 1
-    return 0
+        code = 1
+    return code
 
 
 def _garak_shims(args, action: str) -> int:
@@ -801,7 +840,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     grade.add_argument("report", help="a garak report file, one JSON entry per line")
     grade.add_argument("--rules", required=True, help="YAML file containing your rules")
-    grade.add_argument("--out", required=True, help="folder for the three output files")
+    grade.add_argument(
+        "--out", default=None, help="folder for the three output files, needed without --dry-run"
+    )
+    grade.add_argument(
+        "--max-judge-calls",
+        type=int,
+        default=None,
+        help="stop before the judge call that would pass this number (default: no limit)",
+    )
+    grade.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print how many answers would be graded and the most judge calls that takes, "
+        "then exit. No judge is called and its settings are not read",
+    )
     grade.add_argument(
         "--user-type",
         default="anonymous",
@@ -871,5 +924,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from redline.embed import MissingExtra
+
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except MissingExtra as exc:
+        print(f"redline: {exc}", file=sys.stderr)
+        return 2

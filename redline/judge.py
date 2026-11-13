@@ -1,10 +1,13 @@
 """Ask a second model to grade one answer against one rule."""
 
 import hashlib
+import inspect
 import json
+import os
 import random
 import re
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Protocol
@@ -25,14 +28,81 @@ UNREACHABLE = (httpx.HTTPError, OSError)
 _sleep = time.sleep
 # What replay does when no saved grade matches: stop the run, or record review.
 MISSING_GRADE = ("stop", "review")
+# The format of a saved grades file. A line with no version is version 1.
+SAVED_GRADES_VERSION = 1
+
+__all__ = [
+    "SAVED_GRADES_VERSION",
+    "ChatEndpointJudge",
+    "FakeJudge",
+    "Judge",
+    "MissingSavedGrade",
+    "ReplayJudge",
+    "RoleView",
+    "build_prompt",
+    "http_transport",
+    "parse_answer",
+    "prompt_key",
+    "read_saved_grades",
+    "select",
+    "valid_codes",
+]
 
 
 class Judge(Protocol):
     def grade(
         self, rule, examples: dict, prompt: str, response: str, user_type: str, stance: str
     ) -> dict:
-        """Return verdict, severity, reason_code, reason_text and raw."""
+        """Return verdict, severity, reason_code, reason_text and raw.
+
+        A judge that builds its own prompt may also take the keyword assistant_role. A
+        Grader whose rules name a role then passes it with every call. A judge whose
+        grade has no such keyword is called with the six values alone.
+        """
         ...
+
+
+def takes_role(judge: object) -> bool:
+    """True when the judge's grade takes the keyword assistant_role.
+
+    judge is any judge object. A Grader asks this once, when it is built, to decide
+    whether to pass its role with each call. A judge with no grade gives False.
+    """
+    try:
+        return "assistant_role" in inspect.signature(judge.grade).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+class RoleView:
+    """One Grader's view of a judge that may be shared: the same judge under one role.
+
+    Every call goes to the judge with this view's role passed beside it. Nothing is
+    written to the judge, so other Graders that hold it are not changed. Anything else
+    asked of the view, such as missing_lookups, is the judge's own. The view has
+    without_cache only when the judge has it, and it then gives a view of that copy
+    under the same role.
+    """
+
+    def __init__(self, judge: Judge, assistant_role: str):
+        self.judge = judge
+        self.assistant_role = assistant_role
+
+    def __getattr__(self, name: str):
+        # Only reached for a name the view does not have itself. A copy that is still
+        # being built has no judge yet, and must not go looking for one here.
+        if name == "judge":
+            raise AttributeError(name)
+        value = getattr(self.judge, name)
+        if name == "without_cache":
+            # The judge's copy that skips saved grades, seen under the same role.
+            return lambda: RoleView(value(), self.assistant_role)
+        return value
+
+    def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
+        return self.judge.grade(
+            rule, examples, prompt, response, user_type, stance, assistant_role=self.assistant_role
+        )
 
 
 def _render_examples(items: list[dict], show_code: bool) -> str:
@@ -108,6 +178,57 @@ Reply with only a JSON object with these keys:
 
 def prompt_key(prompt_text: str) -> str:
     return hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+
+
+class MissingSavedGrade(KeyError):
+    """Replay found no saved grade for an answer and a rule. The message holds the key."""
+
+
+def read_saved_grades(path: str | os.PathLike) -> list[dict]:
+    """Read a saved grades file and return its entries in order.
+
+    path is a file with one JSON object per line. Blank lines are skipped. Each entry
+    has key and answer, and newer ones have model, rule_id and version. An entry with
+    no version is version 1.
+
+    A line that cannot be used raises ValueError with the file and the line number:
+    one that is not valid JSON, such as a last line cut short, one that is not an
+    object, one with no key or no answer, one whose version is not a whole number, and
+    one written by a later format than this code knows. A file that cannot be read
+    raises OSError.
+    """
+    entries = []
+    for number, line in enumerate(Path(path).read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        where = f"{path}: line {number}"
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            raise ValueError(
+                f"{where} is not valid JSON. A line cut short by a crash reads this way"
+            ) from None
+        if not isinstance(entry, dict):
+            raise ValueError(f"{where} is not a JSON object")  # noqa: TRY004
+        missing = [name for name in ("key", "answer") if name not in entry]
+        if missing:
+            raise ValueError(f"{where} has no {' and no '.join(missing)}")
+        if not isinstance(entry["answer"], dict):
+            raise ValueError(f"{where}: answer is not a JSON object")  # noqa: TRY004
+        version = entry.get("version", SAVED_GRADES_VERSION)
+        if isinstance(version, bool) or not isinstance(version, int):
+            kind = "text" if isinstance(version, str) else "value"
+            raise ValueError(  # noqa: TRY004
+                f"{where}: version must be the number {SAVED_GRADES_VERSION}, not the "
+                f"{kind} {version!r:.40}"
+            )
+        if version != SAVED_GRADES_VERSION:
+            raise ValueError(
+                f"{where} is saved grades format version {version}, and this "
+                f"Redline reads version {SAVED_GRADES_VERSION}"
+            )
+        entries.append(entry)
+    return entries
 
 
 def _error(reason_text: str, raw: str) -> dict:
@@ -214,7 +335,18 @@ def http_transport(
     return send
 
 
-class ChatEndpointJudge:
+class _Locked:
+    """Holds a lock for its own state. A copy, or a pickled one read back, gets a new lock."""
+
+    def __getstate__(self) -> dict:
+        return {name: value for name, value in self.__dict__.items() if name != "_lock"}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+
+
+class ChatEndpointJudge(_Locked):
     """Grade answers by sending requests to /chat/completions."""
 
     def __init__(
@@ -229,26 +361,32 @@ class ChatEndpointJudge:
         assistant_role=ASSISTANT_ROLE,
         tries=TRIES,
         backoff=BACKOFF_SECONDS,
+        timeout=60.0,
     ):
         """save False reads saved grades from cache_path but never writes to it.
 
-        assistant_role is what the prompt calls the system being graded. A Grader whose
-        rules file sets assistant_role puts that value here. tries and backoff say how
-        often one request is sent and how long to wait between tries. See http_transport.
-        They are not used with a transport of your own.
+        assistant_role is what the prompt calls the system being graded when a call
+        names no role of its own. A Grader whose rules set a role passes it with each
+        call and leaves this value alone, so one judge can serve many Graders, from
+        several threads. tries and backoff say how often one request is sent and how
+        long to wait between tries. timeout is the seconds one request may take. See
+        http_transport. None of the three is used with a transport of your own. Every
+        request asks for temperature 0.
         """
         self.model = model
         self.save = save
         self.assistant_role = assistant_role
-        self.transport = transport or http_transport(base_url, api_key, tries=tries, backoff=backoff)
+        self.transport = transport or http_transport(
+            base_url, api_key, timeout=timeout, tries=tries, backoff=backoff
+        )
         self.cache_path = Path(cache_path) if cache_path else None
         self.json_mode = json_mode
         self._saved = {}
+        # Held while the saved grades are changed, so two threads cannot mix two lines.
+        self._lock = threading.Lock()
         if self.cache_path and self.cache_path.exists():
-            for line in self.cache_path.read_text().splitlines():
-                if line.strip():
-                    entry = json.loads(line)
-                    self._saved[entry["key"]] = entry["answer"]
+            for entry in read_saved_grades(self.cache_path):
+                self._saved[entry["key"]] = entry["answer"]
 
     def without_cache(self) -> "ChatEndpointJudge":
         """A judge on the same endpoint that sends every request and saves nothing.
@@ -264,14 +402,19 @@ class ChatEndpointJudge:
             assistant_role=self.assistant_role,
         )
 
-    def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
+    def grade(
+        self, rule, examples, prompt, response, user_type, stance, assistant_role=None
+    ) -> dict:
+        """Grade one answer. assistant_role None means the role this judge was built with."""
+        role = self.assistant_role if assistant_role is None else assistant_role
         args = (rule, examples, prompt, response, user_type, stance)
-        key = prompt_key(build_prompt(*args, assistant_role=self.assistant_role))
-        if key in self._saved:
-            return dict(self._saved[key])
+        key = prompt_key(build_prompt(*args, assistant_role=role))
+        saved = self._saved.get(key)
+        if saved is not None:
+            return dict(saved)
         # A fresh check value per call. A reply that doesn't echo it is not trusted.
         nonce = secrets.token_hex(8)
-        prompt_text = build_prompt(*args, nonce, assistant_role=self.assistant_role)
+        prompt_text = build_prompt(*args, nonce, assistant_role=role)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt_text}],
@@ -291,24 +434,29 @@ class ChatEndpointJudge:
         else:
             answer = parse_answer(raw, rule, nonce)
         if self.cache_path and answer["verdict"] in ("pass", "fail"):
-            self._saved[key] = answer
-            if not self.save:
-                return answer
-            with self.cache_path.open("a") as f:
-                f.write(
-                    json.dumps(
-                        {"key": key, "model": self.model, "rule_id": rule.rule_id, "answer": answer}
-                    )
-                    + "\n"
-                )
+            entry = {
+                "key": key,
+                "model": self.model,
+                "rule_id": rule.rule_id,
+                "answer": answer,
+                "version": SAVED_GRADES_VERSION,
+            }
+            with self._lock:
+                self._saved[key] = answer
+                if self.save:
+                    with self.cache_path.open("a") as f:
+                        f.write(json.dumps(entry) + "\n")
         return answer
 
 
-class ReplayJudge:
+class ReplayJudge(_Locked):
     """Grades answers by looking up saved judge answers, so no key or network is needed.
 
-    A missing grade stops the run by default. With missing="review", the answer gets
-    review with the code NO_SAVED_GRADE and the run keeps going.
+    A missing grade stops the run by default: grade raises MissingSavedGrade, a
+    KeyError. With missing="review", the answer gets review with the code
+    NO_SAVED_GRADE and the run keeps going. assistant_role is the
+    role a lookup is made under when the call names none. One ReplayJudge can serve many
+    Graders, and missing_lookups then counts the misses of all of them.
     """
 
     def __init__(self, cache_path, missing: str = "stop", assistant_role: str = ASSISTANT_ROLE):
@@ -318,21 +466,23 @@ class ReplayJudge:
         self.assistant_role = assistant_role
         # Lookups that found no saved grade, counted for every rule checked.
         self.missing_lookups = 0
+        self._lock = threading.Lock()
         self.answers = {}
         self.models = set()
-        for line in Path(cache_path).read_text().splitlines():
-            if line.strip():
-                entry = json.loads(line)
-                self.answers[entry["key"]] = entry["answer"]
-                self.models.add(entry.get("model") or "unknown")
+        for entry in read_saved_grades(cache_path):
+            self.answers[entry["key"]] = entry["answer"]
+            self.models.add(entry.get("model") or "unknown")
 
-    def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
-        text = build_prompt(
-            rule, examples, prompt, response, user_type, stance, assistant_role=self.assistant_role
-        )
+    def grade(
+        self, rule, examples, prompt, response, user_type, stance, assistant_role=None
+    ) -> dict:
+        """Look one grade up. assistant_role None means the role this judge was built with."""
+        role = self.assistant_role if assistant_role is None else assistant_role
+        text = build_prompt(rule, examples, prompt, response, user_type, stance, assistant_role=role)
         key = prompt_key(text)
         if key not in self.answers:
-            self.missing_lookups += 1
+            with self._lock:
+                self.missing_lookups += 1
             if self.missing == "review":
                 return {
                     "verdict": "review",
@@ -341,7 +491,7 @@ class ReplayJudge:
                     "reason_text": "No saved judge grade matches this answer and rule.",
                     "raw": "",
                 }
-            raise KeyError(f"no saved judge answer for key {key}")
+            raise MissingSavedGrade(f"no saved judge answer for key {key}")
         return dict(self.answers[key])
 
 

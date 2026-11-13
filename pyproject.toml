@@ -3,15 +3,14 @@ requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "redline"
-version = "0.4.0"
+name = "boundary-redline"
+version = "0.5.0"
 description = "Check chatbot answers against your rules and see what the checks catch or miss"
 readme = "redline/README.md"
 license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Matt Grofsky" }]
 requires-python = ">=3.11"
 dependencies = [
-    "sentence-transformers>=6.2.0",
     "scikit-learn>=1.9.1",
     "numpy>=2.4.6",
     "pyyaml>=6.0.3",
@@ -19,7 +18,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The default embedder of the calibrated mode. It pulls in torch.
+minilm = [
+    "sentence-transformers>=6.2.0",
+]
 dev = [
+    "sentence-transformers>=6.2.0",
     "pytest>=9.2.0",
     "ruff>=0.17.4",
 ]
