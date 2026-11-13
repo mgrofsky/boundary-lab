@@ -424,6 +424,17 @@ def cmd_gate(args) -> int:
     return 1 if lines else 0
 
 
+def _from_0_to_1(text: str) -> float:
+    """Read an option that must be a number from 0 to 1."""
+    try:
+        value = float(text)
+    except ValueError:
+        value = -1.0
+    if not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError(f"expected a number from 0 to 1, got {text!r}")
+    return value
+
+
 def cmd_garak_grade(args) -> int:
     from redline.garak import report
 
@@ -466,10 +477,20 @@ def cmd_garak_grade(args) -> int:
         "user_type": args.user_type,
         "judge": args.judge,
         "top_k": args.top_k,
+        "assistant_role": grader.assistant_role,
         "attempts": len(attempts),
+        "attempts_without_back_translation": report.without_back_translation(attempts),
     }
-    paths = report.write(args.out, rows, skipped, extra)
+    paths = report.write(args.out, rows, skipped, extra, args.review_score, args.eval_threshold)
     print(f"wrote {', '.join(str(p) for p in paths)}", file=sys.stderr)
+    untranslated = extra["attempts_without_back_translation"]
+    if untranslated:
+        was = "attempt was" if untranslated == 1 else "attempts were"
+        print(
+            f"redline: {untranslated} {was} not graded. The prompt was not sent in English "
+            "and the report holds no back translation of the outputs.",
+            file=sys.stderr,
+        )
     unavailable = sum(row["outcome"] == report.NOT_EVALUATED for row in rows)
     if unavailable:
         were = "output was" if unavailable == 1 else "outputs were"
@@ -798,6 +819,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--train",
         default=None,
         help="labeled examples; with them the calibrated mode is used instead of rules only",
+    )
+    grade.add_argument(
+        "--review-score",
+        type=_from_0_to_1,
+        default=0.5,
+        help="the score of an output sent to review, as given to the detector (default: 0.5)",
+    )
+    grade.add_argument(
+        "--eval-threshold",
+        type=_from_0_to_1,
+        default=0.5,
+        help="garak's eval threshold: a score below it passes (default: 0.5)",
     )
     grade.add_argument(
         "--embedder",

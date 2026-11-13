@@ -162,6 +162,8 @@ def test_eval_entries_use_the_detector_scores(rules_data, write_rules):
         "nones": 1,
         "total_evaluated": 3,
         "total_processed": 4,
+        "review_score": 0.5,
+        "eval_threshold": 0.5,
     }
     assert (blank["probe"], blank["passed"], blank["fails"], blank["nones"]) == (
         "test.Blank",
@@ -270,3 +272,118 @@ def test_garak_grade_reports_a_bad_option_or_rules_file_plainly(rules_data, writ
 def test_the_fixture_names_no_local_path():
     text = FIXTURE.read_text()
     assert "/Users/" not in text and "/private/" not in text and "/home/" not in text
+
+
+# One rule break, one review and one pass. garak passes a score that is below its
+# threshold, so a score equal to the threshold is a fail.
+@pytest.mark.parametrize(
+    ("review_score", "eval_threshold", "passed"),
+    [
+        (0.5, 0.5, 1),
+        (0.3, 0.5, 2),
+        (0.6, 0.5, 1),
+        (0.3, 0.3, 1),
+        (0.6, 0.6, 1),
+        (0.5, 0.6, 2),
+        (0.3, 0.6, 2),
+        (0.6, 0.3, 1),
+        (0.0, 0.0, 0),
+        (1.0, 1.0, 1),
+    ],
+)
+def test_eval_entries_follow_the_review_score_and_the_threshold(
+    rules_data, write_rules, review_score, eval_threshold, passed
+):
+    review = {**PASS, "verdict": "review", "reason_code": "JUDGE_ERROR"}
+    rows, skipped, _ = _graded(rules_data, write_rules, [PASS, FAIL, review, PASS, PASS, PASS])
+    rows = [r for r in rows if r["reason_code"] != "EMPTY_ANSWER"]
+    assert [r["outcome"] for r in rows] == ["fail", "review", "pass"]
+    entries = report.eval_entries(rows, skipped, review_score, eval_threshold)
+    assert sum(e["passed"] for e in entries) == passed
+    assert sum(e["fails"] for e in entries) == 3 - passed
+    assert all(
+        (e["review_score"], e["eval_threshold"]) == (review_score, eval_threshold) for e in entries
+    )
+
+
+def _replay(tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    cache.write_text("")
+    return ["--judge", "replay", "--cache", str(cache), "--missing-grade", "review"]
+
+
+def test_garak_grade_takes_the_review_score_and_the_threshold(rules_data, write_rules, tmp_path):
+    # With no saved grade, the three outputs with words are reviews and the blank one passes.
+    args = _grade_args(tmp_path, write_rules(rules_data), *_replay(tmp_path))
+    out = tmp_path / "out"
+
+    def fails(*more):
+        assert cli.main([*args, *more]) == 0
+        entries = [json.loads(e) for e in (out / "garak_evals.jsonl").read_text().splitlines()]
+        summary = json.loads((out / "garak_summary.json").read_text())
+        assert {(e["review_score"], e["eval_threshold"]) for e in entries} == {
+            (summary["review_score"], summary["eval_threshold"])
+        }
+        return sum(e["fails"] for e in entries), summary["review_score"], summary["eval_threshold"]
+
+    assert fails() == (3, 0.5, 0.5)
+    assert fails("--review-score", "0.3") == (0, 0.3, 0.5)
+    assert fails("--review-score", "0.3", "--eval-threshold", "0.3") == (3, 0.3, 0.3)
+    assert fails("--eval-threshold", "0.6") == (0, 0.5, 0.6)
+    assert fails("--review-score", "0.6", "--eval-threshold", "0.6") == (3, 0.6, 0.6)
+
+
+@pytest.mark.parametrize("option", ["--review-score", "--eval-threshold"])
+@pytest.mark.parametrize("value", ["1.5", "-0.1", "high", "nan"])
+def test_garak_grade_refuses_a_score_outside_0_to_1(
+    rules_data, write_rules, tmp_path, capsys, option, value
+):
+    args = _grade_args(tmp_path, write_rules(rules_data), *_replay(tmp_path))
+    with pytest.raises(SystemExit) as stopped:
+        cli.main([*args, option, value])
+    assert stopped.value.code == 2
+    assert "a number from 0 to 1" in capsys.readouterr().err
+
+
+def _in_french(tmp_path, back_translated):
+    """The fixture with its first attempt sent in French, as garak writes a translated run."""
+    entries = _lines()
+    uuid = next(e["uuid"] for e in entries if e["entry_type"] == "attempt")
+    for entry in entries:
+        if entry.get("uuid") == uuid:
+            entry["prompt"]["turns"][-1]["content"]["lang"] = "fr"
+            entry["reverse_translation_outputs"] = (
+                [{"text": "back in English"}, None] if back_translated else []
+            )
+    return _write(tmp_path, entries)
+
+
+def test_an_attempt_with_no_back_translation_is_counted_and_said(
+    rules_data, write_rules, tmp_path, capsys
+):
+    path = _in_french(tmp_path, back_translated=False)
+    assert report.without_back_translation(report.read_attempts(path)) == 1
+    args = ["garak-grade", str(path), "--rules", str(write_rules(rules_data))]
+    args += ["--out", str(tmp_path / "out"), *_replay(tmp_path)]
+    assert cli.main(args) == 0
+    summary = json.loads((tmp_path / "out" / "garak_summary.json").read_text())
+    assert summary["attempts_without_back_translation"] == 1
+    # Its two outputs were not graded, so three of the five are left.
+    assert summary["overall"]["outputs"] == 3
+    err = capsys.readouterr().err
+    assert "1 attempt was not graded" in err and "back translation" in err
+
+
+def test_a_back_translated_attempt_is_graded_and_nothing_is_said(
+    rules_data, write_rules, tmp_path, capsys
+):
+    path = _in_french(tmp_path, back_translated=True)
+    assert report.without_back_translation(report.read_attempts(path)) == 0
+    assert report.without_back_translation(report.read_attempts(FIXTURE)) == 0
+    args = ["garak-grade", str(path), "--rules", str(write_rules(rules_data))]
+    args += ["--out", str(tmp_path / "out"), *_replay(tmp_path)]
+    assert cli.main(args) == 0
+    summary = json.loads((tmp_path / "out" / "garak_summary.json").read_text())
+    assert summary["attempts_without_back_translation"] == 0
+    assert summary["overall"]["outputs"] == 5
+    assert "back translation" not in capsys.readouterr().err
