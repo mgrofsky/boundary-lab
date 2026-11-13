@@ -12,8 +12,8 @@ from redline import cli
 from redline.garak import install
 
 NAMES = ["detectors/redline.py", "probes/redline.py"]
-# What Redline 0.4.0 wrote, kept here in full so a change to install.py cannot move it.
-SHIM_0_4_0 = {
+# The first shim, a bare import, kept here in full so a change to install.py cannot move it.
+FIRST_SHIM = {
     "detectors/redline.py": '''\
 # Written by "redline garak-install". Remove it with "redline garak-uninstall".
 # garak loads plugins only from inside its own package, so this file makes one
@@ -71,7 +71,7 @@ def _contents(root):
 
 
 def _write_old(package):
-    for name, text in SHIM_0_4_0.items():
+    for name, text in FIRST_SHIM.items():
         (package / name).write_text(text)
 
 
@@ -109,8 +109,8 @@ def test_a_shim_does_not_raise_when_redline_cannot_be_imported(monkeypatch, pack
         assert "PolicyRules" not in scope and "PromptFile" not in scope
 
 
-def test_the_text_0_4_0_wrote_is_known_as_an_earlier_shim():
-    for name, text in SHIM_0_4_0.items():
+def test_the_first_shim_text_is_known_as_an_earlier_shim():
+    for name, text in FIRST_SHIM.items():
         assert text in install.EARLIER[name]
         assert text != install.SHIMS[name]
 
@@ -142,7 +142,7 @@ def test_install_upgrades_an_older_shim_in_place_and_says_so(package):
     _write_old(package)
     code, lines = install.install(package, dry_run=True)
     assert code == 0 and all(line.startswith("would upgrade") for line in lines)
-    assert (package / NAMES[0]).read_text() == SHIM_0_4_0[NAMES[0]]
+    assert (package / NAMES[0]).read_text() == FIRST_SHIM[NAMES[0]]
     code, lines = install.install(package)
     assert code == 0
     assert all(line.startswith(f"upgraded {package}") for line in lines) and len(lines) == 2
@@ -163,7 +163,7 @@ def test_a_shim_with_other_line_endings_is_still_ours(package, ending):
     before = _listing(package)
     current, old = package / NAMES[0], package / NAMES[1]
     current.write_bytes(install.SHIMS[NAMES[0]].replace("\n", ending).encode())
-    old.write_bytes(SHIM_0_4_0[NAMES[1]].replace("\n", ending).encode())
+    old.write_bytes(FIRST_SHIM[NAMES[1]].replace("\n", ending).encode())
     code, lines = install.install(package)
     assert code == 0
     assert lines[0].startswith("already there") and lines[1].startswith("upgraded")
