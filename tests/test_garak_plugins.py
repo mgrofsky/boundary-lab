@@ -441,11 +441,26 @@ def _bad_settings(tmp_path, rules_file):
     }
 
 
-@pytest.mark.parametrize("case", list(_bad_settings(Path("."), Path("rules.yaml"))))
+BAD_SETTINGS = [
+    "no rules parameter",
+    "a rules file that is not there",
+    "a rules file that cannot be read",
+    "a rules file with no rules",
+    "an unknown user type",
+    "a review score above 1",
+    "a review score below 0",
+    "a review score that is not a number",
+    "a review score of none",
+]
+
+
+@pytest.mark.parametrize("case", BAD_SETTINGS)
 def test_a_bad_setting_is_a_configuration_error_with_the_reason_on_stderr(
     rules_file, judge_env, tmp_path, capsys, case
 ):
-    params, reason = _bad_settings(tmp_path, rules_file)[case]
+    cases = _bad_settings(tmp_path, rules_file)
+    assert list(cases) == BAD_SETTINGS
+    params, reason = cases[case]
     with pytest.raises(PluginConfigurationError, match=reason) as caught:
         PolicyRules(config_root=_config_root(**params))
     [line] = capsys.readouterr().err.splitlines()
