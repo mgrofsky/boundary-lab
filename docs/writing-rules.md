@@ -44,6 +44,21 @@ Every name in `allowed_for` must be on that list, or loading the file fails with
 
 The shortcut and the k-means counts group examples by user type. Write examples for each type you declare, or the shortcut will not have enough of them to decide.
 
+## Saying what kind of assistant it is
+
+The judge prompt starts by saying whose answer is being graded. By default it says "a contact center assistant". To change that, set a top level `assistant_role` key next to `rules`:
+
+```yaml
+assistant_role: a customer support assistant
+rules:
+  - rule_id: ACCT-01
+    # the other fields as above
+```
+
+The value is one line of text and includes its article, since it is put into the sentence as written. It only works when the rules sit under a `rules` key. Leave the key out to keep the default, which is the text the saved judge grades in this repository were made with.
+
+The role is part of the judge prompt, so it is part of the key each saved grade is stored under. A cache of grades made under one role does not replay under another. The [garak paths](garak.md) use "an AI assistant" when the rules file sets no role.
+
 ## Writing good and bad examples
 
 Each example is one line of JSON with seven fields: `id`, `rule_id`, `user_type`, `prompt`, `response`, `label`, and `reason_code`. The label is `good` when the answer follows the rule and `bad` when it breaks it. A good example always has the reason code `OK`. A bad one has the code for the way it broke the rule.

@@ -47,3 +47,11 @@ def test_allowed_for_is_checked_against_the_declared_user_types(rules_data, writ
 def test_a_bad_user_types_list_raises(rules_data, write_rules, bad):
     with pytest.raises(ValueError, match="user_types"):
         policy.load_policy(write_rules({"user_types": bad, "rules": rules_data}))
+
+
+def test_a_file_that_is_not_yaml_raises_one_plain_line(tmp_path):
+    path = tmp_path / "rules.yaml"
+    path.write_text("- rule_id: [unclosed\n")
+    with pytest.raises(ValueError, match="is not valid YAML") as caught:
+        policy.load_policy(path)
+    assert "\n" not in str(caught.value) and str(path) in str(caught.value)

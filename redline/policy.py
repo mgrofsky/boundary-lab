@@ -24,10 +24,15 @@ class Rule:
 
 @dataclass
 class Policy:
-    """A loaded rules file: the rules keyed by rule_id, and the user types it declares."""
+    """A loaded rules file: the rules keyed by rule_id, and the user types it declares.
+
+    assistant_role is what the judge prompt calls the assistant, or None when the file
+    does not say.
+    """
 
     rules: dict[str, Rule]
     user_types: list[str]
+    assistant_role: str | None = None
 
 
 def _user_types(path, data) -> list[str]:
@@ -44,17 +49,35 @@ def _user_types(path, data) -> list[str]:
     return list(declared)
 
 
+def _assistant_role(path, data) -> str | None:
+    """Read the optional assistant_role text, such as "a customer support assistant"."""
+    if not (isinstance(data, dict) and "assistant_role" in data):
+        return None
+    role = data["assistant_role"]
+    if not isinstance(role, str) or not role.strip() or "\n" in role.strip():
+        raise ValueError(f"{path}: assistant_role must be one line of text")
+    return role.strip()
+
+
 def load_policy(path) -> Policy:
     """Read a rules file and return its rules and user types.
 
     The file holds a list of rules, either at the top level or under a "rules" key.
     With a "rules" key, an optional "user_types" list names the user types.
     Without it, the user types are anonymous and verified.
+    An optional "assistant_role" text beside "rules" says what the judge prompt calls
+    the assistant.
     A missing field, a repeated rule_id or an unknown user type raises ValueError.
+    So does a file that is not valid YAML.
     A file that is not a list of mappings raises TypeError.
     """
-    data = yaml.safe_load(Path(path).read_text())
+    try:
+        data = yaml.safe_load(Path(path).read_text())
+    except yaml.YAMLError as exc:
+        # The parser's message runs over several lines. Callers print one.
+        raise ValueError(f"{path}: is not valid YAML: {' '.join(str(exc).split())}") from exc
     user_types = _user_types(path, data)
+    assistant_role = _assistant_role(path, data)
     if isinstance(data, dict) and "rules" in data:
         data = data["rules"]
     if not isinstance(data, list):
@@ -84,7 +107,7 @@ def load_policy(path) -> Policy:
             allowed_for=allowed_for,
             reason_codes=list(item["reason_codes"] or []),
         )
-    return Policy(rules, user_types)
+    return Policy(rules, user_types, assistant_role)
 
 
 def load(path) -> dict[str, Rule]:

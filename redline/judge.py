@@ -12,9 +12,16 @@ from typing import Protocol
 import httpx
 
 MAX_EXAMPLES = 6
+# What the judge prompt calls the system whose answers are graded. The saved grades the
+# published results were made from used this text, so it stays the default.
+ASSISTANT_ROLE = "a contact center assistant"
 GATE_CODES = ("NOT_ALLOWED_FOR_USER",)
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 BACKOFF_SECONDS = (2, 4, 8, 16, 32, 32)
+# How many times one request is sent at most, unless the caller says otherwise.
+TRIES = len(BACKOFF_SECONDS)
+# Errors that mean the judge was not reached or refused the call, so it gave no opinion.
+UNREACHABLE = (httpx.HTTPError, OSError)
 _sleep = time.sleep
 # What replay does when no saved grade matches: stop the run, or record review.
 MISSING_GRADE = ("stop", "review")
@@ -56,18 +63,20 @@ def build_prompt(
     user_type: str,
     stance: str,
     nonce: str | None = None,
+    assistant_role: str = ASSISTANT_ROLE,
 ) -> str:
     """Build the full text sent to the judge. Live and replay both hash this text.
 
     stance is the gate's sentence about this user type, so the cache key covers it.
     nonce is a check value the live judge must copy into its reply. The cache key is
-    always the hash of the text without it.
+    always the hash of the text without it. assistant_role is what the first line calls
+    the system being graded, so a grade saved under one role is not read under another.
     """
     allowed = ", ".join(rule.allowed_for) if rule.allowed_for else "no one"
     codes = ", ".join(valid_codes(rule))
     prompt = _neutralize(prompt)
     response = _neutralize(response)
-    text = f"""You are grading one answer from a contact center assistant against ONE rule.
+    text = f"""You are grading one answer from {assistant_role} against ONE rule.
 
 RULE {rule.rule_id} ({rule.name}): {rule.rule}
 {stance}
@@ -163,16 +172,26 @@ def parse_answer(raw: str, rule, nonce: str | None = None) -> dict:
     }
 
 
-def http_transport(base_url: str, api_key: str, timeout: float = 60.0):
+def http_transport(
+    base_url: str,
+    api_key: str,
+    timeout: float = 60.0,
+    tries: int = TRIES,
+    backoff: tuple = BACKOFF_SECONDS,
+):
     """Return a callable that posts a chat request and returns the reply text.
 
     It tries again on rate limits, server errors and dropped connections, waiting a little
-    longer each time. Any other error is raised at once.
+    longer each time. Any other error is raised at once. tries is how many times one
+    request is sent at most. backoff is the seconds to wait after each failed try, and
+    its last value is used again when there are more tries than values.
     """
+    if tries < 1:
+        raise ValueError(f"tries must be at least 1, got {tries}")
     url = base_url.rstrip("/") + "/chat/completions"
 
     def send(payload: dict) -> str:
-        for attempt, wait in enumerate(BACKOFF_SECONDS):
+        for attempt in range(tries):
             try:
                 resp = httpx.post(
                     url,
@@ -188,9 +207,9 @@ def http_transport(base_url: str, api_key: str, timeout: float = 60.0):
                 error = exc
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 error = exc
-            if attempt == len(BACKOFF_SECONDS) - 1:
+            if attempt == tries - 1:
                 raise error
-            _sleep(wait)
+            _sleep(backoff[min(attempt, len(backoff) - 1)])
 
     return send
 
@@ -199,12 +218,29 @@ class ChatEndpointJudge:
     """Grade answers by sending requests to /chat/completions."""
 
     def __init__(
-        self, base_url, model, api_key, transport=None, cache_path=None, json_mode=True, save=True
+        self,
+        base_url,
+        model,
+        api_key,
+        transport=None,
+        cache_path=None,
+        json_mode=True,
+        save=True,
+        assistant_role=ASSISTANT_ROLE,
+        tries=TRIES,
+        backoff=BACKOFF_SECONDS,
     ):
-        """save False reads saved grades from cache_path but never writes to it."""
+        """save False reads saved grades from cache_path but never writes to it.
+
+        assistant_role is what the prompt calls the system being graded. A Grader whose
+        rules file sets assistant_role puts that value here. tries and backoff say how
+        often one request is sent and how long to wait between tries. See http_transport.
+        They are not used with a transport of your own.
+        """
         self.model = model
         self.save = save
-        self.transport = transport or http_transport(base_url, api_key)
+        self.assistant_role = assistant_role
+        self.transport = transport or http_transport(base_url, api_key, tries=tries, backoff=backoff)
         self.cache_path = Path(cache_path) if cache_path else None
         self.json_mode = json_mode
         self._saved = {}
@@ -220,16 +256,22 @@ class ChatEndpointJudge:
         Repeat attempts use it, so each one is a fresh call to the model.
         """
         return ChatEndpointJudge(
-            None, self.model, None, transport=self.transport, json_mode=self.json_mode
+            None,
+            self.model,
+            None,
+            transport=self.transport,
+            json_mode=self.json_mode,
+            assistant_role=self.assistant_role,
         )
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
-        key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
+        args = (rule, examples, prompt, response, user_type, stance)
+        key = prompt_key(build_prompt(*args, assistant_role=self.assistant_role))
         if key in self._saved:
             return dict(self._saved[key])
         # A fresh check value per call. A reply that doesn't echo it is not trusted.
         nonce = secrets.token_hex(8)
-        prompt_text = build_prompt(rule, examples, prompt, response, user_type, stance, nonce)
+        prompt_text = build_prompt(*args, nonce, assistant_role=self.assistant_role)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt_text}],
@@ -242,6 +284,10 @@ class ChatEndpointJudge:
             raw = self.transport(payload)
         except Exception as exc:  # noqa: BLE001 (any failure must become review, never a pass)
             answer = _error("The judge call failed.", f"{type(exc).__name__}: {exc}")
+            if isinstance(exc, UNREACHABLE):
+                # Still a review here. A caller that wants to tell an outage from a
+                # reply it could not read looks for this mark.
+                answer["unreachable"] = True
         else:
             answer = parse_answer(raw, rule, nonce)
         if self.cache_path and answer["verdict"] in ("pass", "fail"):
@@ -265,10 +311,11 @@ class ReplayJudge:
     review with the code NO_SAVED_GRADE and the run keeps going.
     """
 
-    def __init__(self, cache_path, missing: str = "stop"):
+    def __init__(self, cache_path, missing: str = "stop", assistant_role: str = ASSISTANT_ROLE):
         if missing not in MISSING_GRADE:
             raise ValueError(f"missing must be stop or review, got {missing!r}")
         self.missing = missing
+        self.assistant_role = assistant_role
         # Lookups that found no saved grade, counted for every rule checked.
         self.missing_lookups = 0
         self.answers = {}
@@ -280,7 +327,10 @@ class ReplayJudge:
                 self.models.add(entry.get("model") or "unknown")
 
     def grade(self, rule, examples, prompt, response, user_type, stance) -> dict:
-        key = prompt_key(build_prompt(rule, examples, prompt, response, user_type, stance))
+        text = build_prompt(
+            rule, examples, prompt, response, user_type, stance, assistant_role=self.assistant_role
+        )
+        key = prompt_key(text)
         if key not in self.answers:
             self.missing_lookups += 1
             if self.missing == "review":

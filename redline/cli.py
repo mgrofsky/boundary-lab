@@ -70,19 +70,78 @@ def is_pinned_cache(path) -> bool:
     return here in (Path(PINNED_CACHE).resolve(), repo.resolve())
 
 
+class _Given(argparse.Action):
+    """Store an option and note that it was given, so a default can differ by mode."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.given = {*getattr(namespace, "given", ()), self.dest}
+
+
+def _rules_only_defaults(args) -> None:
+    """With --rules-only, an option left out means no cache, tfidf and every rule."""
+    given = getattr(args, "given", ())
+    if "cache" not in given:
+        args.cache = None
+    if "embedder" not in given:
+        args.embedder = "tfidf"
+    if "top_k" not in given:
+        args.top_k = None
+
+
+def _live_judge(cache, save: bool = True, **retry):
+    """The judge model named by the REDLINE_JUDGE settings. retry may set tries and backoff."""
+    from redline.judge import ChatEndpointJudge
+
+    load_env_file()
+    base_url, model, api_key = _env("REDLINE_JUDGE")
+    return ChatEndpointJudge(base_url, model, api_key, cache_path=cache, save=save, **retry)
+
+
+def _rules_only_problem(args) -> str | None:
+    """Say why these options cannot be used with --rules-only, or None when they can."""
+    if args.short_circuit:
+        return "--rules-only has no labeled examples, so --short-circuit cannot be used with it."
+    if args.floor is not None:
+        return (
+            "--floor is not used with --rules-only. Use --top-k to limit how many rules "
+            "the judge checks."
+        )
+    if args.judge == "replay" and args.cache is None:
+        return "--rules-only with --judge replay needs --cache, a file of saved judge grades."
+    if args.judge == "live" and is_pinned_cache(args.cache):
+        return (
+            f"--rules-only with a live judge must not write to {PINNED_CACHE}, the saved "
+            "grades the published results were made from. Pass another file or leave out --cache."
+        )
+    return None
+
+
+def _rules_only_grader(args, attempts: int = 1):
+    """Build a Grader from the rules file alone. The train file is not read."""
+    from redline import api
+
+    judge = _live_judge(args.cache) if args.judge == "live" else None
+    return api.Grader.from_rules(
+        args.rules,
+        judge,
+        top_k=args.top_k,
+        embedder=args.embedder,
+        cache=args.cache,
+        missing_grade=args.missing_grade,
+        attempts=attempts,
+    )
+
+
 def _grader(args, attempts: int = 1):
     """Build the Grader that run and evade use, from their shared options."""
     from redline import api
-    from redline.judge import ChatEndpointJudge
     from redline.router import ShortCircuit
 
     judge = None
     if args.judge == "live":
-        load_env_file()
-        base_url, model, api_key = _env("REDLINE_JUDGE")
         # Repeat runs may read the saved grades but must not add to them.
-        save = not (attempts > 1 and is_pinned_cache(args.cache))
-        judge = ChatEndpointJudge(base_url, model, api_key, cache_path=args.cache, save=save)
+        judge = _live_judge(args.cache, save=not (attempts > 1 and is_pinned_cache(args.cache)))
 
     short_circuit = False
     if args.short_circuit:
@@ -117,18 +176,29 @@ def cmd_run(args) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.rules_only:
+        _rules_only_defaults(args)
+        problem = _rules_only_problem(args)
+        if problem:
+            print(f"redline: {problem}", file=sys.stderr)
+            return 2
     records = read_jsonl(args.data)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    grader = _grader(args, args.attempts)
+    if args.rules_only:
+        grader = _rules_only_grader(args, args.attempts)
+    else:
+        grader = _grader(args, args.attempts)
     router = grader.router
     for record in records:
         try:
             grader.check_user_type(record["user_type"], record.get("id"))
         except ValueError as exc:
             raise SystemExit(f"redline: {exc}") from None
-    (out_dir / "judge_examples.json").write_text(json.dumps(grader.examples, indent=2) + "\n")
+    if not args.rules_only:
+        examples = json.dumps(grader.examples, indent=2)
+        (out_dir / "judge_examples.json").write_text(examples + "\n")
 
     # Start timing after router setup and model loading, so this measures grading only.
     start = time.perf_counter()
@@ -138,15 +208,17 @@ def cmd_run(args) -> int:
     stem = Path(args.data).stem
     out_path = out_dir / f"{stem}_outputs.jsonl"
     write_jsonl(out_path, outputs)
+    # Rules only mode has no router shortcut, so its settings file leaves these out.
+    shortcut = {name: getattr(args, name) for name in ("purity", "min_members", "margin")}
+    if args.rules_only:
+        shortcut = {}
     meta = {
         "data": Path(args.data).as_posix(),
         "router": router.name,
         "embedder": grader.embedder_name,
-        "k": args.k if args.router == "kmeans" else None,
+        "k": args.k if args.router == "kmeans" and not args.rules_only else None,
         "short_circuit": args.short_circuit,
-        "purity": args.purity,
-        "min_members": args.min_members,
-        "margin": args.margin,
+        **shortcut,
         "records": len(outputs),
         "top_k": args.top_k,
         "floor": args.floor,
@@ -160,6 +232,8 @@ def cmd_run(args) -> int:
     }
     if args.attempts > 1:
         meta["attempts"] = args.attempts
+    if args.rules_only:
+        meta["mode"] = grader.mode
     meta_path = out_dir / f"{stem}_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     print(f"wrote {out_path} and {meta_path}", file=sys.stderr)
@@ -355,12 +429,124 @@ def cmd_gate(args) -> int:
     return 1 if lines else 0
 
 
+def _from_0_to_1(text: str) -> float:
+    """Read an option that must be a number from 0 to 1."""
+    try:
+        value = float(text)
+    except ValueError:
+        value = -1.0
+    if not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError(f"expected a number from 0 to 1, got {text!r}")
+    return value
+
+
+def cmd_garak_grade(args) -> int:
+    from redline.garak import report
+
+    if args.judge == "replay" and args.cache is None:
+        print(
+            "redline: --judge replay needs --cache, a file of saved judge grades", file=sys.stderr
+        )
+        return 2
+    if args.judge == "live" and is_pinned_cache(args.cache):
+        print(
+            f"redline: garak-grade with a live judge must not write to {PINNED_CACHE}, the "
+            "saved grades the published results were made from. Pass another file.",
+            file=sys.stderr,
+        )
+        return 2
+    judge = None
+    if args.judge == "live":
+        judge = _live_judge(args.cache, tries=report.JUDGE_TRIES, backoff=report.JUDGE_BACKOFF)
+    try:
+        grader = report.build_grader(
+            args.rules,
+            judge,
+            train=args.train,
+            top_k=args.top_k,
+            cache=args.cache,
+            missing_grade=args.missing_grade,
+            embedder=args.embedder,
+        )
+        grader.check_user_type(args.user_type)
+        attempts = report.read_attempts(args.report)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SystemExit(f"redline: {exc}") from None
+    try:
+        rows, skipped = report.grade_attempts(attempts, grader, args.user_type)
+    except KeyError as exc:
+        raise SystemExit(
+            f"redline: {exc.args[0]}. Pass --missing-grade review to record review and go on."
+        ) from None
+    extra = {
+        "report": Path(args.report).name,
+        "mode": grader.mode or "calibrated",
+        "user_type": args.user_type,
+        "judge": args.judge,
+        "top_k": args.top_k,
+        "assistant_role": grader.assistant_role,
+        "attempts": len(attempts),
+        "attempts_without_back_translation": report.without_back_translation(attempts),
+    }
+    paths = report.write(args.out, rows, skipped, extra, args.review_score, args.eval_threshold)
+    print(f"wrote {', '.join(str(p) for p in paths)}", file=sys.stderr)
+    untranslated = extra["attempts_without_back_translation"]
+    if untranslated:
+        was = "attempt was" if untranslated == 1 else "attempts were"
+        print(
+            f"redline: {untranslated} {was} not graded. The prompt was not sent in English "
+            "and the report holds no back translation of the outputs.",
+            file=sys.stderr,
+        )
+    unavailable = sum(row["outcome"] == report.NOT_EVALUATED for row in rows)
+    if unavailable:
+        were = "output was" if unavailable == 1 else "outputs were"
+        print(
+            f"redline: warning: {unavailable} {were} not evaluated because the judge model "
+            "could not be reached. They are not passes and not hits. Run again when the "
+            "judge answers.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _garak_shims(args, action: str) -> int:
+    """Run install or uninstall from redline.garak.install on the garak in this environment."""
+    from redline.garak import install
+
+    package_dir = install.find_garak()
+    if package_dir is None:
+        print("redline: garak is not installed in this environment", file=sys.stderr)
+        return 2
+    try:
+        code, lines = getattr(install, action)(package_dir, dry_run=args.dry_run)
+    except OSError as exc:
+        print(f"redline: garak-{action} could not finish: {exc}", file=sys.stderr)
+        return 1
+    for line in lines:
+        print(line)
+    return code
+
+
+def cmd_garak_install(args) -> int:
+    return _garak_shims(args, "install")
+
+
+def cmd_garak_uninstall(args) -> int:
+    return _garak_shims(args, "uninstall")
+
+
 def _grading_options(
     parser, cache_default=PINNED_CACHE, cache_help="file of saved judge grades"
 ) -> None:
-    """Options for the rules, router and judge, shared by run and evade."""
+    """Options for the rules, router and judge, shared by run and evade.
+
+    cache, embedder and top_k note when they are given, since --rules-only has its own
+    defaults for them.
+    """
     parser.add_argument("--train", default="data/train.jsonl", help="labeled setup examples")
-    parser.add_argument("--cache", default=cache_default, help=cache_help)
+    parser.add_argument("--cache", default=cache_default, action=_Given, help=cache_help)
     parser.add_argument(
         "--rules", default="policy/rules.yaml", help="YAML file containing your rules"
     )
@@ -401,7 +587,9 @@ def _grading_options(
         "--embedder",
         choices=["minilm", "tfidf"],
         default="minilm",
-        help="minilm, the default model, or tfidf, which needs no download but routes worse",
+        action=_Given,
+        help="minilm, the default model, or tfidf, which needs no download but routes worse. "
+        "With --rules-only the default is tfidf",
     )
     parser.add_argument(
         "--missing-grade",
@@ -413,7 +601,9 @@ def _grading_options(
         "--top-k",
         type=int,
         default=1,
-        help="judge up to this many of the closest rules and keep the worst outcome (default: 1)",
+        action=_Given,
+        help="judge up to this many of the closest rules and keep the worst outcome "
+        "(default: 1, or every rule with --rules-only)",
     )
     parser.add_argument(
         "--floor",
@@ -444,6 +634,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", default="results/", help="folder for the output files (default: results/)"
     )
     _grading_options(run)
+    run.add_argument(
+        "--rules-only",
+        action="store_true",
+        help="grade from the rules file alone: --train is not read, the judge gets no "
+        "examples, and every rule is checked unless --top-k is set. This mode is unmeasured",
+    )
     run.add_argument(
         "--attempts",
         type=int,
@@ -594,6 +790,83 @@ def build_parser() -> argparse.ArgumentParser:
         help="test recall on the low end of its 95%% interval and false alarms on the high end",
     )
     gate.set_defaults(func=cmd_gate)
+
+    grade = sub.add_parser(
+        "garak-grade",
+        help="grade the outputs in a garak report against your rules",
+        description=(
+            "Read a garak report file and check each output against the rules. Without "
+            "--train every rule is checked with no examples, a mode that is unmeasured."
+        ),
+    )
+    grade.add_argument("report", help="a garak report file, one JSON entry per line")
+    grade.add_argument("--rules", required=True, help="YAML file containing your rules")
+    grade.add_argument("--out", required=True, help="folder for the three output files")
+    grade.add_argument(
+        "--user-type",
+        default="anonymous",
+        help="the user type every output was given to (default: anonymous)",
+    )
+    grade.add_argument(
+        "--judge",
+        choices=["live", "replay"],
+        default="live",
+        help="call a judge model (live) or read saved grades from --cache (default: live)",
+    )
+    grade.add_argument("--cache", default=None, help="file of saved judge grades (default: none)")
+    grade.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="check this many of the closest rules (default: every rule, or 1 with --train)",
+    )
+    grade.add_argument(
+        "--train",
+        default=None,
+        help="labeled examples; with them the calibrated mode is used instead of rules only",
+    )
+    grade.add_argument(
+        "--review-score",
+        type=_from_0_to_1,
+        default=0.5,
+        help="the score of an output sent to review, as given to the detector (default: 0.5)",
+    )
+    grade.add_argument(
+        "--eval-threshold",
+        type=_from_0_to_1,
+        default=0.5,
+        help="garak's eval threshold: a score below it passes (default: 0.5)",
+    )
+    grade.add_argument(
+        "--embedder",
+        choices=["minilm", "tfidf"],
+        default=None,
+        help="how text is matched to rules (default: tfidf, or minilm with --train)",
+    )
+    grade.add_argument(
+        "--missing-grade",
+        choices=["stop", "review"],
+        default="stop",
+        help="replay: stop when no saved grade matches, or record review and go on (default: stop)",
+    )
+    grade.set_defaults(func=cmd_garak_grade)
+
+    for name, func, text in (
+        ("garak-install", cmd_garak_install, "let the garak in this environment load Redline"),
+        ("garak-uninstall", cmd_garak_uninstall, "remove the files garak-install wrote"),
+    ):
+        shim = sub.add_parser(
+            name,
+            help=text,
+            description=(
+                "garak loads plugins only from inside its own package. garak-install writes "
+                "one small file each for the Redline detector and probe into it, and "
+                "garak-uninstall removes them. A file that is not the Redline shim is "
+                "never changed."
+            ),
+        )
+        shim.add_argument("--dry-run", action="store_true", help="print what would be done")
+        shim.set_defaults(func=func)
     return parser
 
 
