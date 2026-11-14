@@ -33,7 +33,7 @@ def test_markup_in_every_field_is_escaped():
 
 def test_the_only_script_is_the_refresh_with_the_nonce_and_only_when_nothing_is_shown():
     html = render({"pending": [], "changed": []}, "token", "nonce")
-    scripts = re.findall(r"<script[^>]*>", html)
+    scripts = re.findall(r"<script[^>]*>", html, re.IGNORECASE)
     assert scripts == ['<script nonce="nonce">']
     assert "innerHTML" not in html
     assert "location.reload()" in html
