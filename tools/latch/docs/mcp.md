@@ -166,7 +166,7 @@ The approver is the user from `--approver`. That user holds every `approve_permi
 
 A repeated call with the same tool and the same arguments reuses the waiting operation. Once a person approves it, the next repeat runs it. After an operation has run or closed, a repeat is a new operation.
 
-If the client sends `notifications/cancelled` for a call that waits for approval, the proxy cancels the operation as the requester. The client gets no answer for that request.
+If the client sends `notifications/cancelled` for a call that waits for approval, the proxy cancels the operation as the requester. The client gets no answer for that request. A cancel that arrives while the proxy fetches the tool list for the call counts too: the call is not prepared and does not run, and one that was already prepared is cancelled.
 
 With `--approval-port -1` there is no page, so a call that needs approval is refused at once with `NEEDS_APPROVAL`.
 

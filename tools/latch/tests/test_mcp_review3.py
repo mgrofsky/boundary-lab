@@ -184,3 +184,56 @@ def test_a_tool_that_stays_the_same_still_runs_after_a_list_change_during_the_wa
     assert server.methods() == ["tools/list", "tools/list", "tools/call"]
     [reply] = [message for message in out if message.get("id") == 1]
     assert reply["result"]["content"][0]["text"] == "ran"
+
+
+def test_a_cancel_while_the_list_is_fetched_stops_the_call_before_prepare():
+    proxy, server, out = make_proxy()
+    server.during_list = [lambda: cancel(proxy)]
+
+    async def scenario():
+        call(proxy, "echo")
+        await settle(proxy)
+
+    asyncio.run(scenario())
+    assert server.methods() == ["tools/list"]
+    assert out == []
+    assert audit(proxy) == []
+
+
+def test_a_cancel_during_the_fetch_before_execute_cancels_the_prepared_operation():
+    proxy, server, out = make_proxy()
+    # The first fetch is left stale by a change, so the call fetches again before it runs.
+    server.during_list = [lambda: proxy.on_child_line(LIST_CHANGED), lambda: cancel(proxy)]
+    ops = []
+
+    async def scenario():
+        call(proxy, "echo")
+        await asyncio.sleep(0)
+        ops.append(proxy._calls[("int", 1)])
+        await settle(proxy)
+
+    asyncio.run(scenario())
+    assert server.methods() == ["tools/list", "tools/list"]
+    assert [message for message in out if message.get("id") == 1] == []
+    assert state_of(proxy, ops[0].op_id) == "cancelled"
+    assert audit(proxy)[-1] == ("cancel", "CANCELLED")
+
+
+def test_a_cancel_during_the_fetch_after_approval_stops_the_call():
+    proxy, server, out = make_proxy()
+    found = []
+
+    async def scenario():
+        call(proxy, "guarded")
+        item = await waiting(proxy)
+        found.append(item["operation_id"])
+        proxy.on_child_line(LIST_CHANGED)
+        server.during_list = [lambda: cancel(proxy)]
+        assert proxy.decide(item["operation_id"], True, item["digest"]) == "APPROVED"
+        await settle(proxy)
+
+    asyncio.run(scenario())
+    assert server.methods() == ["tools/list", "tools/list"]
+    assert [message for message in out if message.get("id") == 1] == []
+    assert state_of(proxy, found[0]) == "cancelled"
+    assert audit(proxy).count(("cancel", "CANCELLED")) == 1

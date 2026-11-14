@@ -498,6 +498,9 @@ class Proxy(ToolCatalog):
         meta = self.forwarded_meta(meta)
         self.keep_protocol(params)
         await self.ensure_tools()
+        if call.cancelled:
+            # The cancel came in during the fetch, before there was an operation to cancel.
+            return self._blocked(Code.CANCELLED)
         key = wire.canonical([name, arguments])
         op_id = self._open_ops.get(key)
         if op_id is not None:
@@ -521,6 +524,8 @@ class Proxy(ToolCatalog):
                 # The server may have changed the tool during the wait. Fetch the list
                 # again if it did, so the call never runs under a definition nobody saw.
                 await self.ensure_tools()
+                if call.cancelled:
+                    return self._stop_cancelled(prepared)
                 if name in self.changed:
                     return self._refuse_changed(name, op_id)
                 self._call_meta[op_id] = meta
@@ -594,6 +599,13 @@ class Proxy(ToolCatalog):
             self._open_ops.pop(key, None)
         self._wake(op_id)
         return self._blocked(decision.code, text=decision.explanation)
+
+    def _stop_cancelled(self, prepared: PreparedAction) -> tuple[str, Any]:
+        """Answer a call cancelled after prepare and before it ran. Its operation never runs."""
+        status = self.latch.operation_status(self.settings.org, prepared.operation_id)
+        if status is not None and status.state in OPEN:
+            self.latch.cancel(prepared, self.ctx)
+        return self._blocked(Code.CANCELLED)
 
     @staticmethod
     def _needs_flow_approval(outcome: ExecutionResult) -> bool:
