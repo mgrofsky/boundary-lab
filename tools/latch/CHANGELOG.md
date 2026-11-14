@@ -58,6 +58,7 @@
 - A `notifications/tools/list_changed` that arrived while the proxy fetched the tool list was lost. The list now stays stale, so the next call fetches it again.
 - A server that never answered the proxy's `tools/list` made every call wait forever. The client's `tools/list` now gets an error after `--tool-timeout`, and the call gets `PROXY_ERROR`.
 - Server text that the proxy logs or prints, such as tool names, error messages, and versions, could carry terminal escape codes. It now keeps printable characters only, cut at 200 characters.
+- A tool whose definition changed while its MCP call waited for approval could run once approved, under a definition nobody saw. The proxy now fetches the tool list again after the wait and before the call runs, and returns `TOOL_CHANGED` when the tool changed, or `UNKNOWN_TOOL` when it left the list.
 
 ## 0.3.0
 

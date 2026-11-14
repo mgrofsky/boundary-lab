@@ -518,6 +518,9 @@ class Proxy(ToolCatalog):
                     waited = await self._await_approval(call, prepared, key)
                     if waited is not None:
                         return waited
+                # The server may have changed the tool during the wait. Fetch the list
+                # again if it did, so the call never runs under a definition nobody saw.
+                await self.ensure_tools()
                 if name in self.changed:
                     return self._refuse_changed(name, op_id)
                 self._call_meta[op_id] = meta

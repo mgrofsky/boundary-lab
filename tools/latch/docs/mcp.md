@@ -188,7 +188,7 @@ Without `--pin`, pins last for the process only. With `--pin FILE`, the proxy re
 
 Earlier builds of the proxy stored 12 hex characters: first of a hash over only the name, description, and `inputSchema`, later of the whole object hash. When the proxy loads a pin written either way, it hashes the kept definition both ways. If one matches the stored value, the proxy pins it again under the full hash without asking, since nothing changed. A pin that does not match is left alone, so the tool shows as changed.
 
-The proxy learns tools from the server's `tools/list`, following `nextCursor` to the end. When the server sends `notifications/tools/list_changed`, the proxy fetches the list again on next use and passes the notification on.
+The proxy learns tools from the server's `tools/list`, following `nextCursor` to the end. When the server sends `notifications/tools/list_changed`, the proxy fetches the list again on next use and passes the notification on. A call that waited for approval is such a use: after the approval and before the call runs, the proxy fetches the list again if the server said it changed. If the tool changed during the wait, the call returns `TOOL_CHANGED` and does not reach the server, and the approval does not carry over to the new definition. If the tool left the list, the call returns `UNKNOWN_TOOL`.
 
 ## Starter policy
 
