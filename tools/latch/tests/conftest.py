@@ -141,3 +141,9 @@ def build_latch(clock, *specs: ToolSpec, store: SQLiteStore | None = None) -> La
 
 def no_calls(handlers: dict[str, MagicMock]) -> bool:
     return all(handler.call_count == 0 for handler in handlers.values())
+
+
+@pytest.fixture(params=["legacy", "modern"])
+def modern(request):
+    """Run an MCP test against the fake server in the older form and the 2026-07-28 form."""
+    return request.param == "modern"

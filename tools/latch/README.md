@@ -18,6 +18,8 @@ Latch is part of [Boundary Lab](https://github.com/mgrofsky/boundary-lab/blob/ma
 
 - The run has not used up its call limit, its lifetime, or its idle time.
 
+- One run does not read untrusted input, read private data, and act outside, if the policy turns on the flow rule. The call that would complete that chain is refused or waits for a person, with a reason.
+
 - Calls that need approval wait for another user. The approval covers that exact request, expires, and works once.
 
 - Repeating the same request with the same operation ID in the same run does not run the tool again. This still works after a restart if you keep the SQLite database.
@@ -47,7 +49,7 @@ To work on Latch itself, from this folder:
 
     boundary-latch demo
 
-Nine scenarios run one at a time. Each step shows who asked for what, the reason code, and what changed in the sample support system for Northwind, a made-up company. Sam and Priya are support agents, and Jordan is a supervisor. These are example users.
+Ten scenarios run one at a time. Each step shows who asked for what, the reason code, and what changed in the sample support system for Northwind, a made-up company. Sam and Priya are support agents, and Jordan is a supervisor. These are example users.
 
 For the same scenarios in a browser:
 
@@ -85,6 +87,15 @@ An approver finds waiting requests with `latch.pending(org_id)`. Each one carrie
 
 Every decision is saved in an audit table. Read it with `boundary-latch audit app.sqlite`, or pass `on_event` to `Latch` to get each row as it is written.
 
+## Put it in front of an MCP server
+
+`boundary-latch mcp` checks every tool call between an MCP client, such as Claude Code or Cursor, and one MCP server. The client starts the proxy instead of the server.
+
+    boundary-latch mcp --print-policy -- <server command> > policy.toml
+    boundary-latch mcp --policy policy.toml -- <server command>
+
+Calls the policy blocks never reach the server. Calls that need approval wait on a page in your browser on 127.0.0.1. The proxy also refuses a tool whose definition changed until you accept it. See [docs/mcp.md](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/mcp.md).
+
 ## What Latch does not do
 
 - It doesn't log anyone in. Your app checks who the user is.
@@ -113,7 +124,11 @@ Every decision is saved in an audit table. Read it with `boundary-latch audit ap
 
 - [Limits](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/limits.md): call limits, time limits, and what to do when the outcome is unclear.
 
+- [Flow rule](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/flow.md): stop one run from reading untrusted input, reading private data, and acting outside.
+
 - [Audit](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/audit.md): the audit fields, the `audit` command, and `on_event`.
+
+- [MCP proxy](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/docs/mcp.md): check every tool call an MCP client makes, with an approval page and pinned tool definitions.
 
 - [Changelog](https://github.com/mgrofsky/boundary-lab/blob/main/tools/latch/CHANGELOG.md): what changed in each release.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 import threading
@@ -12,7 +13,8 @@ from .errors import StorageError
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
   org_id TEXT NOT NULL, run_id TEXT NOT NULL, started_at REAL NOT NULL,
-  submissions INTEGER NOT NULL DEFAULT 0, last_at REAL, PRIMARY KEY (org_id, run_id));
+  submissions INTEGER NOT NULL DEFAULT 0, last_at REAL, labels TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (org_id, run_id));
 CREATE TABLE IF NOT EXISTS operations (
   org_id TEXT NOT NULL, operation_id TEXT NOT NULL, run_id TEXT NOT NULL,
   user_id TEXT NOT NULL, tool TEXT NOT NULL, tool_version TEXT NOT NULL,
@@ -20,17 +22,17 @@ CREATE TABLE IF NOT EXISTS operations (
   state TEXT NOT NULL, code TEXT NOT NULL,
   created_at REAL NOT NULL, updated_at REAL NOT NULL,
   copied TEXT NOT NULL DEFAULT '[]', summary TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (org_id, operation_id));
+  flow_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY (org_id, operation_id));
 CREATE TABLE IF NOT EXISTS approvals (
   org_id TEXT NOT NULL, operation_id TEXT NOT NULL, approver_id TEXT NOT NULL,
   request_hash TEXT NOT NULL, decision TEXT NOT NULL, decided_at REAL NOT NULL,
   expires_at REAL NOT NULL, consumed_at REAL, reference TEXT,
-  PRIMARY KEY (org_id, operation_id));
+  flow_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY (org_id, operation_id));
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, org_id TEXT NOT NULL,
   run_id TEXT, operation_id TEXT, user_id TEXT, tool TEXT, event TEXT NOT NULL,
   code TEXT NOT NULL, outcome TEXT, duration_ms INTEGER, summary TEXT, copied TEXT,
-  reference TEXT);
+  reference TEXT, labels TEXT, flow_reason TEXT);
 """
 
 OPERATION_COLUMNS = (
@@ -48,25 +50,33 @@ OPERATION_COLUMNS = (
     "updated_at",
     "copied",
     "summary",
+    "flow_reason",
 )
 
 # Values for the optional operation columns when a caller leaves them out.
-OPERATION_DEFAULTS: dict[str, Any] = {"copied": "[]", "summary": ""}
+OPERATION_DEFAULTS: dict[str, Any] = {"copied": "[]", "summary": "", "flow_reason": ""}
 
 # Columns added after 0.2.0. A database written by an older release gets them when opened.
 ADDED_COLUMNS = {
-    "runs": [("last_at", "REAL")],
+    "runs": [("last_at", "REAL"), ("labels", "TEXT NOT NULL DEFAULT '{}'")],
     "operations": [
         ("copied", "TEXT NOT NULL DEFAULT '[]'"),
         ("summary", "TEXT NOT NULL DEFAULT ''"),
+        ("flow_reason", "TEXT NOT NULL DEFAULT ''"),
     ],
-    "approvals": [("reference", "TEXT")],
-    "audit": [("summary", "TEXT"), ("copied", "TEXT"), ("reference", "TEXT")],
+    "approvals": [("reference", "TEXT"), ("flow_reason", "TEXT NOT NULL DEFAULT ''")],
+    "audit": [("summary", "TEXT"), ("copied", "TEXT"), ("reference", "TEXT"),
+              ("labels", "TEXT"), ("flow_reason", "TEXT")],
 }
 
 RECORDED = ("reserved", "succeeded", "failed", "uncertain")
 # States that can never run again. The operation row's code says why.
 CLOSED = ("denied", "cancelled")
+
+
+# Called inside the reserve transaction with the run's labels. Returns (mode, reason)
+# when the flow rule gates the call, or None.
+FlowCheck = Callable[[dict[str, dict[str, Any]]], "tuple[str, str] | None"]
 
 
 def run_deadline(started_at: float, last_at: float | None, lifetime: int, idle: int) -> float:
@@ -231,15 +241,16 @@ class SQLiteStore:
         now: float,
         expires_at: float,
         reference: str | None = None,
+        flow_reason: str = "",
     ) -> None:
         with self._lock:
             try:
                 self._conn.execute(
                     "INSERT INTO approvals (org_id, operation_id, approver_id, request_hash,"
-                    " decision, decided_at, expires_at, reference)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " decision, decided_at, expires_at, reference, flow_reason)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (org_id, operation_id, approver_id, request_hash, decision, now, expires_at,
-                     reference),
+                     reference, flow_reason),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ApprovalExists(operation_id) from exc
@@ -261,9 +272,12 @@ class SQLiteStore:
         self, org_id: str, operation_id: str, run_id: str, approver_id: str,
         expected_hash: str, decision: str, clock: Callable[[], float],
         run_lifetime: int, approval_lifetime: int, reference: str | None = None,
-        run_idle: int = 0,
+        run_idle: int = 0, flow_reason: str = "",
     ) -> str:
-        """Save the decision and update the pending operation together, or save neither."""
+        """Save the decision and update the pending operation together, or save neither.
+
+        flow_reason is the flow reason the approver saw, kept with the approval.
+        """
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
@@ -292,7 +306,7 @@ class SQLiteStore:
                     end = run_deadline(run["started_at"], None, run_lifetime, 0)
                     expires_at = min(now + approval_lifetime, end)
                     self.record_approval(org_id, operation_id, approver_id, expected_hash,
-                                         decision, now, expires_at, reference)
+                                         decision, now, expires_at, reference, flow_reason)
                     code = "APPROVED" if decision == "approved" else "DENIED_BY_APPROVER"
                     self.set_state(org_id, operation_id, decision, code, now)
                     result = "recorded"
@@ -318,12 +332,18 @@ class SQLiteStore:
         max_actions: int,
         *,
         clock: Callable[[], float] | None = None,
+        flow_check: FlowCheck | None = None,
+        add_labels: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         """Reserve an operation to run once, saving all changes together.
 
         Use the approval requirement and run ID saved in the database.
-        Returns "reserved", "already_recorded", "denied", "approval_missing",
-        "approval_expired", "run_expired", "run_limit" or "hash_mismatch".
+        flow_check gets the run's labels as they are inside this transaction and
+        returns (mode, reason) when the flow rule gates the call, or None.
+        add_labels are written to the run, with the time, when the call is reserved.
+        Returns "reserved", "already_recorded", "closed", "approval_missing",
+        "approval_expired", "run_expired", "run_limit", "flow_blocked",
+        "flow_approval" or "hash_mismatch".
         """
         with self._lock:
             try:
@@ -339,6 +359,8 @@ class SQLiteStore:
                     needs_approval,
                     run_deadline,
                     max_actions,
+                    flow_check,
+                    add_labels or {},
                 )
                 self._conn.execute("COMMIT")
             except sqlite3.Error as exc:
@@ -360,6 +382,8 @@ class SQLiteStore:
         needs_approval: bool,
         run_deadline: float,
         max_actions: int,
+        flow_check: FlowCheck | None,
+        add_labels: dict[str, dict[str, Any]],
     ) -> str:
         op = self._conn.execute(
             "SELECT state, request_hash, run_id, needs_approval FROM operations"
@@ -388,7 +412,13 @@ class SQLiteStore:
                 (now, org_id, operation_id),
             )
             return "run_limit"
-        if op["needs_approval"]:
+        held = self._labels(org_id, run_id)
+        gate = flow_check(held) if flow_check is not None else None
+        if gate is not None:
+            refused = self._flow_refusal(org_id, operation_id, now, *gate)
+            if refused is not None:
+                return refused
+        if op["needs_approval"] or gate is not None:
             approval = self._conn.execute(
                 "SELECT * FROM approvals WHERE org_id = ? AND operation_id = ?",
                 (org_id, operation_id),
@@ -415,7 +445,113 @@ class SQLiteStore:
             " WHERE org_id = ? AND run_id = ?",
             (now, org_id, run_id),
         )
+        self._add_labels(org_id, run_id, held, add_labels, now)
         return "reserved"
+
+    def _flow_refusal(
+        self, org_id: str, operation_id: str, now: float, mode: str, reason: str
+    ) -> str | None:
+        """Close or hold back a call the flow rule gates. None when it may go on.
+
+        In approve mode the call goes on only with an approval given for this reason.
+        Otherwise the operation goes back to waiting, so a person sees the new reason.
+        """
+        if mode == "deny":
+            self._conn.execute(
+                "UPDATE operations SET state = 'denied', code = 'FLOW_BLOCKED',"
+                " flow_reason = ?, updated_at = ? WHERE org_id = ? AND operation_id = ?",
+                (reason, now, org_id, operation_id),
+            )
+            return "flow_blocked"
+        approval = self._conn.execute(
+            "SELECT decision, flow_reason FROM approvals WHERE org_id = ? AND operation_id = ?",
+            (org_id, operation_id),
+        ).fetchone()
+        if approval is not None and approval["decision"] == "approved" \
+                and approval["flow_reason"] == reason:
+            return None
+        self._conn.execute(
+            "DELETE FROM approvals WHERE org_id = ? AND operation_id = ?"
+            " AND decision = 'approved' AND consumed_at IS NULL",
+            (org_id, operation_id),
+        )
+        self._conn.execute(
+            "UPDATE operations SET state = 'prepared', code = 'NEEDS_APPROVAL',"
+            " needs_approval = 1, flow_reason = ?, updated_at = ?"
+            " WHERE org_id = ? AND operation_id = ?",
+            (reason, now, org_id, operation_id),
+        )
+        return "flow_approval"
+
+    def _labels(self, org_id: str, run_id: str) -> dict[str, dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT labels FROM runs WHERE org_id = ? AND run_id = ?", (org_id, run_id)
+        ).fetchone()
+        return {} if row is None or not row["labels"] else json.loads(row["labels"])
+
+    def _add_labels(
+        self, org_id: str, run_id: str, held: dict[str, dict[str, Any]],
+        new: dict[str, dict[str, Any]], now: float,
+    ) -> bool:
+        """Add labels the run does not hold yet. The first thing that set a label stays."""
+        missing = {label: {**entry, "at": now} for label, entry in new.items()
+                   if label not in held}
+        if not missing:
+            return False
+        self._conn.execute(
+            "UPDATE runs SET labels = ? WHERE org_id = ? AND run_id = ?",
+            (json.dumps({**held, **missing}, sort_keys=True), org_id, run_id),
+        )
+        return True
+
+    def run_labels(self, org_id: str, run_id: str) -> dict[str, dict[str, Any]]:
+        """label -> what first set it, for the labels this run holds."""
+        with self._lock:
+            try:
+                return self._labels(org_id, run_id)
+            except (sqlite3.Error, ValueError) as exc:
+                raise StorageError(f"run_labels failed: {exc}") from exc
+
+    def mark_run(
+        self, org_id: str, run_id: str, label: str, entry: dict[str, Any], now: float
+    ) -> bool:
+        """Start the run if it is new and add a label to it. False if it held it already."""
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO runs (org_id, run_id, started_at, last_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (org_id, run_id, now, now),
+                )
+                added = self._add_labels(org_id, run_id, self._labels(org_id, run_id),
+                                         {label: entry}, now)
+                self._conn.execute("COMMIT")
+            except (sqlite3.Error, ValueError) as exc:
+                if self._conn.in_transaction:
+                    try:
+                        self._conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                raise StorageError(f"mark_run failed: {exc}") from exc
+            return added
+
+    def set_flow(
+        self, org_id: str, operation_id: str, needs_approval: bool, flow_reason: str, now: float
+    ) -> None:
+        """Save a fresh flow answer on an operation that has not run or closed."""
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "UPDATE operations SET needs_approval = MAX(needs_approval, ?),"
+                    " flow_reason = ?, code = CASE WHEN state = 'prepared' AND ? THEN"
+                    " 'NEEDS_APPROVAL' ELSE code END, updated_at = ?"
+                    " WHERE org_id = ? AND operation_id = ? AND state IN ('prepared', 'approved')",
+                    (int(needs_approval), flow_reason, int(needs_approval), now, org_id,
+                     operation_id),
+                )
+            except sqlite3.Error as exc:
+                raise StorageError(f"set_flow failed: {exc}") from exc
 
     def cancel(self, org_id: str, operation_id: str, expected_hash: str, now: float) -> str:
         """Mark a prepared or approved operation cancelled, unless it was reserved or closed.
@@ -490,16 +626,19 @@ class SQLiteStore:
         summary: str | None = None,
         copied: str | None = None,
         reference: str | None = None,
+        labels: str | None = None,
+        flow_reason: str | None = None,
     ) -> dict[str, Any]:
         """Write one audit row and return it as a dict."""
         with self._lock:
             try:
                 row = self._conn.execute(
                     "INSERT INTO audit (at, org_id, run_id, operation_id, user_id, tool, event,"
-                    " code, outcome, duration_ms, summary, copied, reference)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                    " code, outcome, duration_ms, summary, copied, reference, labels,"
+                    " flow_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    " RETURNING *",
                     (now, org_id, run_id, operation_id, user_id, tool, event, code, outcome,
-                     duration_ms, summary, copied, reference),
+                     duration_ms, summary, copied, reference, labels, flow_reason),
                 ).fetchone()
             except sqlite3.Error as exc:
                 raise StorageError(f"audit failed: {exc}") from exc

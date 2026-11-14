@@ -6,13 +6,17 @@ import hashlib
 import inspect
 import json
 import logging
+import math
+import numbers
 import time
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from . import flow
 from .errors import ConfigError, StorageError, ToolFailed
 from .events import to_event
 from .models import (
@@ -24,9 +28,9 @@ from .models import (
     ToolSpec,
     UserContext,
 )
-from .policy import Policy, ToolPolicy, load_policy
+from .policy import LABELS, Policy, ToolPolicy, load_policy
 from .reasons import Code, explain
-from .store import CLOSED, OperationExists, SQLiteStore, run_deadline
+from .store import CLOSED, RECORDED, FlowCheck, OperationExists, SQLiteStore, run_deadline
 
 logger = logging.getLogger("boundary_latch")
 
@@ -34,6 +38,10 @@ SUMMARY_LIMIT = 300
 
 REFERENCE_LIMIT = 128
 ERROR_LIMIT = 200
+NOTE_LIMIT = 200
+
+# Returned by field_value when the arguments have no value for a policy field.
+NO_VALUE = object()
 
 RESERVE_CODES = {
     "approval_missing": Code.APPROVAL_REQUIRED,
@@ -42,6 +50,36 @@ RESERVE_CODES = {
     "run_limit": Code.RUN_LIMIT,
     "hash_mismatch": Code.OPERATION_CONFLICT,
 }
+
+
+def field_value(args: BaseModel, name: str) -> Any:
+    """The value of the argument a policy names, or NO_VALUE when there is none.
+
+    The name matches a field's name first, then a field's alias, so a model
+    whose fields use aliases still works.
+    """
+    fields = type(args).model_fields
+    if name in fields:
+        return getattr(args, name)
+    for key, field in fields.items():
+        if field.alias == name:
+            return getattr(args, key)
+    return NO_VALUE
+
+
+def amount_value(args: BaseModel, name: str) -> Any:
+    """The amount as a finite number, or None when it is missing or not a number.
+
+    A bool is not an amount, and neither is NaN or infinity, since each would
+    compare in a way that could skip the approval the policy asks for.
+    """
+    value = field_value(args, name)
+    if isinstance(value, bool) or not isinstance(value, numbers.Real | Decimal):
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except (TypeError, ValueError, ArithmeticError):
+        return None
 
 
 def error_text(exc: BaseException) -> str:
@@ -81,12 +119,24 @@ class Latch:
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._tools:
             raise ConfigError(f"tool {spec.name} is already registered")
+        self._set_tool(spec)
+
+    def _set_tool(self, spec: ToolSpec) -> None:
+        """Add a tool or replace one with the same name.
+
+        The MCP proxy uses this when a person accepts a changed tool definition.
+        An operation prepared for the old version then returns OPERATION_CONFLICT.
+        """
         if spec.name not in self.policy.tools:
             raise ConfigError(f"tool {spec.name} has no policy entry")
         cfg = spec.args_model.model_config
         if cfg.get("extra") != "forbid":
             raise ConfigError(f"args model for {spec.name} must set extra='forbid'")
         self._tools[spec.name] = spec
+
+    def _drop_tool(self, name: str) -> None:
+        """Forget a tool, so a call to it returns UNKNOWN_TOOL."""
+        self._tools.pop(name, None)
 
     def tool_specs(self) -> list[ToolSpec]:
         return list(self._tools.values())
@@ -134,6 +184,11 @@ class Latch:
         except ValidationError:
             return self._deny_prepare(ctx, tool, operation_id, Code.INVALID_ARGUMENTS, now)
 
+        if tp.approval.mode == "over_amount" and amount_value(
+            args, tp.approval.amount_field
+        ) is None:
+            return self._deny_prepare(ctx, tool, operation_id, Code.INVALID_ARGUMENTS, now)
+
         paths = self._copied_fields(spec, requested)
         code = self._check_access(ctx, spec, tp, args, paths)
         if code is not None:
@@ -160,6 +215,23 @@ class Latch:
             needs_approval = bool(existing["needs_approval"])
             paths = stored
             summary = existing["summary"]
+
+        # The flow rule, from the run's labels as they are now. Execute checks it again.
+        if existing is not None and existing["state"] in RECORDED:
+            flow_reason = existing["flow_reason"]
+        else:
+            flow_reason = self._flow_reason(
+                self.store.run_labels(ctx.org_id, ctx.run_id), spec.name, tp, paths
+            )
+        if flow_reason and self.policy.flow.all_three == "deny":
+            return self._deny_prepare(ctx, tool, operation_id, Code.FLOW_BLOCKED, now,
+                                      flow_reason=flow_reason)
+        stricter = needs_approval or bool(flow_reason)
+        if existing is not None and existing["state"] not in RECORDED and (
+            stricter != needs_approval or flow_reason != existing["flow_reason"]
+        ):
+            self.store.set_flow(ctx.org_id, operation_id, stricter, flow_reason, now)
+        needs_approval = stricter
         code = Code.NEEDS_APPROVAL if needs_approval else Code.ALLOWED
         if existing is None:
             try:
@@ -179,15 +251,54 @@ class Latch:
                         "updated_at": now,
                         "copied": json.dumps(sorted(paths)),
                         "summary": summary,
+                        "flow_reason": flow_reason,
                     }
                 )
             except OperationExists:
                 return self._deny_prepare(ctx, tool, operation_id, Code.OPERATION_CONFLICT, now)
 
         self._audit("prepare", code, ctx, tool, operation_id, now, summary=summary,
-                    copied=json.dumps(sorted(paths)))
+                    copied=json.dumps(sorted(paths)), flow_reason=flow_reason)
         return self._build_prepared(ctx, spec, operation_id, needs_approval, request_hash,
-                                    canonical, code, paths, summary)
+                                    canonical, code, paths, summary, flow_reason)
+
+    def mark_run(self, ctx: UserContext, label: str, note: str = "") -> None:
+        """Add a label to the run itself, for example when a user uploads a file.
+
+        note is one line of at most 200 characters, kept as the label's source. The
+        flow reason names it only as "marked by the app".
+        """
+        if label not in LABELS:
+            raise ValueError(f"label must be one of {', '.join(LABELS)}")
+        if not isinstance(note, str):
+            raise ValueError("note must be a string")  # noqa: TRY004 one error type for callers
+        if len(note) > NOTE_LIMIT:
+            raise ValueError(f"note must be at most {NOTE_LIMIT} characters")
+        if not note.isprintable():
+            raise ValueError("note must be one line with no control characters")
+        now = self.clock()
+        self.store.mark_run(ctx.org_id, ctx.run_id, label,
+                            {"source": note, "operation_id": None}, now)
+        self._write_audit(
+            "mark_run", str(Code.ALLOWED), ctx.org_id, run_id=ctx.run_id,
+            user_id=ctx.user_id, now=now, summary=note, labels=json.dumps([label]),
+        )
+
+    def _flow_reason(
+        self, held: dict[str, dict[str, Any]], tool: str, tp: ToolPolicy,
+        copied: frozenset[str] = frozenset(),
+    ) -> str:
+        """The flow reason when the rule gates this call, or "" when it does not.
+
+        A call with a copied value is checked as if the run already held untrusted,
+        from that copied value. A tool with no labels is still never gated.
+        """
+        if copied and "untrusted" not in held:
+            held = {**held, "untrusted": {"tool": tool, "copied": True}}
+        labels = tp.labels or ()
+        if not flow.applies(self.policy.flow.all_three, held, labels):
+            return ""
+        return flow.reason(held, labels, tool)
 
     def approve(
         self, prepared: PreparedAction, approver: UserContext, reference: str | None = None
@@ -223,6 +334,8 @@ class Latch:
                 user_id=by.user_id,
                 tool=prepared.tool,
                 now=now,
+                labels=self._labels_json(prepared.tool),
+                flow_reason=prepared.flow_reason or None,
             )
             return Decision(
                 allowed=False,
@@ -292,6 +405,8 @@ class Latch:
                 tool=prepared.tool,
                 now=now,
                 reference=reference,
+                labels=self._labels_json(prepared.tool),
+                flow_reason=prepared.flow_reason or None,
             )
             return Decision(
                 allowed=code == Code.APPROVED,
@@ -328,6 +443,7 @@ class Latch:
             limits.approval_lifetime_seconds,
             reference,
             run_idle=limits.run_idle_seconds,
+            flow_reason=prepared.flow_reason,
         )
         if result == "closed":
             return answer(self._row_code(prepared))
@@ -404,6 +520,7 @@ class Latch:
             summary=row["summary"],
             copied=frozenset(json.loads(row["copied"])),
             reference=self._reference(row["org_id"], row["operation_id"]),
+            flow_reason=row["flow_reason"],
         )
 
     def _gate(
@@ -412,15 +529,15 @@ class Latch:
         """Recheck who is asking and their access, then reserve the operation to run once."""
         now = self.clock()
 
-        def refuse(code: Code) -> ExecutionResult:
+        def refuse(code: Code, flow_reason: str = "") -> ExecutionResult:
             reference = self._reference(prepared.org_id, prepared.operation_id)
             self._audit("execute", code, ctx, prepared.tool, prepared.operation_id, now,
-                        outcome="denied", reference=reference)
+                        outcome="denied", reference=reference, flow_reason=flow_reason)
             return ExecutionResult(
                 operation_id=prepared.operation_id,
                 outcome="denied",
                 code=code,
-                explanation=explain(code),
+                explanation=self._explain(code, flow_reason),
                 reference=reference,
             )
 
@@ -454,7 +571,13 @@ class Latch:
             deadline,
             limits.max_actions_per_run,
             clock=self.clock,
+            flow_check=self._flow_check(spec.name, tp, prepared.copied),
+            add_labels=self._labels_to_add(spec.name, tp, prepared),
         )
+        if result in ("flow_blocked", "flow_approval"):
+            row = self.store.get_operation(ctx.org_id, prepared.operation_id)
+            code = Code.FLOW_BLOCKED if result == "flow_blocked" else Code.NEEDS_APPROVAL
+            return refuse(code, row["flow_reason"])
         if result == "already_recorded":
             row = self.store.get_operation(ctx.org_id, prepared.operation_id)
             # A row still reserved is running now or was cut off before it finished.
@@ -483,6 +606,31 @@ class Latch:
         )
         return spec, args, info
 
+    def _flow_check(self, tool: str, tp: ToolPolicy, copied: frozenset[str]) -> FlowCheck:
+        """The check reserve runs inside its transaction, with the run's labels then."""
+        mode = self.policy.flow.all_three
+
+        def check(held: dict[str, dict[str, Any]]) -> tuple[str, str] | None:
+            reason = self._flow_reason(held, tool, tp, copied)
+            return (mode, reason) if reason else None
+
+        return check
+
+    @staticmethod
+    def _labels_to_add(
+        tool: str, tp: ToolPolicy, prepared: PreparedAction
+    ) -> dict[str, dict[str, Any]]:
+        """The labels a call gives the run once it is reserved, with what set each."""
+        op = prepared.operation_id
+        labels = {label: {"tool": tool, "operation_id": op} for label in tp.labels or ()}
+        if prepared.copied:
+            labels.setdefault("untrusted", {"tool": tool, "copied": True, "operation_id": op})
+        return labels
+
+    @staticmethod
+    def _explain(code: Code, flow_reason: str = "") -> str:
+        return f"{explain(code)} {flow_reason}" if flow_reason else explain(code)
+
     def _deadline(self, ctx: UserContext, now: float) -> float:
         """Start the run if it is new and return when it expires."""
         limits = self.policy.limits
@@ -510,17 +658,20 @@ class Latch:
         expected_hash = self._request_hash(prepared, spec, canonical, prepared.operation_id)
         needs_approval = self._needs_approval(tp, checked, prepared.copied)
         if (prepared.request_hash != expected_hash or prepared.tool_version != spec.version
-                or prepared.needs_approval != needs_approval):
+                or (needs_approval and not prepared.needs_approval)):
             return Code.OPERATION_CONFLICT
         row = self.store.get_operation(prepared.org_id, prepared.operation_id)
         if row is None or (
             row["request_hash"], row["run_id"], row["user_id"], row["tool"],
-            row["tool_version"], bool(row["needs_approval"]),
-            frozenset(json.loads(row["copied"])),
+            row["tool_version"], frozenset(json.loads(row["copied"])),
         ) != (
             expected_hash, prepared.run_id, prepared.user_id, spec.name,
-            spec.version, needs_approval, prepared.copied,
+            spec.version, prepared.copied,
         ):
+            return Code.OPERATION_CONFLICT
+        # The flow rule can raise the stored need for approval after prepare, never lower
+        # it. A request copy that needs approval while the stored row does not is a conflict.
+        if prepared.needs_approval and not row["needs_approval"]:
             return Code.OPERATION_CONFLICT
         return spec, tp, checked
 
@@ -536,6 +687,7 @@ class Latch:
         reference = None
         try:
             reference = self._reference(prepared.org_id, prepared.operation_id)
+            row = self.store.get_operation(prepared.org_id, prepared.operation_id)
             self.store.finish(prepared.org_id, prepared.operation_id, outcome, str(code), now)
             self._write_audit(
                 "execute",
@@ -549,6 +701,8 @@ class Latch:
                 duration_ms=duration_ms,
                 now=now,
                 reference=reference,
+                labels=self._labels_json(prepared.tool),
+                flow_reason=(row or {}).get("flow_reason") or None,
             )
         except StorageError as exc:
             recorded, message = False, error_text(exc)
@@ -573,8 +727,10 @@ class Latch:
         if tp.copied_arguments == "deny" and copied:
             return Code.COPIED_ARGUMENTS
         recipients = tp.allowed_recipients or []
-        if tp.recipient_field is not None and getattr(args, tp.recipient_field) not in recipients:
-            return Code.RECIPIENT_NOT_ALLOWED
+        if tp.recipient_field is not None:
+            recipient = field_value(args, tp.recipient_field)
+            if not isinstance(recipient, str) or recipient not in recipients:
+                return Code.RECIPIENT_NOT_ALLOWED
         if spec.access_hook is not None:
             try:
                 ok = spec.access_hook(ctx, args.model_dump())
@@ -612,9 +768,14 @@ class Latch:
 
     @staticmethod
     def _copied_fields(spec: ToolSpec, paths: frozenset[str]) -> frozenset[str]:
-        """Keep the paths whose top level field names a field of this tool's arguments."""
-        fields = spec.args_model.model_fields
-        return frozenset(p for p in paths if p.split(".")[0].split("[")[0] in fields)
+        """The copied paths this call carries, each kept as the caller wrote it.
+
+        A path's top level name may be a field's name or its alias, as with
+        field_value. A path that matches no field is kept too, so a name Latch does
+        not know still counts as a copied value. That fails closed.
+        """
+        del spec
+        return paths
 
     def _copied_denied(self, prepared: PreparedAction) -> bool:
         spec = self._tools.get(prepared.tool)
@@ -630,7 +791,10 @@ class Latch:
         if tp.approval.mode == "always":
             return True
         if tp.approval.mode == "over_amount":
-            return getattr(args, tp.approval.amount_field) > tp.approval.threshold_minor
+            # A missing or non number amount needs approval, so it never skips the check.
+            # A negative amount needs approval too, since it moves money the other way.
+            amount = amount_value(args, tp.approval.amount_field)
+            return amount is None or amount < 0 or amount > tp.approval.threshold_minor
         return False
 
     def _request_hash(
@@ -663,6 +827,7 @@ class Latch:
         code: Code,
         copied: frozenset[str],
         summary: str,
+        flow_reason: str = "",
     ) -> PreparedAction:
         prepared = PreparedAction.model_construct(
             operation_id=operation_id,
@@ -677,17 +842,25 @@ class Latch:
             explanation=explain(code),
             copied=copied,
             summary=summary,
+            flow_reason=flow_reason,
         )
         prepared._args_json = canonical
         return prepared
 
     def _deny_prepare(
-        self, ctx: UserContext, tool: str, operation_id: str, code: Code, now: float
+        self, ctx: UserContext, tool: str, operation_id: str, code: Code, now: float,
+        flow_reason: str = "",
     ) -> Decision:
-        self._audit("prepare", code, ctx, tool, operation_id, now)
+        self._audit("prepare", code, ctx, tool, operation_id, now, flow_reason=flow_reason)
         return Decision(
-            allowed=False, code=code, explanation=explain(code), operation_id=operation_id
+            allowed=False, code=code, explanation=self._explain(code, flow_reason),
+            operation_id=operation_id,
         )
+
+    def _labels_json(self, tool: str) -> str | None:
+        """The tool's labels from the policy as a JSON list, or None when it sets none."""
+        tp = self.policy.tools.get(tool)
+        return None if tp is None or tp.labels is None else json.dumps(tp.labels)
 
     def _write_audit(self, *args: Any, **kwargs: Any) -> None:
         row = self.store.audit(*args, **kwargs)
@@ -711,6 +884,7 @@ class Latch:
         summary: str | None = None,
         copied: str | None = None,
         reference: str | None = None,
+        flow_reason: str = "",
     ) -> None:
         self._write_audit(
             event,
@@ -725,4 +899,6 @@ class Latch:
             summary=summary,
             copied=copied,
             reference=reference,
+            labels=self._labels_json(tool),
+            flow_reason=flow_reason or None,
         )

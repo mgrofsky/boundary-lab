@@ -12,7 +12,7 @@ from .demo.terminal import DEFAULT_DB
 from .demo.terminal import add_arguments as add_demo_arguments
 from .errors import ConfigError, StorageError
 from .events import format_line, to_event
-from .policy import load_policy
+from .policy import LABELS, load_policy
 from .store import read_audit
 
 POLL_SECONDS = 1
@@ -29,6 +29,13 @@ def check(path: str) -> int:
         print(f"policy rejected: could not read {path}: {exc.strerror}", file=sys.stderr)
         return 1
     print(f"policy ok, {len(policy.tools)} tools, policy hash {policy.digest[:12]}")
+    mode = policy.flow.all_three
+    if mode != "allow":
+        counts = ", ".join(
+            f"{label} {sum(label in (tp.labels or ()) for tp in policy.tools.values())}"
+            for label in LABELS
+        )
+        print(f'flow rule: all_three = "{mode}"; tools with each label: {counts}')
     return 0
 
 
@@ -119,6 +126,13 @@ def build_parser() -> argparse.ArgumentParser:
     audit_cmd.add_argument("--follow", action="store_true",
                            help="keep printing new rows until interrupted")
     audit_cmd.add_argument("--json", action="store_true", help="print one JSON object per line")
+    mcp_cmd = commands.add_parser(
+        "mcp", help="check every tool call between an MCP client and an MCP server",
+        usage="boundary-latch mcp --policy policy.toml [options] -- <server command> [args...]",
+    )
+    from .mcp import add_arguments as add_mcp_arguments
+
+    add_mcp_arguments(mcp_cmd)
     init_cmd = commands.add_parser("init", help="copy the starter project")
     init_cmd.add_argument("directory", help="where to write the starter project")
     return parser
@@ -134,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
         return init(args.directory)
     if args.command == "audit":
         return audit(args.path, args.org, args.last, args.follow, args.json)
+    if args.command == "mcp":
+        from .mcp import run as run_mcp
+
+        return run_mcp(args)
     if args.command == "serve":
         return serve(args.port, args.db, args.live)
     from .demo.terminal import run as run_demo

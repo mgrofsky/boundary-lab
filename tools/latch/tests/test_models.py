@@ -58,3 +58,17 @@ def test_arguments_returns_a_fresh_dict_each_call():
     second = prepared.arguments
     assert second == {"to": "a@example.com"}
     assert first is not second
+
+
+@pytest.mark.parametrize("name", ["read.file", "get-weather", "Search_Docs", "a", "x" * 64])
+def test_tool_spec_accepts_mcp_names(name):
+    assert ToolSpec(name=name, version="1", args_model=Args, handler=handler).name == name
+
+
+@pytest.mark.parametrize(
+    "name", ["", "1tool", "_tool", ".tool", "-tool", "a b", "a<b>", "a\nb", "a/b", "x" * 65,
+             "café", "a;b", "a\"b"],
+)
+def test_tool_spec_still_rejects_unsafe_names(name):
+    with pytest.raises(pydantic.ValidationError):
+        ToolSpec(name=name, version="1", args_model=Args, handler=handler)

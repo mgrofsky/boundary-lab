@@ -93,3 +93,49 @@ def test_public_names():
     ):
         assert hasattr(boundary_latch, name), name
     assert set(boundary_latch.__all__) >= {"Latch", "load_policy", "ToolFailed"}
+
+
+FLOW = """
+[flow]
+all_three = "deny"
+
+[tools.get_issue]
+require_permission = "use"
+labels = ["untrusted"]
+
+[tools.read_and_send]
+require_permission = "use"
+labels = ["sensitive", "external"]
+
+[tools.create_pull_request]
+require_permission = "use"
+{labels}
+"""
+
+
+def test_check_prints_the_flow_mode_and_how_many_tools_carry_each_label(tmp_path):
+    path = tmp_path / "policy.toml"
+    path.write_text(FLOW.format(labels='labels = ["external"]'))
+    result = run_cli("check", str(path))
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("policy ok, 3 tools, policy hash ")
+    assert lines[1] == 'flow rule: all_three = "deny"; tools with each label: untrusted 1, sensitive 1, external 2'
+
+
+def test_check_says_nothing_about_flow_when_the_rule_is_off(tmp_path):
+    path = tmp_path / "policy.toml"
+    path.write_text(GOOD)
+    result = run_cli("check", str(path))
+    assert "flow rule" not in result.stdout
+
+
+def test_check_rejects_a_tool_without_labels_when_the_rule_is_on(tmp_path):
+    path = tmp_path / "policy.toml"
+    path.write_text(FLOW.format(labels=""))
+    result = run_cli("check", str(path))
+    assert result.returncode == 1
+    assert "create_pull_request" in result.stderr
+    assert "needs labels" in result.stderr
+    path.write_text(FLOW.format(labels="labels = []"))
+    assert run_cli("check", str(path)).returncode == 0

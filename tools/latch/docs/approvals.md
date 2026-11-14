@@ -80,7 +80,7 @@ Cancel works while the operation is prepared or approved. A cancelled operation 
 
 ## Closed operations
 
-A denied, cancelled, or run limit refused operation is closed. Preparing the same request with that operation ID again returns `OPERATION_CLOSED`. A request that does not match the saved record still returns `OPERATION_CONFLICT`. Either way, use a new operation ID.
+A denied, cancelled, run limit refused, or flow blocked operation is closed. Preparing the same request with that operation ID again returns `OPERATION_CLOSED`. A request that does not match the saved record still returns `OPERATION_CONFLICT`. Either way, use a new operation ID.
 
 ## Decision history
 

@@ -7,6 +7,8 @@ class Code(StrEnum):
     APPROVED = "APPROVED"
     DENIED_BY_APPROVER = "DENIED_BY_APPROVER"
     UNKNOWN_TOOL = "UNKNOWN_TOOL"
+    TOOL_CHANGED = "TOOL_CHANGED"
+    INPUT_NOT_REQUESTED = "INPUT_NOT_REQUESTED"
     NO_POLICY = "NO_POLICY"
     INVALID_ARGUMENTS = "INVALID_ARGUMENTS"
     MISSING_PERMISSION = "MISSING_PERMISSION"
@@ -15,6 +17,7 @@ class Code(StrEnum):
     ACCESS_HOOK_FAILED = "ACCESS_HOOK_FAILED"
     DESCRIBE_FAILED = "DESCRIBE_FAILED"
     COPIED_ARGUMENTS = "COPIED_ARGUMENTS"
+    FLOW_BLOCKED = "FLOW_BLOCKED"
     RUN_LIMIT = "RUN_LIMIT"
     RUN_EXPIRED = "RUN_EXPIRED"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
@@ -44,6 +47,11 @@ EXPLANATIONS: dict[Code, str] = {
         "A user with approval permission denied the request, so it will not run."
     ),
     Code.UNKNOWN_TOOL: "No tool with that name has been added to Latch.",
+    Code.TOOL_CHANGED: (
+        "This tool's definition changed after it was first seen. "
+        "A person must accept the new definition."
+    ),
+    Code.INPUT_NOT_REQUESTED: "This call carries an answer the server did not ask for.",
     Code.NO_POLICY: "The policy has no rules for this tool, so Latch blocks it.",
     Code.INVALID_ARGUMENTS: "The request's inputs do not match what this tool accepts.",
     Code.MISSING_PERMISSION: "The user does not have the permission this tool requires.",
@@ -56,6 +64,10 @@ EXPLANATIONS: dict[Code, str] = {
     Code.COPIED_ARGUMENTS: (
         "One or more argument values were copied from text the model read, "
         "and this tool's policy blocks that."
+    ),
+    Code.FLOW_BLOCKED: (
+        "This run has read untrusted input and private data and can act outside. "
+        "The policy blocks the call that would complete that chain."
     ),
     Code.RUN_LIMIT: "This run has reached its tool request limit.",
     Code.RUN_EXPIRED: "This run has reached its time limit. Start a new run.",

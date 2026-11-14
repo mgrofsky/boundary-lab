@@ -51,6 +51,9 @@ def tool_specs(nw: Northwind, timeout_seconds: float = 30.0) -> list[ToolSpec]:
     def lookup(args: dict[str, Any], info: CallInfo) -> dict[str, Any]:
         return nw.lookup(args["account_id"])
 
+    def note(args: dict[str, Any], info: CallInfo) -> dict[str, Any]:
+        return nw.note(args["account_id"])
+
     def send(args: dict[str, Any], info: CallInfo) -> dict[str, Any]:
         return nw.send(args["to"], args["body"])
 
@@ -61,6 +64,15 @@ def tool_specs(nw: Northwind, timeout_seconds: float = 30.0) -> list[ToolSpec]:
         return nw.can_see(ctx.user_id, args["account_id"])
 
     return [
+        ToolSpec(
+            name="lookup_note",
+            version="1",
+            args_model=LookupArgs,
+            handler=note,
+            access_hook=owns_account,
+            description="Read the latest note the customer wrote on one account.",
+            timeout_seconds=timeout_seconds,
+        ),
         ToolSpec(
             name="lookup_account",
             version="1",

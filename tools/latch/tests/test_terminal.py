@@ -69,9 +69,9 @@ def test_unknown_scenario_is_refused(capsys):
 
 
 def test_pause_waits_for_enter_between_scenarios():
-    result = run_demo("--db", ":memory:", "--pause", stdin="\n" * 9)
+    result = run_demo("--db", ":memory:", "--pause", stdin="\n" * 10)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("press Enter") == 8
+    assert result.stdout.count("press Enter") == 9
 
 
 def test_a_file_database_survives_a_second_run(tmp_path):
@@ -79,7 +79,7 @@ def test_a_file_database_survives_a_second_run(tmp_path):
     assert run_demo("--db", db).returncode == 0
     second = run_demo("--db", db)
     assert second.returncode == 0, second.stdout
-    assert "9 of 9 scenarios matched" in second.stdout
+    assert "10 of 10 scenarios matched" in second.stdout
 
 
 def test_default_database_is_in_the_current_directory(tmp_path):

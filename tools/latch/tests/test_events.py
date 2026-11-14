@@ -16,7 +16,8 @@ from boundary_latch.store import SQLiteStore
 from .conftest import POLICY, LookupArgs, SendMessageArgs, account_hook, make_approver, make_ctx
 
 FIELDS = {"schema", "event", "code", "org_id", "run_id", "operation_id", "user_id", "tool",
-          "outcome", "duration_ms", "at", "reference", "summary", "copied"}
+          "outcome", "duration_ms", "at", "reference", "summary", "copied", "labels",
+          "flow_reason"}
 MESSAGE = {"to": "help@northwind.example", "body": "hello"}
 
 
@@ -160,3 +161,18 @@ def test_audit_missing_file(tmp_path, capsys):
     assert cli.main(["audit", str(tmp_path / "nope.sqlite")]) == 1
     assert "no Latch database" in capsys.readouterr().err
     assert not (tmp_path / "nope.sqlite").exists()
+
+
+def test_a_dotted_mcp_tool_name_is_stored_and_printed_as_one_token(clock, tmp_path):
+    policy = parse_policy('[tools."files.read-text"]\nrequire_permission = "files"\n')
+    store = SQLiteStore(tmp_path / "latch.db")
+    engine = Latch(policy, store, clock=clock)
+    engine.register(ToolSpec(name="files.read-text", version="1", args_model=LookupArgs,
+                             handler=MagicMock(return_value="text")))
+    ctx = make_ctx(permissions={"files"})
+    prepared = engine.prepare(ctx, "files.read-text", {"account_id": "A1"}, "op1")
+    assert engine.execute(prepared, ctx).code == Code.EXECUTED
+    rows = store.audit_rows("northwind")
+    assert {row["tool"] for row in rows} == {"files.read-text"}
+    line = cli.format_line(cli.to_event(rows[-1]))
+    assert " tool=files.read-text " in line

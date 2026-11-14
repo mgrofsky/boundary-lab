@@ -24,7 +24,7 @@ The browser demo uses the same variables with `boundary-latch serve --live`. Wit
 
 ## What the model can do
 
-The model can request three tools: `lookup_account`, `send_message`, and `issue_refund`. It has no approval tool. If it names a tool that does not exist, Latch returns `UNKNOWN_TOOL`.
+The model can request four tools: `lookup_note`, `lookup_account`, `send_message`, and `issue_refund`. It has no approval tool. If it names a tool that does not exist, Latch returns `UNKNOWN_TOOL`. The demo policy turns on the flow rule, so a run that reads a note and an account cannot then send a message or a refund. See [flow.md](flow.md).
 
 When a call needs approval, the model gets the operation ID and a message that the call is waiting for a supervisor. The call does not run. In the browser, switch to Jordan to approve it, then switch back to the requester to run it.
 

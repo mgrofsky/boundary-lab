@@ -39,7 +39,7 @@ Handler = (
 
 class ToolSpec(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
-    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    name: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
     version: str = Field(min_length=1, max_length=32)
     args_model: type[BaseModel]
     handler: Handler
@@ -77,6 +77,8 @@ class PreparedAction(BaseModel):
     explanation: str
     copied: frozenset[str] = frozenset()
     summary: str = ""
+    # Set when the flow rule applies to this call: what set each label, and what it adds.
+    flow_reason: str = ""
     _args_json: str = PrivateAttr()
 
     @property
@@ -112,3 +114,4 @@ class OperationStatus(Strict):
     summary: str = ""
     copied: frozenset[str] = frozenset()
     reference: str | None = None
+    flow_reason: str = ""

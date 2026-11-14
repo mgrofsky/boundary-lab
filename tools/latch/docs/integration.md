@@ -76,7 +76,7 @@ Pass `on_event` to `Latch` to send every audit row to your logs as it is written
 
 ## What you should see
 
-Run `boundary-latch scenarios` to print the results of the nine included scenarios. Two examples:
+Run `boundary-latch scenarios` to print the results of the ten included scenarios. Two examples:
 
     other_customer          ACCESS_DENIED
     duplicate_refund        ALLOWED, EXECUTED, ALREADY_RECORDED

@@ -16,6 +16,7 @@ NAMES = [
     "exhausted_limit",
     "timeout_after_refund",
     "expired_approval",
+    "flow_chain",
 ]
 
 SRC = str(Path(__file__).resolve().parent.parent / "src")
@@ -25,7 +26,7 @@ def by_name():
     return {scenario.name: scenario for scenario in run_all()}
 
 
-def test_nine_scenarios_match_their_expected_codes():
+def test_ten_scenarios_match_their_expected_codes():
     scenarios = run_all()
     assert [s.name for s in scenarios] == NAMES
     for scenario in scenarios:
@@ -93,7 +94,7 @@ def test_render_text_shows_every_step():
     assert "APPROVAL_EXPIRED" in text
     assert "UNCERTAIN" in text
     assert "example user" in text
-    assert "9 of 9 scenarios matched" in text
+    assert "10 of 10 scenarios matched" in text
 
 
 def test_scenarios_command_exits_zero():
@@ -107,7 +108,7 @@ def test_scenarios_command_exits_zero():
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
-    assert len(json.loads(result.stdout)) == 9
+    assert len(json.loads(result.stdout)) == 10
 
 
 def test_scenarios_run_through_the_demo_session(monkeypatch):
@@ -140,3 +141,16 @@ def test_scenarios_write_their_record_to_a_file_database(tmp_path):
     finally:
         reader.close()
     assert events == {"prepare", "approve", "execute"}
+
+
+def test_the_flow_scenario_blocks_the_message_and_says_why():
+    flow = by_name()["flow_chain"]
+    assert flow.expected == ["ALLOWED", "EXECUTED", "ALLOWED", "EXECUTED", "FLOW_BLOCKED"]
+    blocked = flow.steps[-1]
+    assert blocked.flow_reason == (
+        "This run read untrusted input (lookup_note) and private data (lookup_account). "
+        "This call acts outside (send_message)."
+    )
+    assert blocked.state_change == "nothing"
+    text = render_text([flow])
+    assert "flow: This run read untrusted input (lookup_note)" in text
