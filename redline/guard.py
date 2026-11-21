@@ -327,6 +327,10 @@ class Guard:
                 row = self.grader.grade(prompt, response, user_type)
         except Exception as exc:  # noqa: BLE001 (a failed grade is a fallback, never a pass)
             return _Checked(response, fallback="error", error=_error_text(exc))
+        if time.monotonic() > end:
+            # A grade that arrives late is not used, even when the caller was slow to notice
+            # the deadline (a busy event loop) and would otherwise find the work finished.
+            return _Checked(response, fallback="deadline")
         if row.get("outcome") not in pipeline.WORST:
             return _Checked(response, row, "judge_error", "unknown outcome")
         # The judge only says pass or fail. A review it decided means no usable grade.

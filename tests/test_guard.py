@@ -810,3 +810,23 @@ def test_the_command_exits_2_when_the_live_judge_settings_are_missing(
     )
     assert code == 2
     assert "REDLINE_JUDGE" in capsys.readouterr().err
+
+
+def test_a_grade_that_arrives_late_is_not_used_when_the_event_loop_was_busy():
+    """The loop stalls across the deadline and the judge finishes in the stall."""
+
+    def slow_pass():
+        time.sleep(0.1)
+        return row("pass")
+
+    guard = Guard(StubGrader(slow_pass), deadline_seconds=0.03)
+
+    async def run():
+        task = asyncio.ensure_future(guard.acheck("p", "answer", "verified"))
+        await asyncio.sleep(0)      # the worker starts
+        time.sleep(0.2)  # noqa: ASYNC251 (on purpose: the loop is busy past the deadline)
+        return await task
+
+    decision = asyncio.run(run())
+    assert decision.allow is False
+    assert decision.fallback == "deadline"
