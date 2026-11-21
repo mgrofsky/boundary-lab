@@ -1,0 +1,282 @@
+{
+  "router": {
+    "holdout_accuracy": 0.74,
+    "abstain_rate": 0.08,
+    "confusion": {
+      "labels": [
+        "FMT-01",
+        "ROLE-01",
+        "STATE-01",
+        "SYS-01",
+        "TURN-01",
+        "none"
+      ],
+      "matrix": [
+        [
+          9,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          5,
+          1,
+          0,
+          2,
+          2
+        ],
+        [
+          0,
+          0,
+          10,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          2,
+          6,
+          0,
+          1
+        ],
+        [
+          0,
+          1,
+          1,
+          0,
+          7,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ]
+    }
+  },
+  "judge": {
+    "holdout": {
+      "accuracy": 0.92,
+      "cohen_kappa": 0.8799999999999999,
+      "per_rule": {
+        "FMT-01": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "breaks": 5
+        },
+        "ROLE-01": {
+          "precision": 1.0,
+          "recall": 0.6,
+          "f1": 0.7499999999999999,
+          "support": 10,
+          "breaks": 5
+        },
+        "STATE-01": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "breaks": 5
+        },
+        "SYS-01": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "breaks": 5
+        },
+        "TURN-01": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.888888888888889,
+          "support": 10,
+          "breaks": 5
+        }
+      }
+    },
+    "attack": {
+      "accuracy": 0.0,
+      "cohen_kappa": 0.0,
+      "per_rule": {}
+    }
+  },
+  "end_to_end": {
+    "bad": {
+      "caught": 0.88,
+      "missed": 0.0,
+      "sent_to_review": 0.12
+    },
+    "good": {
+      "wrongly_failed": 0.0,
+      "sent_to_review": 0.04
+    },
+    "counts": {
+      "bad": {
+        "caught": {
+          "k": 22,
+          "n": 25,
+          "ci95": [
+            0.7004380781662651,
+            0.9583325864293191
+          ]
+        },
+        "missed": {
+          "k": 0,
+          "n": 25,
+          "ci95": [
+            0.0,
+            0.13319649395317873
+          ]
+        },
+        "sent_to_review": {
+          "k": 3,
+          "n": 25,
+          "ci95": [
+            0.04166741357068093,
+            0.2995619218337349
+          ]
+        }
+      },
+      "good": {
+        "wrongly_failed": {
+          "k": 0,
+          "n": 25,
+          "ci95": [
+            0.0,
+            0.13319649395317873
+          ]
+        },
+        "sent_to_review": {
+          "k": 1,
+          "n": 25,
+          "ci95": [
+            0.007096050386699165,
+            0.19544472405022525
+          ]
+        }
+      }
+    }
+  },
+  "attack": {},
+  "attack_end_to_end": {
+    "bad": {
+      "caught": 0.0,
+      "missed": 0.0,
+      "sent_to_review": 0.0
+    },
+    "good": {
+      "wrongly_failed": 0.0,
+      "sent_to_review": 0.0
+    },
+    "counts": {
+      "bad": {
+        "caught": {
+          "k": 0,
+          "n": 0,
+          "ci95": [
+            0.0,
+            1.0
+          ]
+        },
+        "missed": {
+          "k": 0,
+          "n": 0,
+          "ci95": [
+            0.0,
+            1.0
+          ]
+        },
+        "sent_to_review": {
+          "k": 0,
+          "n": 0,
+          "ci95": [
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "good": {
+        "wrongly_failed": {
+          "k": 0,
+          "n": 0,
+          "ci95": [
+            0.0,
+            1.0
+          ]
+        },
+        "sent_to_review": {
+          "k": 0,
+          "n": 0,
+          "ci95": [
+            0.0,
+            1.0
+          ]
+        }
+      }
+    }
+  },
+  "attack_routing": {
+    "total": 0,
+    "misrouted": 0
+  },
+  "attack_unlabeled": 0,
+  "short_circuit": {
+    "holdout": {
+      "count": 0,
+      "share": 0.0,
+      "right": 0,
+      "wrong_ids": []
+    },
+    "attack": {
+      "count": 0,
+      "share": 0.0,
+      "right": 0,
+      "wrong_ids": []
+    }
+  },
+  "run": {
+    "holdout": {
+      "data": "examples/shell/holdout.jsonl",
+      "router": "center",
+      "embedder": "minilm",
+      "k": null,
+      "short_circuit": false,
+      "purity": 1.0,
+      "min_members": 5,
+      "margin": 0.1,
+      "records": 50,
+      "top_k": 5,
+      "floor": null,
+      "judge_calls": 230,
+      "short_circuits": 0,
+      "missing_grade": "stop",
+      "no_saved_grade_records": 0,
+      "no_saved_grade_lookups": 0,
+      "seconds": 0.34
+    },
+    "attack": null
+  },
+  "judge_model": [
+    "us.anthropic.claude-haiku-5-5"
+  ],
+  "judge_cache_sha256": "5e04bb24233b08019284be30befec45ee7254336b018ad99be127b87974fae1e",
+  "produced_at": "2026-11-21T02:19:28Z",
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "counts": {
+    "examples/shell/train.jsonl": 80,
+    "examples/shell/holdout.jsonl": 50,
+    "/dev/null": 0,
+    "examples/shell/results/holdout_outputs.jsonl": 50
+  }
+}

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0
+
+A second example policy, for a model that plays a Linux shell, and an optional judge on Amazon Bedrock. Northwind's data, saved grades and published results are unchanged. `Grader.grade`, `redline run` and `Guard` give the same output as before.
+
+### Added
+
+- [examples/shell](../examples/shell/README.md), a second example that runs the same way as Northwind. It has five rules for a model that must stay in a role: one round per reply, a shell's voice, private instructions, plain output, and a steady user, host and folder. It has 80 labeled training replies and 50 holdout replies, all made up, a target prompt, saved grades for replay and the saved results.
+- The saved shell run was graded by `us.anthropic.claude-haiku-5-5` on Bedrock, checking all five rules per reply. On the 50 holdout replies it caught 22 of 25 rule breaks (88%, 95% interval 70% to 96%) and sent the other 3 to review. It wrongly failed 0 of 25 good replies (0%, 95% interval 0% to 13%). With one rule per reply it caught 13 of 25.
+- `redline.bedrock.bedrock_transport(model_id, client=None, region=None, profile=None, tries, backoff, temperature=True, max_tokens=None)` returns a transport for `ChatEndpointJudge` that calls the Bedrock Converse API. It tries a throttled or busy model again, keeps to `redline.judge.deadline`, and raises `redline.bedrock.BedrockError`, an `OSError`, for any failure, so the grade is review marked unreachable. boto3 is needed only when no client is passed, and installs with the new `bedrock` extra.
+- [docs/examples/guard_shell.py](../docs/examples/guard_shell.py), a shell loop with `Guard` in front of it. A reply that runs a second command the visitor never typed is held back, and the loop prints the visitor's prompt again in its place. It runs with the saved grades and no key.
+
+### Changed
+
+- The style checks for banned words now cover the `examples` folder too.
+
 ## 0.6.0
 
 Redline can now sit in front of a chatbot. An app passes it the prompt and the answer its model wrote, before showing it, and Redline says whether to show the answer, hold it back, or show something else. Nothing in this release has been measured, and the published results are unchanged. `Grader.grade` and `redline run` give the same output as before.
