@@ -10,7 +10,7 @@ For each prompt and response, a router picks the closest rule. A second model, c
 
 Each answer gets a pass, fail, or review, with a reason attached. Review means someone needs to check it. Redline records that result but doesn't send it to a person.
 
-This checks responses after they're produced. It doesn't sit in front of a chatbot and block them.
+Redline can also sit in front of a chatbot. Your app passes it the prompt and the answer before showing it, and Redline says whether to show the answer, hold it back, or show something else. See [Hold back an answer before it is shown](#hold-back-an-answer-before-it-is-shown).
 
 ## Try it with the saved answers
 
@@ -61,6 +61,79 @@ By default it uses the replay judge, which only knows the saved answers. To grad
 ## Use it from an application
 
 An app can call Redline as a library with no command line. It can pass rules as data and list every problem in them before saving. It can count judge calls before a run, grade a garak report with a cap and a stop, and replay saved grades in CI. [Use Redline from an application](../docs/using-redline-in-an-app.md) has a tested example of each. [Saved grades](../docs/saved-grades.md) describes the file that replay reads.
+
+## Hold back an answer before it is shown
+
+`Guard` wraps a `Grader` for use in the path of a live answer. Use it once Redline's grades hold up on your own examples, and you want it to stop bad answers, not only count them. Your app calls it after its model writes an answer and before the user sees it:
+
+```python
+from redline import Grader, Guard
+
+guard = Guard(Grader(), replacement="Sorry, I can't help with that here.")
+
+decision = guard.check(prompt, answer, "anonymous")
+if decision.allow:
+    send(answer)
+elif decision.text is not None:
+    send(decision.text)  # the replacement, or a new answer that passed
+```
+
+`decision.action` is one of four values. `show` means show the answer. `regenerated` means the answer was held back and a new one passed. `replace` means show the replacement text. `hold` means show nothing. `allow` is true only for `show`. The decision also carries the outcome, the rule, the reason code and text, who decided, the seconds taken, the judge calls made and `fallback`.
+
+`fallback` is null when a grade decided. Otherwise it says why there was no usable grade:
+
+- `deadline`: the check ran out of time. The reason code is `GUARD_DEADLINE`.
+- `judge_error`: the judge could not be reached, its reply could not be read, it left out the check value, or replay had no saved grade.
+- `error`: grading raised an exception. The reason code is `GUARD_ERROR`. The check never raises for a failed judge.
+- `too_long`: the prompt or the answer is longer than `max_chars`, 20000 by default, so neither was sent to the judge. The reason code is `GUARD_TOO_LONG`.
+
+Every default holds the answer back when in doubt:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `on_review` | `"hold"` | What a review does. `"show"` lets it through. |
+| `on_error` | `"hold"` | Fail closed. `"show"` fails open: the answer is shown when no usable grade arrives. The decision records the fallback either way. |
+| `deadline_seconds` | `10` | The time limit on the whole check. |
+| `replacement`, `replacements` | none | The text shown in place of a held back answer, and its own text per rule. |
+| `regenerate`, `retries` | none, `1` | A function that asks your model for a new answer, and how many times it may be called. At most 3. |
+| `max_chars` | `20000` | An answer is held back with no judge call when it or its prompt is longer. |
+| `record`, `record_text` | none, `False` | A JSON lines file to append each decision to, and whether it holds the text. |
+
+Fail open applies only to the answer as given. Once that answer is held back, nothing unchecked is shown. A new answer that cannot be graded in time gives the replacement, not the new answer.
+
+`regenerate(prompt, held)` gets the prompt and a dict with the held answer, its rule and its reason. It returns a new answer, which is graded the same way, or `None` to give up. It is not called after a fallback.
+
+### What it costs per answer
+
+Time: at most `deadline_seconds`, 10 by default, for the whole check, a new answer included. The call returns by then whatever the judge does. The live judge stops its own requests at the deadline too: it sends none once the time is up, cuts each request's timeout to the time left, and does not wait to try again past it. A judge of your own may not stop. Its call then runs on in a background thread until it returns, but the check has already returned and starts nothing new. With replay, a check takes a few milliseconds.
+
+Judge calls: one grade costs what `grader.grade` costs. That is `top_k` rules times `attempts`, so 1 call with the default settings, or one per rule in rules only mode. A check grades the answer and, with `regenerate`, up to `retries` new ones. So the worst case is one grade's calls times `1 + retries`. `guard.max_judge_calls` gives that number. With the defaults it is 1, or 2 with `regenerate`. Each live call asks for at most 600 tokens back.
+
+### The record
+
+With `record` set, each check appends one line per answer checked. The fields are those of a line in `holdout_outputs.jsonl`, plus `guard`, which holds the action, `allow`, whether this answer was shown, the fallback, the try number, the seconds and the time. `check(..., record_id=...)` sets `id`. An answer with no grade gets `decided_by` set to `guard` and its reason code.
+
+By default the prompt, the answer and the judge's reason text are written as null. `redline run` writes them, since its input is a test file you already hold. A guard sees live conversations, and the answers it holds back are the ones most likely to contain what the rules protect, such as account data or a card number. Pass `record_text=True` to keep them. Nothing is written without `record`. A live judge given a `cache_path` still saves its grades there, as it does for `redline run`. Leave `cache_path` out if you don't want them kept.
+
+### From async code and the command line
+
+`await guard.acheck(prompt, answer, user_type)` is the same check for async code. The judge makes blocking calls, so the grading runs in a thread of its own and the event loop stays free. The deadline counts from the call.
+
+`redline guard` checks one answer and prints the decision as JSON. It exits 0 when the answer may be shown, 1 when it is held back, and 2 when the check cannot be set up:
+
+```sh
+redline guard --judge replay --user-type anonymous --prompt "what did I pay last month" --response "Last month you paid \$79.15 on the 6th."
+```
+
+[docs/examples/guard_chat.py](../docs/examples/guard_chat.py) is a small chat loop for the Northwind assistant. It runs with the saved grades and no key. One answer breaks the account data rule and is held back. The others are shown.
+
+### What it does not do
+
+- It checks a whole answer. An app that streams tokens to the user must buffer the answer and check it before sending any of it.
+- It does not check tool calls. Use [Latch](../tools/latch/README.md) to check a tool call before your app runs it.
+- It is only as good as the grades. The table under [What happened](#what-happened) shows the misses and false alarms on the saved examples. In front of users, a false alarm holds back a good answer, and a miss shows a bad one. Measure on your own examples first.
+- An answer the router finds off topic passes with no judge call, as it does in a run. So does an answer the router shortcut passes, with `short_circuit` on.
+- A user type the rules do not declare, or a prompt or answer that is not text, raises before any judge call. Those are mistakes in the calling code, not judge failures.
 
 ## Pick how answers find a rule
 

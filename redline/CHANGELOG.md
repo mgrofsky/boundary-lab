@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0
+
+Redline can now sit in front of a chatbot. An app passes it the prompt and the answer its model wrote, before showing it, and Redline says whether to show the answer, hold it back, or show something else. Nothing in this release has been measured, and the published results are unchanged. `Grader.grade` and `redline run` give the same output as before.
+
+### Added
+
+- `redline.Guard(grader, ...)` checks one answer with `check(prompt, response, user_type)` and returns a `redline.Decision`. The decision says what to do in `action` (`show`, `regenerated`, `replace` or `hold`) and `allow`, why, which outcome it came from, how long it took, how many judge calls it made, and whether a grade decided or a fallback applied.
+- Every default holds the answer back when in doubt. A review is held back unless `on_review="show"`. When the judge cannot be reached, gives a reply that cannot be used, runs out of time or raises, the answer is held back unless `on_error="show"`. The check does not raise for a failed judge.
+- `deadline_seconds`, 10 by default, limits the whole check. `max_chars`, 20000 by default, holds back an answer with no judge call when it or its prompt is longer.
+- `replacement` and `replacements` set the text shown in place of a held back answer, by default and per rule. `regenerate` asks the app's model for a new answer, which is graded too, at most `retries` times: 1 by default and never more than 3.
+- `guard.max_judge_calls` is the most judge calls one check can make: one grade's calls times one plus the retries.
+- `record` appends each decision to a JSON lines file, one line per answer checked, with the fields of `holdout_outputs.jsonl` plus a `guard` object. The prompt, the answer and the judge's reason text are written as null unless `record_text=True`. Nothing is written without `record`.
+- `guard.acheck(...)` is the same check for async code. The grading runs in a thread of its own, since the judge makes blocking calls, and the deadline counts from the call.
+- `redline guard --prompt ... --response ... --user-type ... --judge replay` checks one answer and prints the decision as JSON. It exits 0 to show, 1 to hold back and 2 when the check cannot be set up. With a live judge it refuses to write to `data/judge_cache.jsonl`.
+- `redline.judge.deadline(seconds)` gives the judge requests made inside it a time limit. The transport from `http_transport` sends no request once the time is up, cuts each request's timeout to the time left, and does not wait to try again past it. A request out of time raises `TimeoutError`, which `ChatEndpointJudge` turns into review marked unreachable, as for any outage. Outside a `deadline` block nothing changes.
+- [docs/examples/guard_chat.py](../docs/examples/guard_chat.py), a chat loop for the Northwind assistant that holds back one bad answer and shows two good ones, with the saved grades and no key.
+
 ## 0.5.0
 
 **Breaking change for installs.** `sentence-transformers` is no longer installed with Redline. It moved to an extra named `minilm`, because it pulls in torch and rules only mode does not need it. If you use the default `minilm` embedder, install `pip install -e ".[minilm]"` from a checkout, or `pip install "boundary-redline[minilm] @ git+https://github.com/mgrofsky/boundary-lab"` from the repository. Without it, asking for that embedder stops with one line that gives both commands. No default changed: the calibrated mode still uses `minilm`. The `dev` extra still installs it.

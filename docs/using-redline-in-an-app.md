@@ -371,6 +371,7 @@ Your own judge is any object with `grade(rule, examples, prompt, response, user_
 
 ## See also
 
+- [Hold back an answer before it is shown](../redline/README.md#hold-back-an-answer-before-it-is-shown) covers `Guard`, which checks one answer in the path of a live reply, with a time limit and a fallback.
 - [Use Redline with garak](garak.md) covers the command and the detector.
 - [Writing rules](writing-rules.md) covers what makes a rule easy to judge.
 - [Using Redline in an application: AegisShield](integrations/aegisshield/README.md) is a worked design for one app.

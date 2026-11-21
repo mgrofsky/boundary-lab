@@ -9,6 +9,8 @@ import re
 import secrets
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Protocol
 
@@ -26,6 +28,10 @@ TRIES = len(BACKOFF_SECONDS)
 # Errors that mean the judge was not reached or refused the call, so it gave no opinion.
 UNREACHABLE = (httpx.HTTPError, OSError)
 _sleep = time.sleep
+# The clock a deadline is measured on. Tests replace it.
+_clock = time.monotonic
+# The time on _clock by which a judge request must be done, or None for no limit.
+_deadline: ContextVar[float | None] = ContextVar("redline_judge_deadline", default=None)
 # What replay does when no saved grade matches: stop the run, or record review.
 MISSING_GRADE = ("stop", "review")
 # The format of a saved grades file. A line with no version is version 1.
@@ -40,6 +46,7 @@ __all__ = [
     "ReplayJudge",
     "RoleView",
     "build_prompt",
+    "deadline",
     "http_transport",
     "parse_answer",
     "prompt_key",
@@ -293,6 +300,29 @@ def parse_answer(raw: str, rule, nonce: str | None = None) -> dict:
     }
 
 
+@contextmanager
+def deadline(seconds: float):
+    """Give every judge request made inside this block a time limit, in seconds from now.
+
+    The transport from http_transport checks it. It sends no request once the time has
+    passed, cuts each request's own timeout to the time left, and does not wait to try
+    again past it. A request that runs out of time raises TimeoutError, which the live
+    judge turns into review, marked unreachable. A transport of your own does not see it.
+    The limit holds in this thread and in tasks started from it, not in other threads.
+    """
+    token = _deadline.set(_clock() + seconds)
+    try:
+        yield
+    finally:
+        _deadline.reset(token)
+
+
+def _time_left() -> float | None:
+    """Seconds until the deadline, or None when no deadline is set."""
+    at = _deadline.get()
+    return None if at is None else at - _clock()
+
+
 def http_transport(
     base_url: str,
     api_key: str,
@@ -305,7 +335,8 @@ def http_transport(
     It tries again on rate limits, server errors and dropped connections, waiting a little
     longer each time. Any other error is raised at once. tries is how many times one
     request is sent at most. backoff is the seconds to wait after each failed try, and
-    its last value is used again when there are more tries than values.
+    its last value is used again when there are more tries than values. Inside a
+    deadline block it also stops at the deadline. See deadline.
     """
     if tries < 1:
         raise ValueError(f"tries must be at least 1, got {tries}")
@@ -313,12 +344,15 @@ def http_transport(
 
     def send(payload: dict) -> str:
         for attempt in range(tries):
+            left = _time_left()
+            if left is not None and left <= 0:
+                raise TimeoutError("the judge deadline passed before the request was sent")
             try:
                 resp = httpx.post(
                     url,
                     json=payload,
                     headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=timeout,
+                    timeout=timeout if left is None else min(timeout, left),
                 )
                 resp.raise_for_status()
                 return resp.json()["choices"][0]["message"]["content"]
@@ -328,9 +362,11 @@ def http_transport(
                 error = exc
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 error = exc
-            if attempt == tries - 1:
+            wait = backoff[min(attempt, len(backoff) - 1)]
+            left = _time_left()
+            if attempt == tries - 1 or (left is not None and wait >= left):
                 raise error
-            _sleep(backoff[min(attempt, len(backoff) - 1)])
+            _sleep(wait)
 
     return send
 
