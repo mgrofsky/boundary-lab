@@ -240,6 +240,54 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_guard(args) -> int:
+    """Check one answer as an app would before showing it. Print the decision as JSON.
+
+    Exit 0 when the answer may be shown, 1 when it is held back, and 2 when the check
+    could not be set up, such as a rules file that does not load.
+    """
+    from redline.guard import Guard
+
+    if args.rules_only:
+        _rules_only_defaults(args)
+        problem = _rules_only_problem(args)
+        if problem:
+            print(f"redline: {problem}", file=sys.stderr)
+            return 2
+    elif args.judge == "live" and is_pinned_cache(args.cache):
+        print(
+            f"redline: guard with a live judge must not write to {PINNED_CACHE}, the saved "
+            "grades the published results were made from. Pass another file with --cache.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        try:
+            grader = _rules_only_grader(args) if args.rules_only else _grader(args)
+        except SystemExit as exc:
+            # The live judge settings are missing. That is a setup problem, so exit 2.
+            if not isinstance(exc.code, str):
+                raise
+            print(exc.code, file=sys.stderr)
+            return 2
+        guard = Guard(
+            grader,
+            on_review=args.on_review,
+            on_error=args.on_error,
+            deadline_seconds=args.deadline,
+            replacement=args.replacement,
+            max_chars=args.max_chars or None,
+            record=args.record,
+            record_text=args.record_text,
+        )
+        decision = guard.check(args.prompt, args.response, args.user_type)
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"redline: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(decision.to_dict(), indent=2))
+    return 0 if decision.allow else 1
+
+
 def cmd_attack(args) -> int:
     from redline.target import Target, attempt_id_clashes, run_attacks
 
@@ -687,6 +735,68 @@ def build_parser() -> argparse.ArgumentParser:
         "the first, and keep the worst outcome (default: 1)",
     )
     run.set_defaults(func=cmd_run)
+
+    guard = sub.add_parser(
+        "guard",
+        help="check one answer before it is shown, print the decision as JSON",
+        description=(
+            "Grade one answer the way an app would before showing it. Prints the decision "
+            "as JSON. Exits 0 when the answer may be shown, 1 when it is held back, and 2 "
+            "when the check cannot be set up."
+        ),
+    )
+    guard.add_argument("--prompt", required=True, help="what the user said")
+    guard.add_argument("--response", required=True, help="the answer to check")
+    guard.add_argument("--user-type", required=True, help="the user type the answer is for")
+    guard.add_argument(
+        "--judge",
+        required=True,
+        choices=["live", "replay"],
+        help="call a judge model (live) or read saved grades (replay)",
+    )
+    _grading_options(guard)
+    guard.add_argument(
+        "--rules-only",
+        action="store_true",
+        help="grade from the rules file alone, as for run. This mode is unmeasured",
+    )
+    guard.add_argument(
+        "--on-review",
+        choices=["hold", "show"],
+        default="hold",
+        help="what a review does (default: hold)",
+    )
+    guard.add_argument(
+        "--on-error",
+        choices=["hold", "show"],
+        default="hold",
+        help="what happens when no usable grade arrives in time: hold fails closed, "
+        "show fails open (default: hold)",
+    )
+    guard.add_argument(
+        "--deadline",
+        type=float,
+        default=10.0,
+        help="seconds the whole check may take (default: 10)",
+    )
+    guard.add_argument(
+        "--replacement", default=None, help="text to show in place of a held back answer"
+    )
+    guard.add_argument(
+        "--max-chars",
+        type=int,
+        default=20_000,
+        help="hold back longer answers with no judge call, 0 for no limit (default: 20000)",
+    )
+    guard.add_argument(
+        "--record", default=None, help="JSON lines file to append the decision to (default: none)"
+    )
+    guard.add_argument(
+        "--record-text",
+        action="store_true",
+        help="write the prompt, the answer and the judge's reason to --record too",
+    )
+    guard.set_defaults(func=cmd_guard)
 
     attack = sub.add_parser("attack", help="send attack prompts to the model under test")
     attack.add_argument("--prompts", required=True, help="attack prompts, one JSON record per line")

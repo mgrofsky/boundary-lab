@@ -19,7 +19,7 @@ It's for developers building apps, security people testing them, and anyone who 
 
 | Project | What you can do with it | Get started |
 | --- | --- | --- |
-| **Redline** | Check chatbot answers against your rules. See which problems it catches, what it misses, and which good answers it flags by mistake. | [Redline README](redline/README.md) |
+| **Redline** | Check chatbot answers against your rules. See which problems it catches, what it misses, and which good answers it flags by mistake. Hold back a bad answer before it is shown. | [Redline README](redline/README.md) |
 | **Latch** | Check a tool call before your app runs it. Add permissions, approval steps, and limits on what can happen. | [Latch README](tools/latch/README.md) |
 | **Dye** | Mark the text your chatbot reads, then see which tool call arguments were copied from it. Hand the result to Latch to block those calls. | [Dye README](tools/dye/README.md) |
 
