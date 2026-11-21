@@ -1,0 +1,19 @@
+{
+  "data": "examples/shell/holdout.jsonl",
+  "router": "center",
+  "embedder": "minilm",
+  "k": null,
+  "short_circuit": false,
+  "purity": 1.0,
+  "min_members": 5,
+  "margin": 0.1,
+  "records": 50,
+  "top_k": 5,
+  "floor": null,
+  "judge_calls": 230,
+  "short_circuits": 0,
+  "missing_grade": "stop",
+  "no_saved_grade_records": 0,
+  "no_saved_grade_lookups": 0,
+  "seconds": 0.34
+}

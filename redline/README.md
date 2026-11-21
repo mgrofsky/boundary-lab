@@ -4,7 +4,7 @@ Part of [Boundary Lab](../README.md).
 
 Redline checks chatbot answers against rules you write. Use it to test a chatbot, compare ways of checking its answers, or work through the included examples and see how the pieces fit.
 
-The example is Northwind Power, a made-up utility with a billing assistant. It has four rules covering account data, identity checks, card numbers, and the assistant's own instructions.
+The example is Northwind Power, a made-up utility with a billing assistant. It has four rules covering account data, identity checks, card numbers, and the assistant's own instructions. A [second example](#a-second-example-a-model-that-plays-a-shell) checks a model that plays a Linux shell.
 
 For each prompt and response, a router picks the closest rule. A second model, called the judge, checks the answer against that rule and the user's permissions. You can also try letting the router decide some answers without asking the judge.
 
@@ -225,6 +225,14 @@ With center matching, the shortcut caught 18 of 21 attack violations instead of 
 
 Each saved judge answer records its model name. `results/summary.json` stores a SHA-256 hash, a fingerprint of the cache file's contents. Replay repeats the calculations from those answers. It doesn't check whether the named model produced them.
 
+## A second example: a model that plays a shell
+
+[examples/shell](../examples/shell/README.md) holds rules, labeled replies and saved grades for a chat model told to act as the bash shell on a made-up server. Its five rules say the reply answers only the command typed, sounds like a shell and not an assistant, keeps the model's instructions private, prints plain text, and keeps the user, host and folder straight.
+
+This kind of policy fits any model that must stay in a role and print only what the role would print. The failures are about form, not about data given to the wrong person. Every rule applies to every reply, so run it with `--top-k 5`. With one rule per reply, 9 of 25 rule breaks on its holdout passed, because the router sent them to a rule they did not break. The example's README has the commands, the numbers per rule and what it does not cover.
+
+A judge call per reply adds a model round trip, and five rules make five calls. For an interactive shell, use the judge as a test and as an audit of sampled sessions. Do the cheap structural checks in code on every reply, such as a second prompt line or a code fence. [docs/examples/guard_shell.py](../docs/examples/guard_shell.py) puts the guard in front of the shell with the saved grades.
+
 ## Try a live chatbot
 
 For live runs, use a chat endpoint that supports `/chat/completions` and JSON response mode. Set these environment variables, or put them in a local `.env` file:
@@ -247,6 +255,22 @@ These commands keep new results separate from the saved run. Label new attack re
 Live mode also reuses saved grades. Use a fresh cache file when changing the judge model. Redline looks up grades using the grading prompt, and that lookup doesn't include the model name. New valid grades are saved for later replay.
 
 Each live judge prompt ends with a random check value the judge must copy into its JSON. A reply without it gets `review` with the code `JUDGE_NONCE` and is not saved. A judge model that drops the key sends every answer to review, so check a few replies when trying a new model.
+
+### Use a judge on Amazon Bedrock
+
+`redline.bedrock.bedrock_transport(model_id, ...)` returns a transport for `ChatEndpointJudge` that sends each judge request to a model on Amazon Bedrock through its Converse API. The judge still builds the prompt, checks the check value, reads the reply and saves grades, so a Bedrock grade replays like any other. Install boto3 with the `bedrock` extra, `pip install -e ".[bedrock]"`, or pass a client of your own. Pass `temperature=False` for a model that refuses a temperature, and a higher `max_tokens` for one that reasons before it answers.
+
+```python
+from redline import Grader
+from redline.bedrock import bedrock_transport
+from redline.judge import ChatEndpointJudge
+
+transport = bedrock_transport(model_id, region="us-east-1", profile="my-profile")
+judge = ChatEndpointJudge(None, model_id, None, transport=transport, cache_path="my_cache.jsonl")
+grader = Grader(rules="my_rules.yaml", train="my_train.jsonl", judge=judge)
+```
+
+A throttled or busy model is tried again with the same waits as the chat endpoint. Any other error, and a throttle that does not clear, gives review marked unreachable, as an outage does. Inside `redline.judge.deadline`, and so inside a `Guard` check, nothing is sent once the time is up and no wait runs past it. A request already sent runs to the client's own timeout. The commands do not use it yet, so call it from Python.
 
 Add `--router kmeans --k 12` to both `redline run` commands to try that routing option. The [routing guide](../docs/routing.md) shows how to make reports with the right files and compare runs.
 
